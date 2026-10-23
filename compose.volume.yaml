@@ -12,8 +12,8 @@
 #   docker compose -f compose.yaml -f compose.volume.yaml up -d
 #   → 卷 tessera-data 挂到 /data，宿主机零文件
 #
-# 从源码构建时再叠加 compose.build.yaml：
-#   docker compose -f compose.yaml -f compose.build.yaml -f compose.volume.yaml up -d --build
+# 镜像默认由本机构建，命名卷模式同样适用：
+#   docker compose -f compose.yaml -f compose.volume.yaml up -d
 #
 # 注意：本文件不会迁移已有数据。首次使用前先把现有数据灌进去，否则新卷是空的，
 # 数据库与登录凭据都会重新生成：

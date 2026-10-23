@@ -127,9 +127,9 @@ Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，�
 
 ## 部署、配置与维护
 
-默认 `docker compose up -d` 从 GHCR 拉取预构建的 Server / Dispatcher 镜像和 Worker 镜像，不在本机构建；实际项目 Worker 由 Dispatcher 动态创建，`worker-image` 是一次性拉取与镜像检查，不是承载所有项目的常驻 Worker。从源码构建使用 `docker compose -f compose.yaml -f compose.build.yaml up -d --build`。Windows 使用 Docker Desktop 的 Linux 容器模式。
+默认 `docker compose up -d` 在本机从当前源码构建 Server / Dispatcher 镜像和 Worker 镜像（镜像不存在时自动构建）；实际项目 Worker 由 Dispatcher 动态创建，`worker-image` 是一次性构建与镜像检查，不是承载所有项目的常驻 Worker。Windows 使用 Docker Desktop 的 Linux 容器模式。
 
-镜像默认来自 `ghcr.io/kksty`，可用 `TESSERA_IMAGE_REPO` / `TESSERA_IMAGE_TAG` 切换仓库或版本，详见[容器镜像与 GHCR](containers.md)。`.github/workflows/images.yml` 在推送 `v*` 标签或手动触发时构建并推送 `tessera-server` / `tessera-runtime`；首次发布后需在 GitHub Packages 中把两个包设为 public，公开仓库的用户才能免登录拉取。
+本项目不发布预构建镜像，也没有 GHCR / GitHub Packages 包。`TESSERA_IMAGE_TAG` 只是本地镜像标签，用于区分和回退版本；更新代码后执行 `docker compose up -d --build` 重建，详见[容器镜像](containers.md)。
 
 环境变量按字段覆盖：**显式非空 env > `/data/runtime.json` > 默认值**。空白视为未设置，数字 0 是有效显式值，非法值报错。env 管理字段在网页和 API 禁改，保存其他设置不会把覆盖值或密钥回写。修改 `.env` 后需重新创建服务；更换镜像后旧项目容器在任务排空后更新。
 
@@ -144,7 +144,7 @@ Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，�
 | 平台 `/data`，默认绑定 `./datas/tessera` | SQLite、归档证据、配置、登录和内部凭据 |
 | 项目 `/workspace` 命名卷 | 会话、outbox、脚本、原始工具输出与工作文件 |
 
-命名卷模式使用 `docker compose -f compose.yaml -f compose.volume.yaml up -d`，平台卷默认 `tessera-data`；从源码构建时再叠加 `compose.build.yaml`。两种挂载模式不自动迁移数据；备份同时覆盖平台目录和各项目工作区，SQLite 使用一致性备份或先停止写入。
+命名卷模式使用 `docker compose -f compose.yaml -f compose.volume.yaml up -d`，平台卷默认 `tessera-data`。两种挂载模式不自动迁移数据；备份同时覆盖平台目录和各项目工作区，SQLite 使用一致性备份或先停止写入。
 
 删除项目需操作员确认：暂停并锁定 → 等任务和文件操作退出 → 校验资源归属并删除项目容器 / 辅助容器 / 工作区卷 → 删除证据及数据库记录。失败保留删除标记，可原操作重试；共享镜像、网络、平台数据卷和其他项目不在删除范围内。
 

@@ -44,8 +44,8 @@ for (const key of [
   "TESSERA_RESULT_REPAIRS",
 ])
   env[key] = "";
-const appImage = env.TESSERA_APP_IMAGE || "ghcr.io/kksty/tessera-server:0.3.0";
-const workerImage = env.TESSERA_WORKER_IMAGE || "ghcr.io/kksty/tessera-runtime:0.3.0";
+const appImage = env.TESSERA_APP_IMAGE || "tessera-server:latest";
+const workerImage = env.TESSERA_WORKER_IMAGE || "tessera-runtime:latest";
 // 单账号登录门：下面所有 /api 调用都带上会话 Cookie。
 let session = "";
 async function login() {

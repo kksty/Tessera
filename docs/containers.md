@@ -1,98 +1,25 @@
-# 容器镜像与 GHCR
+# 容器镜像：本地构建、更新与回退
 
-## GHCR 是什么
+本项目不发布预构建镜像，也没有 GitHub Packages / GHCR 包。`compose.yaml` 直接使用本机从当前源码构建的两个镜像，克隆代码后即可在本地构建。
 
-GHCR（GitHub Container Registry）是 GitHub 提供的 OCI 容器镜像仓库，地址为 `ghcr.io`。它和 GitHub 仓库、Actions、Packages 页面集成，适合存放本项目自己构建的镜像。
+## 两个镜像
 
-- 公开包可以匿名 `docker pull`，不需要登录。
-- 私有包需要先用有 `read:packages` 权限的 GitHub Token 登录。
-- 镜像按 `<owner>/<image>:<tag>` 命名，例如 `ghcr.io/kksty/tessera-server:0.3.0`。
-- 本项目把镜像发布为公开包，用户启动时不需要 Docker Hub 账号。
+| 镜像                    | 用途                                             | 构建文件                                          |
+| ----------------------- | ------------------------------------------------ | ------------------------------------------------- |
+| `tessera-server:<tag>`  | Server 与 Dispatcher（同一镜像，不同命令）       | 根目录 `Dockerfile`                               |
+| `tessera-runtime:<tag>` | Dispatcher 动态创建的项目 Worker，含 Kali 工具链 | `docker/worker.Dockerfile`，默认 `runtime` target |
 
-GHCR 只是默认选择。`compose.yaml` 通过 `TESSERA_IMAGE_REPO` 和 `TESSERA_IMAGE_TAG` 选择镜像，因此也可以使用 Docker Hub、阿里云 ACR、Harbor 或其他符合 OCI 规范的 Registry。
+`worker-image` 是一次性服务：构建并校验 Worker 镜像后执行 `node --version` 退出。实际项目 Worker 由 Dispatcher 按 `TESSERA_WORKER_IMAGE` 创建，不是常驻服务。
 
-## 本项目的镜像
+## 构建
 
-| 镜像 | 用途 | 来源 |
-| --- | --- | --- |
-| `tessera-server` | Server 与 Dispatcher（同一镜像，不同命令） | 根目录 `Dockerfile` |
-| `tessera-runtime` | Dispatcher 动态创建的项目 Worker，含 Kali 工具链 | `docker/worker.Dockerfile`，默认 `runtime` target |
-
-镜像标签：
-
-- `latest`：跟随 `main` 的代码变更自动重建，`compose.yaml` 默认使用它。
-- `0.3.0`：与 `package.json` 版本对应的发布标签；正式部署固定它，避免 `latest` 漂移。
-- `sha-<commit>`：对应提交的可追溯标签。
-
-`worker-image` 是 Compose 中的一次性服务，只负责拉取并校验 Worker 镜像；实际项目 Worker 由 Dispatcher 创建，不是常驻服务。
-
-## 发布流程
-
-[`.github/workflows/images.yml`](../.github/workflows/images.yml) 在三种情况下运行：
-
-1. `main` 的代码变更（`apps/`、`packages/`、`docker/`、Dockerfile、依赖或构建脚本）；发布 `latest` 与 `sha-<commit>`；
-2. 推送 `v*` 标签，例如 `v0.3.0`；发布 `0.3.0` 与 `sha-<commit>`；
-3. 在 Actions 页面手动运行 **Publish images**；发布 `latest` 与 `sha-<commit>`。
-
-仅文档、README 或测试变更不会触发镜像重建。workflow 会分别构建并推送 `tessera-server` 和 `tessera-runtime`，使用 BuildKit 缓存和 `linux/amd64` 平台。Worker 镜像较大，首次构建时间明显长于应用镜像。
-
-发布新版本时：
-
-1. 更新 `package.json` 的 `version`；
-2. 推送 `v<version>` 标签；
-3. 在 GitHub Packages 中确认两个包的可见性为 public。
-
-`main` 的 `latest` 镜像在代码推送后由 CI 重建；在 workflow 完成前，`latest` 仍可能指向上一版。需要精确复现时使用 `sha-<commit>` 或发布版本标签。
-
-## 首次发布后的包可见性
-
-GHCR 包默认可能是 private。公开仓库的用户要免登录拉取，需要在 GitHub 仓库的 **Packages** 页面分别打开 `tessera-server` 和 `tessera-runtime`，在 **Package settings → Danger Zone → Change visibility** 中改为 public。
-
-如果包保持 private，用户需要：
+`docker compose up -d` 在本地缺少镜像时自动构建；也可以只构建不启动：
 
 ```sh
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u <username> --password-stdin
-docker compose pull
+docker compose build
 ```
 
-这里的 Token 至少需要 `read:packages`。
-
-## 使用预构建镜像
-
-默认 `latest` 跟随 `main` 的代码变更；clone `main` 后直接启动会拉取与当前代码对应的镜像（CI 完成后）：
-
-```sh
-docker compose up -d
-```
-
-指定发布版本或精确提交：
-
-```sh
-TESSERA_IMAGE_TAG=0.3.0 docker compose up -d
-TESSERA_IMAGE_TAG=sha-<commit> docker compose up -d
-```
-
-指定其他 Registry 或镜像代理：
-
-```sh
-TESSERA_IMAGE_REPO=ghcr.io/<owner> docker compose up -d
-```
-
-完整覆盖单个镜像：
-
-```sh
-TESSERA_APP_IMAGE=registry.example.com/tessera-server:custom \
-TESSERA_WORKER_IMAGE=registry.example.com/tessera-runtime:custom \
-docker compose up -d
-```
-
-## 从源码构建
-
-```sh
-docker compose -f compose.yaml -f compose.build.yaml up -d --build
-```
-
-构建参数通过 `.env` 覆盖。中国大陆网络可设置：
+首次构建包含 Node 依赖和 Kali 工具链，耗时明显长于后续构建；之后复用 Docker 层缓存。构建参数通过 `.env` 覆盖，`.env.example` 中有完整列表：
 
 ```sh
 DEBIAN_MIRROR=https://mirrors.ustc.edu.cn
@@ -100,15 +27,45 @@ KALI_MIRROR=http://mirrors.ustc.edu.cn/kali
 COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 ```
 
-Worker 的 `runtime` target 是默认镜像；`full` target 额外安装 `kali-linux-headless`、netexec、enum4linux-ng、bloodyad、coercer、pwncat、chisel、naabu、gitleaks、adb 等可选工具，体积更大：
+`TESSERA_WORKER_TARGET=full` 会构建包含 `kali-linux-headless`、netexec、enum4linux-ng、bloodyad、coercer、pwncat、chisel、naabu、gitleaks、adb 等可选工具的 Worker，体积更大：
 
 ```sh
-TESSERA_WORKER_TARGET=full docker compose -f compose.yaml -f compose.build.yaml build worker-image
+TESSERA_WORKER_TARGET=full docker compose build worker-image
 ```
 
-## 版本与回退
+## 标签与版本
 
-- 应用与 Worker 必须使用同一版本标签；`compose.yaml` 默认从同一个 `TESSERA_IMAGE_TAG` 派生两个镜像。
-- 回退时把 `TESSERA_IMAGE_TAG` 改回旧版本并重新 `docker compose up -d`，不要删除平台数据目录或项目工作区卷。
-- 旧项目 Worker 会在任务排空后按新镜像重建；升级前应确认没有在途任务。
-- 备份时记录应用与 Worker 镜像版本、平台挂载方式和项目卷名称，见[运行、归档与升级](operations.md)。
+`TESSERA_IMAGE_TAG`（默认 `latest`）只是本地镜像标签，不指向任何 Registry；Server 与 Worker 共用同一个值，`compose.yaml` 从它派生两个镜像名。
+
+正式部署建议在重建前把 `TESSERA_IMAGE_TAG` 改成版本号（例如 `0.3.0`）。旧镜像会保留在本机，需要回退时改回旧标签并执行 `docker compose up -d`（不要加 `--build`，否则会用当前源码重新构建该标签）。
+
+## 更新
+
+```sh
+git pull
+docker compose up -d --build
+```
+
+- 只重建变化的构建层；应用镜像通常很快，Worker 镜像较慢。
+- 旧项目 Worker 在任务排空后按新镜像重建；升级前确认没有在途任务，避免中断正在执行的外部动作。
+- 升级前备份 `datas/` 或命名卷，见[运行、数据归档与升级](operations.md)；不要删除平台数据目录或项目工作区卷。
+- `docker compose down` 只停止容器，不删除数据。
+
+## 使用自行推送的镜像
+
+如果你把镜像推送到了自己的 Registry，可以用完整引用覆盖本地构建名：
+
+```sh
+TESSERA_APP_IMAGE=registry.example.com/tessera-server:0.3.0 \
+TESSERA_WORKER_IMAGE=registry.example.com/tessera-runtime:0.3.0 \
+docker compose up -d
+```
+
+两者必须同版本。先 `docker compose pull` 再启动，可避免 Compose 因本地缺少镜像而触发构建。
+
+## 常见问题
+
+- **构建时下载慢或失败**：在 `.env` 设置 Debian / Kali 镜像源和 npm registry 后重试。
+- **磁盘占用**：旧标签镜像不会自动清理，确认不再回退后用 `docker image rm <image>:<tag>` 删除。
+- **Worker 仍是旧代码**：项目工作区容器要等当前任务结束才会按新镜像重建；确认没有在途任务后重启 `tessera-server` / `tessera-dispatcher` 会重新调度。
+- **只想验证镜像能否构建**：`docker compose build` 不启动服务，也不会改动数据目录。

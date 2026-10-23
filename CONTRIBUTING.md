@@ -34,7 +34,7 @@ pnpm test:deletion-config-browser
 涉及 Docker、Dispatcher 或 Worker 的改动还需要：
 
 ```sh
-docker compose -f compose.yaml -f compose.build.yaml build
+docker compose build
 pnpm test:docker
 ```
 

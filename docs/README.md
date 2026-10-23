@@ -1,12 +1,12 @@
 # Tessera 文档
 
-这里是 Tessera 的详细文档入口。简介、快速启动和镜像发布见根目录 [README](../README.md)；配置字段以 [.env.example](../.env.example) 为准，提示词与行为以源码为准。
+这里是 Tessera 的详细文档入口。简介、快速启动和容器镜像构建见根目录 [README](../README.md)；配置字段以 [.env.example](../.env.example) 为准，提示词与行为以源码为准。
 
 ## 当前实现
 
 - [项目说明](project.md)：架构、图与任务契约、上下文与提交、部署维护、验证边界与后续工作。这是描述当前实现的唯一主文档。
 - [运行、数据归档与升级](operations.md)：模型凭据边界、SQLite 保留策略、一致性备份、控制面指标和升级注意事项。
-- [容器镜像与 GHCR](containers.md)：镜像发布、标签、公开包可见性、Registry 覆盖和源码构建参数。
+- [容器镜像](containers.md)：本地构建、标签、更新、回退和 Registry 覆盖。
 
 ## 设计与历史记录
 

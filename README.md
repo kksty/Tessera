@@ -6,7 +6,6 @@
 # Tessera
 
 [![Typecheck, tests and Docker QA](https://github.com/kksty/Tessera/actions/workflows/checks.yml/badge.svg)](https://github.com/kksty/Tessera/actions/workflows/checks.yml)
-[![Publish images](https://github.com/kksty/Tessera/actions/workflows/images.yml/badge.svg)](https://github.com/kksty/Tessera/actions/workflows/images.yml)
 
 **探索成图，证据成链。** 一个采用 FGS（Fact / Goal / Step）的模型驱动安全测试工作台：模型通过共享图协调探索，保存原始证据，由独立上下文审核候选发现，人负责授权与最终复核。
 
@@ -17,15 +16,13 @@
 
 ## 快速开始
 
-需要 Docker Compose v2、Linux 容器及可用的模型 API。
+需要 Docker Compose v2、Linux 容器及可用的模型 API。镜像由本机从当前源码构建，首次启动包含 Worker 的 Kali 工具链，构建时间明显长于后续启动。
 
 ```sh
 docker compose up -d
 ```
 
-首次启动会从 GHCR 拉取预构建镜像（Worker 含 Kali 工具链，压缩后约 1.5 GB），之后复用本地缓存。默认 `TESSERA_IMAGE_TAG=latest` 跟随 `main` 的代码；正式部署请在 `.env` 固定版本标签。预构建镜像当前为 `linux/amd64`，其他架构请从源码构建。
-
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。登录凭据留空时首次启动自动生成，在 `docker compose logs tessera-server` 中打印一次；登录后在设置页配置模型。
+首次运行会在本机构建 `tessera-server` 和 `tessera-runtime`（Worker 压缩后约 1.5 GB），之后复用本地镜像。打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。登录凭据留空时首次启动自动生成，在 `docker compose logs tessera-server` 中打印一次；登录后在设置页配置模型。
 
 默认配置即可启动。需要修改端口、数据目录、登录凭据或模型时：
 
@@ -35,14 +32,16 @@ cp .env.example .env          # PowerShell：Copy-Item .env.example .env
 docker compose up -d
 ```
 
-升级镜像：
+更新到最新代码：
 
 ```sh
-docker compose pull
-docker compose up -d
+git pull
+docker compose up -d --build
 ```
 
-平台数据默认保存在 `./datas/tessera`，`docker compose down` 不会删除它；命名卷模式见[项目说明](docs/project.md)。如果 GHCR 上尚未发布对应版本（例如刚 fork），请使用下方的源码构建命令。
+`--build` 按当前代码重建镜像；旧项目 Worker 在任务排空后按新镜像重建，升级前先确认没有在途任务。回退时把 `.env` 的 `TESSERA_IMAGE_TAG` 换成之前的标签，再执行 `docker compose up -d`（不重建）。标签、构建参数和回退细节见[容器镜像](docs/containers.md)。
+
+平台数据默认保存在 `./datas/tessera`，`docker compose down` 不会删除它；命名卷模式见[项目说明](docs/project.md)。
 
 ## 能力
 
@@ -70,7 +69,7 @@ Decide 规划与结算图，Execute 执行真实命令并提交 Fact，Review �
 - [文档索引](docs/README.md)
 - [项目说明](docs/project.md)：当前架构、任务契约、部署维护、验证边界与后续工作。
 - [运行、归档与升级](docs/operations.md)：凭据边界、保留策略、一致性备份和升级注意事项。
-- [容器镜像与 GHCR](docs/containers.md)：镜像发布、标签、公开包设置和 Registry 覆盖。
+- [容器镜像](docs/containers.md)：本地构建、标签、更新、回退和 Registry 覆盖。
 - [安全策略](SECURITY.md) / [贡献指南](CONTRIBUTING.md)
 - 设计背景：[从 Cairn 到 FGS](docs/background/cairn-ai-pentest-architecture.md)
 
@@ -90,22 +89,27 @@ pnpm test:traffic            # Python 3，流量组件测试
 pnpm build
 ```
 
-从源码构建容器镜像：
+构建容器镜像（与快速开始相同）：
 
 ```sh
-docker compose -f compose.yaml -f compose.build.yaml up -d --build
+docker compose build
 ```
 
 ## 容器镜像
 
-镜像由 [`.github/workflows/images.yml`](.github/workflows/images.yml) 在推送 `v*` 标签或手动触发时构建并推送到 GHCR：
+本项目不发布预构建镜像；`compose.yaml` 直接使用本机从当前源码构建的镜像：
 
-- `ghcr.io/<owner>/tessera-server:<version>`：Server 与 Dispatcher。
-- `ghcr.io/<owner>/tessera-runtime:<version>`：项目 Worker 运行时。
+- `tessera-server:<tag>`：Server 与 Dispatcher。
+- `tessera-runtime:<tag>`：项目 Worker 运行时，含 Kali 工具链。
 
-`compose.yaml` 默认使用 `ghcr.io/kksty` 与 `latest`。`latest` 由 CI 在每次 `main` 代码变更后重建，因此 clone `main` 后拉到的镜像对应当前代码；正式部署请固定版本，例如 `TESSERA_IMAGE_TAG=0.3.0`。可用 `TESSERA_IMAGE_REPO` 切换 Registry 或镜像代理。发布后需确认两个包的可见性为 public（本项目当前已设置）；公开包可免登录拉取。发布新版本时同步更新 `package.json`，推送 `v*` 标签即可发布该版本镜像；`latest` 继续跟随 `main`。
+```sh
+docker compose build          # 只构建
+docker compose up -d --build  # 构建并启动，代码更新后使用
+```
 
-GHCR（GitHub Container Registry）是 GitHub 提供的容器镜像仓库，公开包可匿名拉取，适合存放本项目的预构建镜像；也可以把 `TESSERA_IMAGE_REPO` 指向 Docker Hub 或自建 Registry。
+`TESSERA_IMAGE_TAG`（默认 `latest`）只是本地镜像标签，用于区分和回退版本；它不是 Registry 地址。构建参数（Debian/Kali 镜像源、npm registry）、`TESSERA_WORKER_TARGET=full` 和更新流程见 [`.env.example`](.env.example) 与[容器镜像](docs/containers.md)。
+
+如果你自己把镜像推送到 Registry，用 `TESSERA_APP_IMAGE` / `TESSERA_WORKER_IMAGE` 指定完整引用；两者必须同版本。
 
 ## 安全边界
 

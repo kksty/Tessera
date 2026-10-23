@@ -8,7 +8,7 @@ Runner 保留供应商端点与认证模式的非秘密元数据，让 Pi 正常
 
 Shell 和看门狗使用显式环境白名单，只传递路径、语言、代理及 CA 等运行环境。Worker 的流量采集配置和 `/proc` 中仍可能看到项目或 Run 凭据，但其中不再有全局模型密钥。项目 token 能访问本项目数据；Worker 的 root、网络权限和真实出口仍不构成多租户隔离。
 
-升级时切换到新的镜像标签（`docker compose pull` 后重建），并让旧任务退出后重建旧 Worker。旧容器、采集配置、会话或既有外部备份中已经暴露的长期密钥无法通过此代码补丁撤回，应在供应商处轮换。只读恢复入口使用脱敏的代理配置与 `TESSERA_PROJECT_TOKEN`；不要向 Worker 传入全局 `TESSERA_WORKER_TOKEN`。
+升级时执行 `git pull` 后用 `docker compose up -d --build` 按新代码重建镜像，并让旧任务退出后重建旧 Worker。旧容器、采集配置、会话或既有外部备份中已经暴露的长期密钥无法通过此代码补丁撤回，应在供应商处轮换。只读恢复入口使用脱敏的代理配置与 `TESSERA_PROJECT_TOKEN`；不要向 Worker 传入全局 `TESSERA_WORKER_TOKEN`。
 
 ## 存储和保留策略
 
