@@ -422,6 +422,7 @@ async function checkFindingReviews(page: Page) {
   await rows(".finding-item-title", ["合成信息类发现"]);
   // 信息类不是危险度等级：切到这一页签后只保留单独的一节。
   assert.deepEqual(await page.locator(".finding-group-name").allInnerTexts(), ["信息类"]);
+  await page.locator(".fd-verdict").getByText("信息类", { exact: true }).waitFor();
   assert.equal(await page.locator(".fd-verdict").getByText("信息类", { exact: true }).count(), 1);
   assert.equal(await page.locator(".fd-cvss").count(), 0);
   await gradeTabs.getByRole("button", { name: /^全部/ }).click();
