@@ -103,7 +103,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 - `ghcr.io/<owner>/tessera-server:<version>`：Server 与 Dispatcher。
 - `ghcr.io/<owner>/tessera-runtime:<version>`：项目 Worker 运行时。
 
-`compose.yaml` 默认使用 `ghcr.io/kksty` 与 `0.3.0`；可用 `TESSERA_IMAGE_REPO` / `TESSERA_IMAGE_TAG` 切换。首次发布后需在 GitHub Packages 中把两个包设为 public，公开仓库的用户才能免登录拉取。发布新版本时同步更新 `package.json`、`.env.example` 中的 `TESSERA_IMAGE_TAG` 和 `compose.yaml` 的默认标签。
+`compose.yaml` 默认使用 `ghcr.io/kksty` 与 `0.3.0`；可用 `TESSERA_IMAGE_REPO` / `TESSERA_IMAGE_TAG` 切换。发布后需确认两个包的可见性为 public（本项目当前已设置）；公开包可免登录拉取。发布新版本时同步更新 `package.json`、`.env.example` 中的 `TESSERA_IMAGE_TAG` 和 `compose.yaml` 的默认标签。
 
 GHCR（GitHub Container Registry）是 GitHub 提供的容器镜像仓库，公开包可匿名拉取，适合存放本项目的预构建镜像；也可以把 `TESSERA_IMAGE_REPO` 指向 Docker Hub 或自建 Registry。
 
