@@ -90,6 +90,43 @@ test("final JSON ignores complete leading thinking blocks but never accepts trun
     assert.throws(() => parseModelJson(raw));
 });
 
+test("final JSON accepts one terminal fenced envelope after explanatory prose", () => {
+  // GLM-5 repair answers explain the decision and then fence the JSON instead of
+  // returning it as the whole body; the fence is unambiguous, so it is the answer.
+  assert.deepEqual(
+    parseModelJson(
+      [
+        "所有提交类型在 closeout 模式下均被拒绝。已读取全部已有记录：",
+        "- 三个 blocked Step 按规则交人工检查，不换名或拆分重试。",
+        "- 无 Finding、无 Review。",
+        "",
+        "```json",
+        '{"delete_nodes":[],"steps":[],"closes":[],"lead_dispositions":[]}',
+        "```",
+      ].join("\n"),
+    ),
+    { delete_nodes: [], steps: [], closes: [], lead_dispositions: [] },
+  );
+  assert.deepEqual(parseModelJson('说明：无可提交动作。\n\n```\n{"steps":[]}\n```\n'), { steps: [] });
+});
+
+test("final JSON skips a warning glyph before a complete leading thinking block", () => {
+  assert.deepEqual(
+    parseModelJson(
+      '⚠<think>\nBlocked steps need human inspection.\n</think>\n说明如下。\n\n```json\n{"steps":[]}\n```',
+    ),
+    { steps: [] },
+  );
+  // An unclosed or decorative block still hides no result: reject instead of salvaging.
+  for (const raw of [
+    "⚠<think>\nstill thinking",
+    '⚠<think>{"bad":true}</think>\n没有最终答案',
+    '说明：\n```text\n{"steps":[]}\n```',
+    '说明：\n```json\n{"steps":[]',
+  ])
+    assert.throws(() => parseModelJson(raw));
+});
+
 test("captured GLM final and repair envelopes remain rejected without guessing or salvaging", () => {
   const fixture = JSON.parse(readFileSync(resolve("tests/fixtures/glm-damaged-envelopes.json"), "utf8"));
   assert.equal(fixture.samples.length, 2);

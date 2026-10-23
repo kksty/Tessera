@@ -72,19 +72,44 @@ CVSS 向量必须完整包含全部 11 个 Base 指标：AV、AC、AT、PR、UI�
 
 你只推进当前 Step，遵守视图中的完整问题、property、子目标和人工 Hint，自主选择测试方法。原始产物用 save_evidence 保存，保留 Step/Run、路径与失败条件；优先结构化工具输出，不把截断终端当全量。视图中的 Finding 声明、last_summary 与生产 Step 摘要是既有材料，先回读原始证据核对，不能当作本次观测。脚本放 /workspace/scripts，证据放 /workspace/evidence，临时文件放 /workspace/tmp。可增量提交 Fact/Finding；补证和修订使用已有 Finding ID，提交前检索重复。按 executeSchema 返回 facts、findings、leads 和 summary，说明本次观测、失败与可复用材料；leads 写清 surface/parameter、为什么值得追和建议的可证伪 property，后续方向不要只埋在摘要里。信息类说明适用范围和核查依据；漏洞类填写 impact、reproduction（conditions、steps、expected、observed）与 remediation，明确受损对象、安全边界、已证实后果、可独立执行的复现步骤和针对根因的修复建议，不编造未知条件或影响。原始 HTTP 报文保留换行写入 evidence 或请求步骤；CVSS 由 Review 填写。`;
 }
-export function parseModelJson(text: string): Record<string, unknown> {
-  let source = text.trim();
-  // Some compatible providers put reasoning in content rather than a separate channel.
-  // Discard only complete leading blocks; never parse a JSON example from reasoning.
-  while (source.startsWith("<think>")) {
-    const end = source.indexOf("</think>");
+/**
+ * Some compatible providers put reasoning in content rather than a separate channel, and
+ * GLM-5 can prepend a warning glyph to that block. Discard only complete leading blocks:
+ * a JSON example inside reasoning must never become the result, so an unclosed block is an
+ * error rather than something to parse around.
+ */
+function stripLeadingThinking(text: string): string {
+  let source = text;
+  for (;;) {
+    const open = /^[^{}[\]`]{0,32}<think>/i.exec(source);
+    if (!open) return source;
+    const end = source.toLowerCase().indexOf("</think>", open[0].length);
     if (end < 0) throw new Error("Model returned incomplete thinking block before JSON");
     source = source.slice(end + "</think>".length).trim();
   }
+}
+/**
+ * A single terminal fenced block is still the model's envelope when it adds explanatory prose,
+ * as GLM-5 does for repair answers. The fence must close the text and must be the only one, so
+ * an example block earlier in the prose is never selected as the result.
+ */
+function terminalFencedBody(source: string): string | undefined {
+  const open = /```[ \t]*([A-Za-z0-9_-]*)[ \t]*\r?\n/.exec(source);
+  if (!open) return undefined;
+  const close = source.indexOf("```", open.index + open[0].length);
+  if (close < 0 || source.slice(close + 3).trim() || source.slice(0, open.index).includes("```")) return undefined;
+  const language = (open[1] ?? "").toLowerCase();
+  return language && language !== "json" ? undefined : source.slice(open.index + open[0].length, close).trim();
+}
+export function parseModelJson(text: string): Record<string, unknown> {
+  let source = stripLeadingThinking(text.trim());
   if (source.startsWith("```")) {
     const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/i.exec(source);
     if (!fence) throw new Error("Model returned no valid JSON result: incomplete fence");
     source = fence[1].trim();
+  } else {
+    const body = terminalFencedBody(source);
+    if (body !== undefined) source = body;
   }
   if (source.startsWith("[")) throw new Error("Model returned no valid JSON object");
   const start = source.indexOf("{");
