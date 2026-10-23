@@ -1,0 +1,422 @@
+/* Files — 项目工作区（Tessera）。本文件只放 files- 前缀的页面级样式。 */
+
+.page-files {
+  min-width: 0;
+}
+
+/* ---------- 页头 ---------- */
+.page-files .files-run-pill {
+  height: 22px;
+}
+
+/* ---------- 指标：当前路径需要等宽小字，不跟随 27px 数字 ---------- */
+.page-files .files-kpi-path {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 面包屑 ---------- */
+.files-toolbar {
+  margin-bottom: var(--s3);
+}
+
+.files-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-width: 0;
+}
+
+.files-crumbs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  white-space: nowrap;
+  transition: background var(--fast), color var(--fast);
+}
+
+.files-crumbs button:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.files-crumbs button[aria-current="page"] {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.files-crumb {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.files-crumb-sep {
+  color: var(--ink-4);
+  flex: none;
+}
+
+/* ---------- 表格与预览的布局 ---------- */
+.files-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.files-layout.has-preview {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+}
+
+@media (max-width: 1080px) {
+  .files-layout.has-preview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.files-table-wrap {
+  min-width: 0;
+}
+
+.files-loading {
+  padding: 16px 14px;
+}
+
+.files-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.files-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--ink-4);
+}
+
+.files-icon[data-kind="folder"] {
+  color: var(--ink-3);
+}
+
+.files-icon[data-kind="symlink"] {
+  color: var(--info);
+}
+
+.files-icon[data-kind="code"] {
+  color: var(--info);
+}
+
+.files-icon[data-kind="data"] {
+  color: var(--warn);
+}
+
+.files-icon[data-kind="archive"] {
+  color: var(--warn);
+}
+
+.files-icon[data-kind="markdown"],
+.files-icon[data-kind="image"] {
+  color: var(--accent);
+}
+
+.files-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: var(--f-base);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.files-name:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.files-symlink {
+  flex: none;
+}
+
+.files-time {
+  white-space: nowrap;
+}
+
+.files-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.files-delete:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.files-truncated {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-faint);
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+  background: var(--surface-2);
+}
+
+/* ---------- 预览面板 ---------- */
+.files-preview {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: calc(100vh - 160px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.files-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.files-preview-ident {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.files-preview-ident > div {
+  min-width: 0;
+}
+
+.files-preview-name {
+  display: block;
+  font-size: var(--f-base);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-preview-path {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+  overflow-wrap: anywhere;
+}
+
+.files-preview-meta {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.files-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px 16px;
+}
+
+.files-preview-loading {
+  padding: 2px;
+}
+
+.files-preview-pre {
+  font-size: var(--f-xs);
+  line-height: 1.65;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.files-preview-note {
+  font-size: var(--f-sm);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.files-binary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+}
+
+.files-binary strong {
+  font-weight: 600;
+}
+
+.files-truncation-note {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+/* Markdown 预览只在预览面板内排版 */
+.files-preview-body .rich-text {
+  font-size: var(--f-sm);
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.files-preview-body .rich-text > * + * {
+  margin-top: 10px;
+}
+
+.files-preview-body .rich-text h3 {
+  font-size: var(--f-md);
+  color: var(--ink);
+}
+
+.files-preview-body .rich-text h4 {
+  font-size: var(--f-base);
+  color: var(--ink);
+}
+
+.files-preview-body .rich-text ul {
+  list-style: disc;
+  padding-left: 18px;
+}
+
+.files-preview-body .rich-text ol {
+  list-style: decimal;
+  padding-left: 18px;
+}
+
+.files-preview-body .rich-text li + li {
+  margin-top: 4px;
+}
+
+.files-preview-body .rich-text blockquote {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 10px;
+  color: var(--ink-3);
+}
+
+.files-preview-body .rich-text code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-3);
+}
+
+.files-preview-body .rich-text pre {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: auto;
+}
+
+.files-preview-body .rich-text hr {
+  height: 1px;
+  border: 0;
+  background: var(--line);
+}
+
+.files-preview-body .rich-text th,
+.files-preview-body .rich-text td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+  font-size: var(--f-xs);
+}
+
+/* ---------- 删除确认 ---------- */
+.files-modal-path {
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 7px 9px;
+  overflow-wrap: anywhere;
+}
+
+.files-modal-copy {
+  font-size: var(--f-base);
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+
+.files-modal-warn {
+  margin-bottom: 0;
+  font-size: var(--f-sm);
+}
+
+.files-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--f-sm);
+  line-height: 1.6;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.files-confirm input {
+  width: 15px;
+  height: 15px;
+  margin: 1px 0 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 760px) {
+  /* 页头在窄屏改为上下两段，标题与说明不挤压。 */
+  .page-files .page-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--s4);
+  }
+
+  .page-files .page-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 600px) {
+  .page-files .files-table {
+    min-width: 0;
+  }
+
+  /* 修改时间让位给名称与操作；预览面板仍显示完整时间。 */
+  .page-files .files-table th:nth-child(3),
+  .page-files .files-table td:nth-child(3) {
+    display: none;
+  }
+}

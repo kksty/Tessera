@@ -1,0 +1,498 @@
+/* 任务与运行（项目内）。选择器统一 tasks- 前缀；颜色与尺寸只取 tokens.css。 */
+
+.page.page-tasks {
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  /* 与其它页面共用同一套内容栅格；此前这里多了一层内边距，切页时标题会横向跳动。 */
+  padding: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 页头右侧的计数胶囊 */
+.tasks-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: var(--f-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tasks-list-region {
+  margin-top: 14px;
+  min-width: 0;
+}
+
+.tasks-toolbar {
+  align-items: center;
+  gap: 10px;
+}
+
+.tasks-shown {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tasks-search {
+  min-width: 250px;
+}
+
+/* ---------- 任务行 ---------- */
+.tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* 任务行已不显示，但运行仍停在“需人工检查”：不让异常随任务状态一起消失。 */
+.tasks-run-alert {
+  margin-top: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.tasks-run-alert-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+.tasks-run-alert-row > .quiet {
+  overflow-wrap: anywhere;
+}
+
+.tasks-run-alert-row > .button {
+  margin-left: auto;
+}
+
+.tasks-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px 11px 13px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  transition: border-color var(--fast), box-shadow var(--fast);
+}
+
+.tasks-row:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-2);
+}
+
+.tasks-row[data-state="open"] {
+  border-left-color: var(--ink-4);
+}
+
+.tasks-row[data-state="running"] {
+  border-left-color: var(--accent);
+}
+
+.tasks-row[data-state="executed"] {
+  border-left-color: var(--warn);
+}
+
+.tasks-row[data-state="failed"],
+.tasks-row[data-state="needs_attention"] {
+  border-left-color: var(--danger);
+}
+
+.tasks-row[data-state="done"] {
+  border-left-color: var(--success);
+}
+
+.tasks-row[data-state="discarded"] {
+  border-left-color: var(--line);
+  background: var(--surface-2);
+}
+
+.tasks-row[data-state="discarded"] .tasks-desc {
+  color: var(--ink-3);
+}
+
+.tasks-row-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  min-width: 0;
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+}
+
+.tasks-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: -4px;
+  padding: 1px 4px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  font-weight: 500;
+  color: var(--ink);
+  transition: background var(--fast), color var(--fast);
+}
+
+.tasks-id:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.tasks-id svg {
+  color: var(--ink-4);
+}
+
+.tasks-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--f-2xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tasks-priority {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tasks-priority em {
+  font-style: normal;
+  color: var(--warn);
+  margin-left: 1px;
+}
+
+.tasks-attempts {
+  white-space: nowrap;
+}
+
+.tasks-hints {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tasks-hint {
+  display: inline-flex;
+  align-items: center;
+  max-width: 24ch;
+  height: 18px;
+  padding: 0 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 4px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft-2);
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: var(--f-2xs);
+  line-height: 1;
+}
+
+.tasks-hint[data-withdrawn="true"] {
+  border-color: var(--line);
+  background: var(--surface-3);
+  color: var(--ink-4);
+  text-decoration: line-through;
+}
+
+.tasks-time {
+  margin-left: auto;
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  white-space: nowrap;
+}
+
+.tasks-desc {
+  font-size: var(--f-base);
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tasks-desc.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.tasks-desc-toggle.button {
+  align-self: flex-start;
+  height: 22px;
+  padding: 0 2px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.tasks-desc-toggle.button:hover {
+  color: var(--accent-ink);
+}
+
+/* Step 的验收属性：执行者必须回应的可证伪断言，和活动描述分开显示。 */
+.tasks-property {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--accent-line);
+}
+
+.tasks-property p {
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tasks-property p.quiet {
+  color: var(--ink-3);
+}
+
+.tasks-property p > span {
+  margin-right: 7px;
+  color: var(--ink-4);
+  font-size: var(--f-2xs);
+}
+
+.tasks-close-reason {
+  padding-left: 8px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.tasks-alert {
+  color: var(--warn);
+  font-size: var(--f-sm);
+}
+
+/* 任务结果是这段记录的主体内容，直接落在卡片上看，不再套一层带边框的灰盒子。 */
+.tasks-outcome {
+  max-height: 168px;
+  overflow: auto;
+  padding: 0 0 0 12px;
+  border: 0;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tasks-failure {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+.tasks-row-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-faint);
+  color: var(--ink-4);
+  font-size: var(--f-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.tasks-retry {
+  color: var(--warn);
+}
+
+.tasks-retry[data-paused="true"] {
+  color: var(--ink-4);
+}
+
+.tasks-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.tasks-more-row {
+  display: flex;
+  justify-content: center;
+  padding: var(--s4) 0 var(--s2);
+}
+
+/* ---------- 运行记录（RunHistory 自带旧面板结构，这里按页作用域补齐底板） ---------- */
+.tasks-runs {
+  margin-top: 14px;
+  min-width: 0;
+}
+
+.tasks-runs .panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.tasks-runs .panel-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.tasks-runs .panel-head h2 {
+  font-size: var(--f-base);
+  font-weight: 600;
+}
+
+.tasks-runs .panel-head small {
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+}
+
+.tasks-runs .panel-head .button {
+  margin-left: auto;
+}
+
+.tasks-runs .panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  min-width: 0;
+}
+
+.tasks-runs .panel-body > p {
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+}
+
+.tasks-runs .task-row {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.tasks-runs .task-row summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  line-height: 1.6;
+}
+
+/* 浏览器隐藏了 details 的默认三角，用文字提示这一行可以展开。 */
+.tasks-runs .task-row summary::after {
+  content: "展开";
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+}
+
+.tasks-runs .task-row[open] summary::after {
+  content: "收起";
+}
+
+.tasks-runs .task-row p {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: var(--f-xs);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.tasks-runs .task-row .last-error {
+  color: var(--danger);
+}
+
+.tasks-runs .task-row button {
+  margin: 8px 6px 0 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--f-xs);
+}
+
+.tasks-runs .task-row button:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.tasks-runs .task-row button:disabled {
+  color: var(--ink-4);
+}
+
+.tasks-runs .task-row pre {
+  margin-top: 6px;
+  font-size: var(--f-xs);
+}
+
+@media (max-width: 860px) {
+  .page.page-tasks {
+    padding-inline: 16px;
+  }
+
+  .tasks-search {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .tasks-time {
+    margin-left: 0;
+  }
+
+  .tasks-row-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

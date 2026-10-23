@@ -1,0 +1,218 @@
+/* Tessera — 资产与范围。
+   新选择器统一带 assets- 前缀；通用块（KPI / toolbar / data-table / 弹窗）沿用 ui.css。 */
+
+/* ---------- 工具条 ---------- */
+.assets-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.assets-check {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  accent-color: var(--accent);
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.assets-check:focus,
+.assets-check:focus-visible {
+  box-shadow: none;
+  border-color: var(--accent);
+}
+
+.assets-check:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* ---------- 表格 ---------- */
+.assets-table {
+  min-width: 900px;
+}
+
+.assets-table .assets-col-check {
+  width: 42px;
+  padding-right: 4px;
+}
+
+.assets-table th.assets-col-actions {
+  text-align: right;
+}
+
+.assets-host-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assets-host {
+  font-size: var(--f-base);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-evidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  min-width: 0;
+}
+
+.assets-evidence .cell-sub {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.assets-evidence-link {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.assets-evidence-link .evidence-link {
+  max-width: 260px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: var(--f-2xs);
+}
+
+.assets-source {
+  display: -webkit-box;
+  max-width: 260px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.assets-row[data-approval="pending"] .assets-status .status-pill {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.assets-cooled-cell {
+  white-space: nowrap;
+}
+
+.assets-cooled {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--r-xs);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: var(--f-2xs);
+  white-space: nowrap;
+}
+
+.assets-created {
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.assets-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.assets-actions .button {
+  height: 26px;
+  padding: 0 8px;
+  font-size: var(--f-sm);
+}
+
+.assets-run-state {
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.assets-run-state[data-active="true"] {
+  color: var(--accent-ink);
+}
+
+/* ---------- 星图容器：全幅嵌在有边框的卡片里，内部边框交给这一层统一 ---------- */
+.assets-map-frame {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.assets-map-frame > .asset-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 0;
+  align-items: stretch;
+  height: clamp(420px, calc(100dvh - 430px), 620px);
+}
+
+.assets-map-frame > .asset-map-layout.panel-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.assets-map-frame .asset-star-map {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.assets-map-frame .asset-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.assets-map-frame .asset-map-detail {
+  border-left: 1px solid var(--line);
+  overflow: auto;
+  max-height: 100%;
+}
+
+@media (max-width: 900px) {
+  .assets-map-frame > .asset-map-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .assets-map-frame .asset-map-detail {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    max-height: none;
+  }
+}
+
+/* ---------- 弹窗文案 ---------- */
+.assets-modal-lead {
+  font-size: var(--f-base);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}

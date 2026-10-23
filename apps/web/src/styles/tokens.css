@@ -1,0 +1,298 @@
+/* Tessera — design tokens.
+   两个主题共用一套语义变量；组件只读语义变量，不直接写颜色。 */
+
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-Variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("/fonts/NotoSansSC.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+
+  /* 画布与层次 */
+  --bg: #f4f6fc;
+  --bg-grid: rgba(12, 14, 22, 0.04);
+  --surface: #ffffff;
+  --surface-2: #f8faff;
+  --surface-3: #eef2fa;
+  --surface-4: #e3e8f4;
+  --surface-glass: rgba(255, 255, 255, 0.84);
+  --scrim: rgba(11, 12, 18, 0.32);
+
+  /* 墨色登录页与深色画布共用的品牌深面（浅色主题下也保持深色） */
+  --rail: #10121a;
+  --rail-2: #171a24;
+  --rail-3: #1f2330;
+  --rail-line: #232734;
+  --rail-line-strong: #2d3242;
+  --rail-ink: #eef0f6;
+  --rail-ink-2: #c6ccdb;
+  --rail-ink-3: #9ba2b4;
+  --rail-ink-4: #767e91;
+  --rail-accent: #8b85ff;
+  --rail-accent-soft: rgba(139, 133, 255, 0.16);
+
+  /* 侧栏：浅色下是纸面，深色下是抬高一档的墨面。
+     侧栏有自己的命名空间，不能再借用登录页的 --rail，否则两处只能同色。 */
+  --nav: #fbfbfe;
+  --nav-2: #ffffff;
+  --nav-3: #f1f3f9;
+  --nav-4: #e7eaf3;
+  --nav-line: #e7e9f1;
+  --nav-line-strong: #d5d9e4;
+  --nav-ink: #0b0c12;
+  --nav-ink-2: #343845;
+  --nav-ink-3: #5b6070;
+  --nav-ink-4: #6a7080;
+  --nav-accent-soft: rgba(90, 84, 240, 0.09);
+  --nav-accent-ink: #3d37cf;
+
+  /* 线条 */
+  --line: #e7e9f1;
+  --line-strong: #d5d9e4;
+  --line-faint: #eff1f7;
+
+  /* 文字 */
+  --ink: #0a0c12;
+  --ink-2: #343845;
+  --ink-3: #5b6070;
+  --ink-4: #646d7e;
+  --ink-inverse: #ffffff;
+
+  /* 品牌与强调色 */
+  --accent: #5a54f0;
+  --accent-strong: #4640e0;
+  --accent-soft: rgba(90, 84, 240, 0.09);
+  --accent-soft-2: rgba(90, 84, 240, 0.045);
+  --accent-line: rgba(90, 84, 240, 0.28);
+  --accent-ink: #3d37cf;
+
+  /* 图表：网格与轴线是墨色的透明度，柱子只用强调色 + 空心两种 */
+  --chart-grid: rgba(11, 12, 18, 0.08);
+  --chart-axis: rgba(11, 12, 18, 0.28);
+  --chart-focal-fill: rgba(90, 84, 240, 0.12);
+  --chart-hollow-fill: rgba(11, 12, 18, 0.09);
+  --chart-hollow-line: rgba(11, 12, 18, 0.42);
+
+  /* 语义色 */
+  --success: #0e8a60;
+  --success-soft: rgba(14, 138, 96, 0.09);
+  --warn: #a56a06;
+  --warn-soft: rgba(165, 106, 6, 0.1);
+  --danger: #c8372d;
+  --danger-soft: rgba(200, 55, 45, 0.08);
+  --info: #2563c9;
+  --info-soft: rgba(37, 99, 201, 0.08);
+
+  /* 风险等级（与 --severity-* 一一对应） */
+  --sev-critical: #c8261c;
+  --sev-critical-soft: #fdeceb;
+  --sev-high: #d95a0b;
+  --sev-high-soft: #fdf0e6;
+  --sev-medium: #a8760b;
+  --sev-medium-soft: #fbf3df;
+  --sev-low: #2b62c9;
+  --sev-low-soft: #eaf0fc;
+  --sev-informational: #5f6675;
+  --sev-informational-soft: #f1f2f5;
+  --sev-ungraded: #7d8291;
+  --sev-ungraded-soft: #f2f3f6;
+
+  /* 图分析画布兼容变量（Cytoscape 调色板读取）。
+     注意：自定义属性引用 var() 时 getPropertyValue 返回的是字面量，
+     画布无法解析，所以这里必须是解析后的颜色值。 */
+  --bg-elev: #ffffff;
+  --text: #0b0c12;
+  --text-2: #363a47;
+  --muted: #666b7a;
+  --faint: #9297a6;
+  --border: #e6e8ee;
+  --board-scope: #2f7f74;
+  --board-scope-soft: #e9f4f1;
+  --board-selection: #5a54f0;
+  --motion-accent: #2f7cf6;
+  --accent-contrast: #ffffff;
+  --map-bg: #f9fafb;
+  --map-star: rgba(90, 100, 120, 0.32);
+  --danger-ring: rgba(200, 55, 45, 0.18);
+  --success-ring: rgba(14, 138, 96, 0.18);
+  --warn-ring: rgba(165, 106, 6, 0.2);
+
+  /* 阴影：SaaS 卡片只留一层很轻的落影，抬起时再给空间感。 */
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.03);
+  --shadow-2: 0 2px 4px rgba(16, 24, 40, 0.04), 0 16px 36px -22px rgba(16, 24, 40, 0.2);
+  --shadow-pop: 0 24px 64px -24px rgba(16, 24, 40, 0.28), 0 4px 12px rgba(16, 24, 40, 0.06);
+  /* 深色技术面板（浅色主题下的安全总览主角） */
+  --panel-grid: rgba(255, 255, 255, 0.055);
+
+  /* 尺寸 */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s7: 32px;
+  --s8: 40px;
+  --s9: 56px;
+
+  --r-xs: 5px;
+  --r-sm: 7px;
+  --r-md: 9px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-2xl: 24px;
+
+  /* 字体 */
+  --font-sans: "Geist", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Microsoft YaHei UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, "Cascadia Code", monospace;
+
+  --f-2xs: 11px;
+  --f-xs: 12px;
+  --f-sm: 13px;
+  --f-base: 14px;
+  --f-md: 16px;
+  --f-lg: 18px;
+  --f-xl: 22px;
+  --f-2xl: 28px;
+  --f-3xl: 36px;
+  --f-num: 32px;
+  --f-display: 46px;
+
+  /* 布局 */
+  --sidebar-w: 260px;
+  --sidebar-w-collapsed: 68px;
+  --topbar-h: 60px;
+  --page-max: 1400px;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --fast: 120ms var(--ease);
+  --normal: 180ms var(--ease);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* 深色不压到纯黑：画布、卡片、侧栏各抬一档，层级靠明度差而不是纯色块。 */
+  --bg: #0f121b;
+  --bg-grid: rgba(244, 245, 248, 0.045);
+  --surface: #181c27;
+  --surface-2: #1e2330;
+  --surface-3: #262d3c;
+  --surface-4: #303849;
+  --surface-glass: rgba(20, 24, 33, 0.82);
+  --scrim: rgba(3, 4, 8, 0.62);
+
+  /* 登录页深面；比侧栏再深一点，保持“品牌面板 vs 工作区”的层次 */
+  --rail: #151922;
+  --rail-2: #1d222e;
+  --rail-3: #252b38;
+  --rail-line: #2a3040;
+  --rail-line-strong: #363d4e;
+  --rail-ink: #eef0f6;
+  --rail-ink-2: #c6ccdb;
+  --rail-ink-3: #9ba2b4;
+  --rail-ink-4: #7c8497;
+  --rail-accent: #a29dff;
+  --rail-accent-soft: rgba(139, 133, 255, 0.18);
+
+  --nav: #161a24;
+  --nav-2: #1e232f;
+  --nav-3: #252b38;
+  --nav-4: #2e3545;
+  --nav-line: #2a3040;
+  --nav-line-strong: #373e4f;
+  --nav-ink: #eef0f6;
+  --nav-ink-2: #c9cfdd;
+  --nav-ink-3: #9ea6b8;
+  --nav-ink-4: #8a92a4;
+  --nav-accent-soft: rgba(139, 133, 255, 0.16);
+  --nav-accent-ink: #bbb7ff;
+
+  --line: #2b3140;
+  --line-strong: #3a4152;
+  --line-faint: #222832;
+
+  --ink: #f3f4f8;
+  --ink-2: #c8ccd8;
+  --ink-3: #99a0b1;
+  --ink-4: #939bad;
+  --ink-inverse: #0b0c12;
+
+  --accent: #8b85ff;
+  --accent-strong: #a29dff;
+  --accent-soft: rgba(139, 133, 255, 0.14);
+  --accent-soft-2: rgba(139, 133, 255, 0.07);
+  --accent-line: rgba(139, 133, 255, 0.4);
+  --accent-ink: #b3aeff;
+
+  /* 图表：深色下同样按墨色透明度翻转 */
+  --chart-grid: rgba(243, 244, 248, 0.1);
+  --chart-axis: rgba(243, 244, 248, 0.3);
+  --chart-focal-fill: rgba(139, 133, 255, 0.16);
+  --chart-hollow-fill: rgba(243, 244, 248, 0.1);
+  --chart-hollow-line: rgba(243, 244, 248, 0.45);
+
+  --success: #4bd3a0;
+  --success-soft: rgba(75, 211, 160, 0.12);
+  --warn: #e8b45a;
+  --warn-soft: rgba(232, 180, 90, 0.12);
+  --danger: #ff7b72;
+  --danger-soft: rgba(255, 123, 114, 0.12);
+  --info: #7cb0ff;
+  --info-soft: rgba(124, 176, 255, 0.12);
+
+  --sev-critical: #ff6b60;
+  --sev-critical-soft: rgba(255, 107, 96, 0.14);
+  --sev-high: #ff9255;
+  --sev-high-soft: rgba(255, 146, 85, 0.13);
+  --sev-medium: #e5b95c;
+  --sev-medium-soft: rgba(229, 185, 92, 0.12);
+  --sev-low: #7db0ff;
+  --sev-low-soft: rgba(125, 176, 255, 0.12);
+  --sev-informational: #a3a9b8;
+  --sev-informational-soft: rgba(163, 169, 184, 0.12);
+  --sev-ungraded: #8e94a5;
+  --sev-ungraded-soft: rgba(142, 148, 165, 0.12);
+
+  --board-scope: #4fb3a4;
+  --board-scope-soft: #102a27;
+  --motion-accent: #6ba6ff;
+  --map-bg: #0b0d12;
+  --map-star: rgba(160, 175, 200, 0.28);
+  --danger-ring: rgba(255, 123, 114, 0.22);
+  --success-ring: rgba(75, 211, 160, 0.22);
+  --warn-ring: rgba(232, 180, 90, 0.22);
+
+  /* 画布兼容变量：同样必须是解析后的颜色值。 */
+  --bg-elev: #191d28;
+  --text: #f3f4f8;
+  --text-2: #c8ccd8;
+  --muted: #99a0b1;
+  --faint: #737a8c;
+  --border: #2b3140;
+  --board-selection: #8b85ff;
+  --accent-contrast: #0b0c12;
+  --map-bg: #13161f;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.45), 0 16px 32px -20px rgba(0, 0, 0, 0.8);
+  --shadow-pop: 0 32px 80px -24px rgba(0, 0, 0, 0.9), 0 2px 10px rgba(0, 0, 0, 0.4);
+}

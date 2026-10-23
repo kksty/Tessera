@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320" role="img" aria-label="Tessera · 探索成图，证据成链">
+  <!-- 记号几何与 apps/web/src/brand-art.ts 同一组坐标：一片 25 见方的瓷砖被 45° 接缝斜切，右下那片为强调色。 -->
+  <defs>
+    <clipPath id="banner-mark-clip">
+      <rect x="3.5" y="3.5" width="25" height="25" rx="5.5"/>
+    </clipPath>
+  </defs>
+  <rect width="1200" height="320" fill="#ffffff"/>
+
+  <g transform="translate(80 104) scale(2.8)">
+    <g clip-path="url(#banner-mark-clip)">
+      <path d="M3.5 3.5H27.2L3.5 27.2Z" fill="#0b0c12"/>
+      <path d="M28.5 28.5H4.8L28.5 4.8Z" fill="#5a54f0"/>
+    </g>
+  </g>
+
+  <g font-family="Geist, 'Segoe UI', -apple-system, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <text x="186" y="158" fill="#0b0c12" font-size="54" font-weight="600" letter-spacing="-1.3">tessera</text>
+    <text x="187" y="194" fill="#5d6273" font-size="19" letter-spacing="1">探索成图，证据成链</text>
+  </g>
+
+  <!-- 右侧是同一组记号放大后的发丝线水印，只作留白的节奏，不与字标争焦点。 -->
+  <g transform="translate(872 60) scale(7.2)" fill="#0b0c12" fill-opacity="0.05">
+    <g clip-path="url(#banner-mark-clip)">
+      <path d="M3.5 3.5H27.2L3.5 27.2Z"/>
+      <path d="M28.5 28.5H4.8L28.5 4.8Z"/>
+    </g>
+  </g>
+</svg>

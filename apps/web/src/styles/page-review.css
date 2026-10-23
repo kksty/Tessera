@@ -1,0 +1,672 @@
+/* 审核队列（Review）页面样式。所有选择器都以 page-review / review- 限定，不改全局组件。 */
+
+.page-review {
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  /* 与其它页面共用 .content 的内容栅格。 */
+  padding: 0;
+  min-width: 0;
+}
+
+.page-review .kpi-grid {
+  margin-bottom: var(--s4);
+}
+
+.review-notation {
+  margin-bottom: var(--s4);
+  padding: 12px 16px;
+  border: 1px solid var(--line-faint);
+  border-radius: var(--radius-md, 8px);
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  line-height: 1.7;
+}
+
+.review-notation summary { cursor: pointer; color: var(--ink-2); }
+.review-notation p { margin: 8px 0 0; }
+
+.review-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-width: 0;
+}
+
+.review-empty .card-body {
+  padding: 0;
+}
+
+.review-muted {
+  font-size: var(--f-sm);
+  color: var(--ink-4);
+  line-height: 1.6;
+}
+
+.review-sep {
+  flex: none;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.review-kicker {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--f-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+/* ---------- 待审核队列 ---------- */
+.review-pending-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-faint);
+  transition: background var(--fast);
+}
+
+.review-pending-row:last-child {
+  border-bottom: 0;
+}
+
+.review-pending-row:hover {
+  background: var(--surface-2);
+}
+
+.review-pending-row:focus-visible {
+  background: var(--accent-soft-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.review-pending-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: var(--ink-4);
+}
+
+.review-pending-row[data-gate="info"] .review-pending-dot {
+  background: var(--info);
+}
+
+.review-pending-row[data-gate="accent"] .review-pending-dot {
+  background: var(--accent);
+}
+
+.review-pending-row[data-gate="warn"] .review-pending-dot {
+  background: var(--warn);
+}
+
+.review-pending-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.review-pending-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-pending-title {
+  font-size: var(--f-base);
+  font-weight: 500;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.review-pending-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.review-pending-meta .mono {
+  font-size: var(--f-xs);
+}
+
+.review-pending-gate {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.review-pending-gate svg {
+  flex: none;
+  color: var(--ink-4);
+}
+
+.review-pending-ref {
+  font-family: var(--font-mono);
+  font-size: var(--f-xs);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.review-pending-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding-top: 1px;
+}
+
+/* ---------- 审核记录 ---------- */
+.review-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.review-card {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line-faint);
+  border-left: 2px solid transparent;
+  min-width: 0;
+  transition: background var(--fast), border-color var(--fast);
+}
+
+.review-card:last-child {
+  border-bottom: 0;
+}
+
+.review-card[data-verdict="pass"] {
+  border-left-color: var(--success);
+}
+
+.review-card[data-verdict="needs_evidence"] {
+  border-left-color: var(--warn);
+}
+
+.review-card[data-verdict="rejected"] {
+  border-left-color: var(--danger);
+}
+
+.review-card:focus-visible {
+  background: var(--accent-soft-2);
+}
+
+/* 从漏洞页「查看审核」跳过来时，App 会给目标加 .navigation-target。 */
+.review-card.navigation-target,
+.review-pending-row.navigation-target {
+  background: var(--accent-soft-2);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.review-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-card-ident {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.review-finding {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  text-align: left;
+  font-size: var(--f-base);
+  font-weight: 500;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  transition: color var(--fast);
+}
+
+.review-finding:hover {
+  color: var(--accent-ink);
+}
+
+.review-finding:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+
+.review-finding svg {
+  flex: none;
+  color: var(--ink-4);
+}
+
+.review-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.review-card-meta .mono {
+  font-size: var(--f-xs);
+}
+
+.review-dossier {
+  margin-top: 12px;
+}
+
+.review-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.review-lead {
+  font-size: var(--f-base);
+  color: var(--ink-2);
+  line-height: 1.7;
+}
+
+.review-fold {
+  min-width: 0;
+}
+
+.review-fold > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  transition: color var(--fast);
+}
+
+.review-fold > summary::before {
+  content: "＋";
+  font-size: var(--f-2xs);
+  color: var(--ink-4);
+}
+
+.review-fold[open] > summary::before {
+  content: "－";
+}
+
+.review-fold > summary:hover {
+  color: var(--accent-ink);
+}
+
+.review-fold > :not(summary) {
+  margin-top: 8px;
+}
+
+/* 审核理由里的 Markdown 子集：只在本页卡片内生效。 */
+.review-card .rich-text {
+  font-size: var(--f-base);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.review-card .rich-text > * + * {
+  margin-top: 8px;
+}
+
+.review-card .rich-text p {
+  line-height: 1.72;
+}
+
+.review-card .rich-text h3 {
+  font-size: var(--f-base);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.review-card .rich-text h4 {
+  font-size: var(--f-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.review-card .rich-text ul,
+.review-card .rich-text ol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.review-card .rich-text ol {
+  list-style: decimal;
+}
+
+.review-card .rich-text li {
+  line-height: 1.65;
+}
+
+.review-card .rich-text li::marker {
+  color: var(--ink-4);
+}
+
+.review-card .rich-text strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.review-card .rich-text code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  font-size: var(--f-sm);
+  color: var(--ink-2);
+}
+
+.review-card .rich-text pre {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: auto;
+}
+
+.review-card .rich-text pre code {
+  padding: 0;
+  background: none;
+}
+
+.review-card .rich-text blockquote {
+  padding: 4px 12px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-3);
+}
+
+.review-card .rich-text hr {
+  height: 1px;
+  border: 0;
+  background: var(--line);
+  margin: 12px 0;
+}
+
+.review-card .rich-table-wrap {
+  overflow-x: auto;
+}
+
+.review-card .rich-text table {
+  font-size: var(--f-sm);
+}
+
+.review-card .rich-text th,
+.review-card .rich-text td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-faint);
+  text-align: left;
+  vertical-align: top;
+}
+
+.review-card .rich-text th {
+  color: var(--ink-3);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.review-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.review-suggestion .rich-text {
+  font-size: var(--f-sm);
+  color: var(--ink-2);
+}
+
+.review-suggestion .button {
+  align-self: flex-start;
+}
+
+/* ---------- 审核问题的强制处置 ---------- */
+.review-issues {
+  gap: 12px;
+}
+
+.review-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.review-issue:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.review-issue .review-card-ident {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.review-issue small {
+  color: var(--ink-3);
+  font-size: var(--f-xs);
+}
+
+/* ---------- 侧栏证据块 ---------- */
+.review-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.review-aside-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.review-severity-shift {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--f-sm);
+  color: var(--ink-4);
+}
+
+.review-cvss {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  min-width: 0;
+}
+
+.review-cvss-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.review-cvss-score {
+  font-size: var(--f-lg);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.review-cvss-vector {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--f-xs);
+  line-height: 1.6;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.review-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.review-identity-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 0 10px;
+  font-size: var(--f-sm);
+  line-height: 1.55;
+}
+
+.review-identity-row dt {
+  color: var(--ink-4);
+}
+
+.review-identity-row dd {
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  overflow-wrap: anywhere;
+}
+
+.review-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.review-evidence .evidence-link {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.review-disputes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.review-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--f-xs);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color var(--fast), background var(--fast), color var(--fast);
+}
+
+.review-chip:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.review-card-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-faint);
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.review-card-foot svg {
+  flex: none;
+  color: var(--ink-4);
+}
+
+.review-card-foot .mono {
+  font-size: var(--f-xs);
+}
+
+.review-more {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  border-top: 1px solid var(--line-faint);
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 760px) {
+  .page-review .page-header {
+    flex-wrap: wrap;
+    gap: var(--s3);
+  }
+
+  .page-review .page-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 820px) {
+  .review-pending-row {
+    flex-wrap: wrap;
+  }
+
+  .review-pending-actions {
+    width: 100%;
+    padding-top: 0;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 600px) {
+  .review-card {
+    padding: 12px 12px 10px;
+  }
+
+  .review-pending-row {
+    padding: 11px 12px;
+  }
+
+  .review-card-head {
+    align-items: flex-start;
+  }
+}

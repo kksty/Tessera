@@ -1,0 +1,340 @@
+/* Settings — 工作区设置（Tessera）。本文件只放 settings- 前缀的页面级样式。 */
+
+.page-settings {
+  min-width: 0;
+  max-width: 1180px;
+  padding-bottom: 88px;
+}
+
+.page-settings .settings-source {
+  font-size: var(--f-sm);
+  color: var(--ink-4);
+}
+
+.settings-skeleton {
+  padding: 2px;
+}
+
+/* ---------- 字段网格 ---------- */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.settings-grid + .settings-grid,
+.settings-preferences + .settings-grid {
+  margin-top: var(--s4);
+}
+
+.settings-grid-note {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.settings-field-wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 760px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.settings-hint {
+  font-size: var(--f-xs);
+  line-height: 1.6;
+  color: var(--ink-4);
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: var(--s4);
+  font-size: var(--f-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.settings-toggle input {
+  margin: 0;
+}
+
+.settings-toggle + .settings-hint {
+  margin: calc(var(--s4) * -0.5) 0 var(--s4);
+}
+
+/* ---------- 本地偏好（Preferences 自带按钮，只在此作用域内调整） ---------- */
+.settings-preferences {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.settings-preferences > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  white-space: nowrap;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+
+.settings-preferences > button:hover {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+/* ---------- 模型选择器（ModelPicker 的结构类） ---------- */
+.settings-model {
+  margin-top: var(--s4);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line-faint);
+}
+
+.settings-model .model-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-model .model-picker > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--f-sm);
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.settings-model .model-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-model .model-picker-row select {
+  flex: 1;
+  min-width: min(100%, 180px);
+}
+
+.settings-model [aria-label="Pi 模型配置"] {
+  overflow-wrap: anywhere;
+  font-size: var(--f-xs);
+  line-height: 1.6;
+}
+
+.model-catalog-status,
+.model-effective-config {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+
+.model-catalog-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 10px;
+  font-size: var(--f-xs);
+  line-height: 1.6;
+}
+
+.model-catalog-status > div {
+  flex: 1;
+  min-width: min(100%, 220px);
+}
+
+.model-catalog-status p,
+.model-effective-config p {
+  margin: 4px 0;
+}
+
+.model-effective-config dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.model-effective-config dt,
+.model-effective-config dd span {
+  color: var(--ink-3);
+}
+
+.model-effective-config dd {
+  margin: 2px 0 0;
+  font-size: var(--f-sm);
+  font-weight: 600;
+}
+
+.model-effective-config dd span {
+  display: block;
+  font-size: var(--f-xs);
+  font-weight: 400;
+}
+
+.page-settings .settings-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-model .model-picker-row button,
+.settings-model .model-catalog-status button {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  white-space: nowrap;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+
+.settings-model .model-picker-row button:hover,
+.settings-model .model-catalog-status button:hover {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.settings-model .model-picker > p {
+  font-size: var(--f-xs);
+  line-height: 1.6;
+  color: var(--ink-4);
+}
+
+.settings-model .field-error {
+  font-size: var(--f-xs);
+  line-height: 1.6;
+  color: var(--danger);
+}
+
+/* ---------- 收尾收紧提示 ---------- */
+.settings-clamp {
+  margin-top: var(--s3);
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--f-xs);
+  line-height: 1.6;
+}
+
+/* ---------- 底部保存条 ---------- */
+.settings-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: var(--s5);
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.settings-savebar[data-dirty="true"] {
+  border-color: var(--accent-line);
+}
+
+.settings-savebar-state {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-savebar-count {
+  font-size: var(--f-base);
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.settings-savebar[data-dirty="false"] .settings-savebar-count {
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.settings-savebar-list {
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-savebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+@media (max-width: 600px) {
+  .settings-savebar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .settings-savebar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 760px) {
+  /* 页头在窄屏改为上下两段，标题与说明不挤压。 */
+  .page-settings .page-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--s4);
+  }
+}
+
+.settings-log-grid {
+  align-items: end;
+}
+
+.settings-log-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-log-action .quiet {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 12px;
+  line-height: 1.6;
+}

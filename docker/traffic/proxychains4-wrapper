@@ -1,0 +1,9 @@
+#!/bin/sh
+# A user-selected proxychains route supersedes only the automatically injected HTTP proxy.
+for name in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY; do
+  eval 'value=${'"$name"'-}'
+  if [ -n "${TESSERA_CAPTURE_PROXY_URL:-}" ] && [ "$value" = "$TESSERA_CAPTURE_PROXY_URL" ]; then
+    unset "$name"
+  fi
+done
+exec /usr/bin/proxychains4 "$@"

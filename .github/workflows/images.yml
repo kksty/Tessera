@@ -1,0 +1,105 @@
+# 构建并推送预构建镜像到 GHCR。
+#
+# 触发：推送 v* 标签，或手动运行。镜像标签取 package.json 版本；标签触发时取标签名。
+# 首次发布后，在 GitHub Packages 中把 tessera-app / tessera-worker 的可见性改为 public，
+# 否则公开仓库的用户执行 docker compose up 时会被要求登录 ghcr.io。
+name: Publish images
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then version="${GITHUB_REF_NAME#v}"; fi
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+      - id: image
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.image.outputs.owner }}/tessera-app
+          tags: |
+            type=raw,value=${{ steps.version.outputs.value }}
+            type=raw,value=latest
+            type=sha,prefix=sha-
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DEBIAN_MIRROR=http://deb.debian.org
+            COREPACK_NPM_REGISTRY=https://registry.npmjs.org
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,scope=app
+          provenance: false
+          sbom: false
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then version="${GITHUB_REF_NAME#v}"; fi
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+      - id: image
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.image.outputs.owner }}/tessera-worker
+          tags: |
+            type=raw,value=${{ steps.version.outputs.value }}
+            type=raw,value=latest
+            type=sha,prefix=sha-
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/worker.Dockerfile
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DEBIAN_MIRROR=http://deb.debian.org
+            KALI_MIRROR=http://http.kali.org/kali
+            COREPACK_NPM_REGISTRY=https://registry.npmjs.org
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker
+          provenance: false
+          sbom: false

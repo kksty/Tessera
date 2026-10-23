@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Tessera">
+  <!-- 16px 是主要阅读尺寸：记号放大到 42/64（约 66%），斜缝仍有约 1.4px。 -->
+  <rect width="64" height="64" rx="14" fill="#0B0C12"/>
+  <g transform="translate(32 32) scale(1.68) translate(-16 -16)">
+    <defs>
+      <clipPath id="tessera-favicon-clip">
+        <rect x="3.5" y="3.5" width="25" height="25" rx="5.5"/>
+      </clipPath>
+    </defs>
+    <g clip-path="url(#tessera-favicon-clip)">
+      <path d="M3.5 3.5H27.2L3.5 27.2Z" fill="#F4F5F8"/>
+      <path d="M28.5 28.5H4.8L28.5 4.8Z" fill="#8B85FF"/>
+    </g>
+  </g>
+</svg>

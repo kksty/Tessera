@@ -1,0 +1,99 @@
+name: tessera
+
+# 默认使用 GHCR 上的预构建镜像：docker compose up -d 只拉取，不在本机构建。
+# 覆盖镜像仓库或版本：在 .env 设置 TESSERA_IMAGE_REPO / TESSERA_IMAGE_TAG。
+# 从源码构建：docker compose -f compose.yaml -f compose.build.yaml up -d --build
+x-images:
+  app: &app-image ${TESSERA_APP_IMAGE:-${TESSERA_IMAGE_REPO:-ghcr.io/kksty}/tessera-app:${TESSERA_IMAGE_TAG:-0.3.0}}
+  worker: &worker-image ${TESSERA_WORKER_IMAGE:-${TESSERA_IMAGE_REPO:-ghcr.io/kksty}/tessera-worker:${TESSERA_IMAGE_TAG:-0.3.0}}
+
+services:
+  tessera-server:
+    image: *app-image
+    ports:
+      - "${TESSERA_BIND_ADDRESS:-127.0.0.1}:${TESSERA_PORT:-8000}:8000"
+    environment:
+      TESSERA_DB: /data/tessera.db
+      TESSERA_EVENT_HOT_DAYS: ${TESSERA_EVENT_HOT_DAYS:-90}
+      TESSERA_DIAGNOSTIC_HOT_DAYS: ${TESSERA_DIAGNOSTIC_HOT_DAYS:-30}
+      TESSERA_EVIDENCE_HOT_DAYS: ${TESSERA_EVIDENCE_HOT_DAYS:-30}
+      TESSERA_ARCHIVE_BATCH: ${TESSERA_ARCHIVE_BATCH:-1000}
+      TESSERA_LOG_LEVEL: ${TESSERA_LOG_LEVEL:-info}
+      TESSERA_CONFIG: /data/runtime.json
+      TESSERA_INTERNAL_URL: ${TESSERA_INTERNAL_URL:-}
+      TESSERA_DISPATCHER_URL: http://tessera-dispatcher:8001
+      TESSERA_NETWORK: ${TESSERA_NETWORK:-}
+      TESSERA_WORKER_IMAGE: *worker-image
+      TESSERA_VOLUME_PREFIX: ${TESSERA_VOLUME_PREFIX:-}
+      TESSERA_MAX_WORKERS: ${TESSERA_MAX_WORKERS:-}
+      TESSERA_MAX_PROJECT_WORKERS: ${TESSERA_MAX_PROJECT_WORKERS:-}
+      TESSERA_MAX_PROJECT_REVIEW_WORKERS: ${TESSERA_MAX_PROJECT_REVIEW_WORKERS:-}
+      TESSERA_INTERVAL_MS: ${TESSERA_INTERVAL_MS:-}
+      TESSERA_DEBOUNCE_MS: ${TESSERA_DEBOUNCE_MS:-}
+      TESSERA_TASK_TIMEOUT_SECONDS: ${TESSERA_TASK_TIMEOUT_SECONDS:-}
+      TESSERA_CLOSEOUT_SECONDS: ${TESSERA_CLOSEOUT_SECONDS:-}
+      TESSERA_TOOL_TIMEOUT_SECONDS: ${TESSERA_TOOL_TIMEOUT_SECONDS:-}
+      TESSERA_RESULT_REPAIRS: ${TESSERA_RESULT_REPAIRS:-}
+      TESSERA_WORKER_TOKEN: ${TESSERA_WORKER_TOKEN:-}
+      TESSERA_TOKEN_FILE: /data/internal-token
+      # 单账号登录门：留空则首次启动自动生成，并只在容器日志里打印一次。
+      TESSERA_OPERATOR_USER: ${TESSERA_OPERATOR_USER:-}
+      TESSERA_OPERATOR_PASSWORD: ${TESSERA_OPERATOR_PASSWORD:-}
+      TESSERA_COOKIE_SECURE: ${TESSERA_COOKIE_SECURE:-}
+      PI_MODEL: ${PI_MODEL:-}
+      PI_PROVIDER: ${PI_PROVIDER:-}
+      PI_BASE_URL: ${PI_BASE_URL:-}
+      PI_API_KEY: ${PI_API_KEY:-}
+      PI_PROVIDER_API: ${PI_PROVIDER_API:-}
+      PI_CONTEXT_WINDOW: ${PI_CONTEXT_WINDOW:-}
+      PI_MAX_OUTPUT_TOKENS: ${PI_MAX_OUTPUT_TOKENS:-}
+      PI_REVIEW_MODEL: ${PI_REVIEW_MODEL:-}
+      PI_REVIEW_PROVIDER: ${PI_REVIEW_PROVIDER:-}
+      PI_REVIEW_BASE_URL: ${PI_REVIEW_BASE_URL:-}
+      PI_REVIEW_API_KEY: ${PI_REVIEW_API_KEY:-}
+      PI_REVIEW_PROVIDER_API: ${PI_REVIEW_PROVIDER_API:-}
+      PI_REVIEW_CONTEXT_WINDOW: ${PI_REVIEW_CONTEXT_WINDOW:-}
+      PI_REVIEW_MAX_OUTPUT_TOKENS: ${PI_REVIEW_MAX_OUTPUT_TOKENS:-}
+    volumes:
+      - ${TESSERA_DATA_DIR:-./datas/tessera}:/data
+    networks: [tessera]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  tessera-dispatcher:
+    image: *app-image
+    command: ["node", "dist/dispatcher.mjs"]
+    environment:
+      TESSERA_SERVER: http://tessera-server:8000
+      TESSERA_CAPTURE_UPSTREAM: ${TESSERA_CAPTURE_UPSTREAM:-}
+      TESSERA_CAPTURE_BYPASS: ${TESSERA_CAPTURE_BYPASS:-}
+      TESSERA_WORKER_TOKEN: ${TESSERA_WORKER_TOKEN:-}
+      TESSERA_TOKEN_FILE: /data/internal-token
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${TESSERA_DATA_DIR:-./datas/tessera}:/data
+    networks: [tessera]
+    depends_on:
+      tessera-server:
+        condition: service_healthy
+      worker-image:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  # 一次性拉取并校验 Worker 镜像；实际项目 Worker 由 Dispatcher 动态创建。
+  worker-image:
+    image: *worker-image
+    command: ["node", "--version"]
+    networks: [tessera]
+    restart: "no"
+networks:
+  tessera:
+    name: ${TESSERA_NETWORK:-tessera-network}

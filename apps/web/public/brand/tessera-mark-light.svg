@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Tessera">
+  <!-- 一片瓷砖被 45° 接缝斜切，右下那片着色；几何与 apps/web/src/brand-art.ts 同源。 -->
+  <defs>
+    <clipPath id="tessera-mark-clip">
+      <rect x="3.5" y="3.5" width="25" height="25" rx="5.5"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tessera-mark-clip)">
+    <path d="M3.5 3.5H27.2L3.5 27.2Z" fill="#0B0C12"/>
+    <path d="M28.5 28.5H4.8L28.5 4.8Z" fill="#5A54F0"/>
+  </g>
+</svg>

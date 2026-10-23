@@ -1,0 +1,34 @@
+{
+  "gogo": {
+    "repository": "https://github.com/chainreactors/gogo",
+    "version": "v2.15.0",
+    "assets": {
+      "amd64": {
+        "url": "https://github.com/chainreactors/gogo/releases/download/v2.15.0/gogo_linux_amd64",
+        "sha256": "3b51080a909023f7d484e2443740b572307ce0054eb9e32d98f0a06bfcd2db90",
+        "size": 4340260
+      },
+      "arm64": {
+        "url": "https://github.com/chainreactors/gogo/releases/download/v2.15.0/gogo_linux_arm64",
+        "sha256": "f34e248bc1d0f8e18101655850082b9f48f5f9f5a102cbac107086f3798c20a9",
+        "size": 10223616
+      }
+    }
+  },
+  "spray": {
+    "repository": "https://github.com/chainreactors/spray",
+    "version": "v0.3.2",
+    "assets": {
+      "amd64": {
+        "url": "https://github.com/chainreactors/spray/releases/download/v0.3.2/spray_linux_amd64",
+        "sha256": "5e6c778790a93c79110394a1c43f8d1902e20c69f5f03e544347fda7cf9863e8",
+        "size": 15365676
+      },
+      "arm64": {
+        "url": "https://github.com/chainreactors/spray/releases/download/v0.3.2/spray_linux_arm64",
+        "sha256": "907185fc9cacae2b0040a96e183d0893201bb2f194d32fdd73eeb6851d7dd03d",
+        "size": 33554616
+      }
+    }
+  }
+}

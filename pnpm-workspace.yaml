@@ -1,0 +1,17 @@
+allowBuilds:
+  esbuild: true
+  '@mariozechner/clipboard': false
+  '@earendil-works/pi-natives': true
+  koffi: true
+  protobufjs: true
+  '@google/genai': false
+  cpu-features: false
+  ssh2: false
+minimumReleaseAgeExclude:
+  - '@earendil-works/pi-agent-core@1.2.0'
+  - '@earendil-works/pi-ai@1.2.0'
+  - '@earendil-works/pi-codemode@1.2.0'
+  - '@earendil-works/pi-coding-agent@1.2.0'
+  - '@earendil-works/pi-mcp@1.2.0'
+  - '@earendil-works/pi-telemetry@1.2.0'
+  - '@earendil-works/pi-tui@1.2.0'

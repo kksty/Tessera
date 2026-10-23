@@ -1,0 +1,102 @@
+{
+  "format_version": 1,
+  "recorded_on": "2026-10-19",
+  "purpose": "固定可恢复的源码、依赖、默认配置和既有合成验收脚本；不代表已运行模型效果对照。blob 为 Git 对象 ID，可用 git show COMMIT:PATH 还原。",
+  "baselines": [
+    {
+      "name": "M0、M3 前",
+      "commit": "c8ffdf5548070723b268c8cf4e3e2afab71c7a7c",
+      "blobs": {
+        "pnpm-lock.yaml": "27ff8652be72cf31b92d78e50e4093e23b01d93b",
+        "apps/server/src/runtime.ts": "98307cf53aea48166c093341bfc746da6d8407a3",
+        "scripts/checks/memory-model.ts": "cff6afd426b4dafdedc30651ca25864311aceb4a",
+        "scripts/checks/decide-model.ts": "5fa6fcfcea7d10551fe392ddc91d45c4539627bd"
+      }
+    },
+    {
+      "name": "M0、M3 后",
+      "commit": "101b9c9c72e2d14945f6574902fe8b36f26c5f67",
+      "blobs": {
+        "pnpm-lock.yaml": "27ff8652be72cf31b92d78e50e4093e23b01d93b",
+        "apps/server/src/runtime.ts": "4af597628cf066f2871fcbddb29727b383595a37",
+        "scripts/checks/memory-model.ts": "cff6afd426b4dafdedc30651ca25864311aceb4a",
+        "scripts/checks/decide-model.ts": "5fa6fcfcea7d10551fe392ddc91d45c4539627bd"
+      }
+    }
+  ],
+  "effect_comparison": {
+    "status": "closed_inconclusive_no_further_budget",
+    "closure": {
+      "date": "2026-10-20",
+      "reason": "User chose no additional budget and closure of this implementation round",
+      "additional_model_runs_planned": false,
+      "expanded_repeated_experiments": "cancelled_for_this_round",
+      "effect_acceptance": "inconclusive_not_passed",
+      "existing_artifacts_and_known_issues": "retained"
+    },
+    "model": {
+      "id": "glm-5",
+      "provider": "",
+      "api": "openai-completions",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "endpoint_sha256": "f68849fb33c895d97aeadf842c6b2b49f5c68b08023008603992dcaae33c723e",
+      "credential_material": "omitted"
+    },
+    "budget": {
+      "seconds": 600,
+      "input": 100000,
+      "output": 12000,
+      "request_output": 4096
+    },
+    "repetitions": 1,
+    "target_task_set": {
+      "type": "local_safety_task_pilot",
+      "scenarios": [
+        "access-control",
+        "negative-control",
+        "contradictory-history"
+      ],
+      "fixture_sha256": "8110bfe7962514775d9aecd44bfd6712555135ffca81c475b519112adfb5834c"
+    },
+    "measurements": {
+      "pilot_directory": "test-results/m6/20261020-m6",
+      "cases": 9,
+      "known_input_tokens": 646823,
+      "known_output_tokens": 48697,
+      "unknown_usage_requests": 1,
+      "completed_projects": 0,
+      "review_runs": 0,
+      "verdict": "inconclusive: conservative input admission stopped all cases before delivery"
+    },
+    "note": "首轮与追加轮次均为真实模型小集，不是稳定效果结论；首轮一次上游 502 用量未知，预试验独立保留。追加三个对照已完成，均未交付，未覆盖 Review。两轮不合并计算收益；当前效果验收仍未通过。",
+    "followup": {
+      "status": "complete_inconclusive",
+      "scope": "One access-control scenario across three unchanged source versions",
+      "cases": 3,
+      "budget": {
+        "seconds": 600,
+        "input": 200000,
+        "output": 24000,
+        "request_output": 4096
+      },
+      "directory": "test-results/m6/20261020-m6-expanded",
+      "measurements": {
+        "cases": 3,
+        "known_input_tokens": 451736,
+        "known_output_tokens": 32711,
+        "unknown_usage_requests": 0,
+        "completed_projects": 0,
+        "review_runs": 0,
+        "common_valid_scenarios": ["access-control"],
+        "verdict": "inconclusive: baseline stopped on wall-clock reserve; fair-scheduling and candidate stopped on input admission before delivery"
+      },
+      "resumption": {
+        "completed_cases_preserved": 2,
+        "new_cases_run": 1,
+        "reused_frozen_bundles_and_image": true,
+        "credentials_removed": true
+      }
+    }
+  }
+}

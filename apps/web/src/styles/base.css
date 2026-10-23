@@ -1,0 +1,371 @@
+/* Tessera — reset 与基础排版。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* 提示条与 .app 同处一列：高度由两者分摊，避免整页多出提示条那一截。 */
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--f-base) / 1.65 var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd,
+ul,
+ol {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+h1 {
+  font-size: var(--f-2xl);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
+}
+
+h2 {
+  font-size: var(--f-md);
+  font-weight: 600;
+  letter-spacing: -0.014em;
+}
+
+h3 {
+  font-size: var(--f-base);
+  font-weight: 600;
+  letter-spacing: -0.006em;
+}
+
+h4 {
+  font-size: var(--f-sm);
+  font-weight: 600;
+  letter-spacing: -0.004em;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Keep defaults weaker than component rules, including icon padding and compact widths. */
+input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"])),
+textarea,
+select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 7px 10px;
+  width: 100%;
+  outline: none;
+  transition: border-color var(--fast), box-shadow var(--fast), background var(--fast);
+}
+
+/* Checkbox/radio/range keep native geometry: a full-width checkbox pushes its
+   label to the far edge of the row and reads as empty space. */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  width: auto;
+  flex: none;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-4);
+}
+
+input:hover,
+textarea:hover,
+select:hover {
+  border-color: var(--line-strong);
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: none;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  border-radius: var(--r-sm);
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-4);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+}
+
+/* 基础工具类 */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.quiet {
+  color: var(--ink-3);
+}
+
+.muted {
+  color: var(--ink-4);
+}
+
+.strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hr {
+  height: 1px;
+  background: var(--line);
+  border: 0;
+  margin: var(--s4) 0;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent-line);
+  animation: pulse 2.4s var(--ease) infinite;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-line);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ink-4);
+  flex: none;
+}
+
+.live-dot[data-status="active"] {
+  background: var(--success);
+}
+
+.live-dot[data-status="stopped"] {
+  background: var(--warn);
+}
+
+.live-dot[data-status="completed"] {
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* 启动屏：登录会话确认前只显示记号，避免闪白。 */
+.boot-screen {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: var(--s4);
+  justify-items: center;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.boot-mark {
+  color: var(--ink);
+  animation: boot-in 600ms var(--ease) both;
+}
+
+.boot-name {
+  font-size: var(--f-md);
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+@keyframes boot-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}

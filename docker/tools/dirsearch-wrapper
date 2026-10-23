@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/tessera/dirsearch-venv/bin/python /usr/lib/python3/dist-packages/dirsearch/dirsearch.py "$@"

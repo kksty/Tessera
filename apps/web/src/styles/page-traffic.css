@@ -1,0 +1,342 @@
+/* Tessera — 流量。
+   新选择器统一带 traffic- 前缀；警示条、表格、抽屉等通用块沿用 ui.css。 */
+
+/* ---------- 采集范围说明 ---------- */
+.traffic-scope {
+  margin-bottom: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.traffic-scope > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  font-size: var(--f-base);
+  color: var(--ink-2);
+  transition: background var(--fast);
+}
+
+.traffic-scope > summary:hover {
+  background: var(--surface-2);
+}
+
+.traffic-scope > summary > span {
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.traffic-scope > summary > small {
+  margin-left: auto;
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-scope[open] > summary {
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.traffic-scope-chevron {
+  flex: none;
+  color: var(--ink-4);
+  transition: transform var(--fast);
+}
+
+.traffic-scope[open] .traffic-scope-chevron {
+  transform: rotate(90deg);
+}
+
+.traffic-scope-body {
+  padding: 12px 14px 14px;
+  background: var(--surface-2);
+}
+
+.traffic-scope-list {
+  display: grid;
+  gap: 7px;
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+}
+
+.traffic-scope-list > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.traffic-scope-list dt {
+  font-family: var(--font-mono);
+  font-size: var(--f-2xs);
+  letter-spacing: 0.06em;
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.traffic-scope-list dd {
+  line-height: 1.65;
+}
+
+/* ---------- 页头采集状态 ---------- */
+.traffic-capture {
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+}
+
+.traffic-capture[data-tone="success"] i {
+  animation: traffic-beat 2.4s var(--ease) infinite;
+}
+
+@keyframes traffic-beat {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* ---------- 工具条 ---------- */
+.traffic-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- 表格 ---------- */
+.traffic-table-wrap {
+  max-height: min(64vh, 760px);
+}
+
+.traffic-table {
+  min-width: 940px;
+}
+
+.traffic-table td {
+  white-space: nowrap;
+}
+
+.traffic-time {
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+}
+
+.traffic-method {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.traffic-url {
+  display: block;
+  max-width: min(44vw, 620px);
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: var(--f-sm);
+  color: var(--ink);
+  transition: color var(--fast);
+}
+
+.traffic-url:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.traffic-code {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--f-xs);
+  font-weight: 500;
+  background: var(--surface-3);
+  color: var(--ink-3);
+}
+
+.traffic-code[data-tone="success"] {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.traffic-code[data-tone="info"] {
+  color: var(--info);
+  background: var(--info-soft);
+}
+
+.traffic-code[data-tone="warn"] {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.traffic-code[data-tone="danger"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.traffic-bad {
+  color: var(--danger);
+  font-size: var(--f-sm);
+  overflow-wrap: anywhere;
+}
+
+.traffic-loading {
+  padding: 18px;
+}
+
+.traffic-more {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: var(--s3);
+}
+
+/* ---------- 详情抽屉 ---------- */
+.traffic-insp-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.traffic-insp-meta {
+  font-size: var(--f-xs);
+  color: var(--ink-3);
+}
+
+.traffic-insp-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.traffic-note {
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+}
+
+.traffic-messages {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.traffic-message {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.traffic-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.traffic-message-head h3 {
+  font-size: var(--f-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.traffic-message-meta {
+  font-size: var(--f-2xs);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.traffic-message-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: var(--f-sm);
+  color: var(--ink-4);
+}
+
+.traffic-message-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 0;
+}
+
+.traffic-message-hint {
+  font-size: var(--f-2xs);
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.traffic-pre {
+  min-height: 220px;
+  max-height: 46vh;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-top: 1px solid var(--line-faint);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  line-height: 1.6;
+  white-space: pre;
+  word-break: normal;
+}
+
+.traffic-body-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line-faint);
+}
+
+.traffic-raw {
+  max-height: 300px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.traffic-meta {
+  font-size: var(--f-sm);
+}
+
+@media (max-width: 1080px) {
+  .traffic-messages {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

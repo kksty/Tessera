@@ -1,0 +1,412 @@
+/* 证据（项目内只读归档）。选择器统一 evidence- 前缀；颜色与尺寸只取 tokens.css。 */
+
+.page.page-evidence {
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  /* 与其它页面共用 .content 的内容栅格。 */
+  padding: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 页头右侧的计数胶囊 */
+.evidence-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: var(--f-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.evidence-toolbar {
+  align-items: center;
+}
+
+.evidence-search {
+  min-width: 300px;
+}
+
+/* ---------- 两栏：索引 + 阅读器 ---------- */
+.evidence-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  min-width: 0;
+}
+
+.evidence-index {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: calc(100vh - 250px);
+  min-height: 260px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.evidence-index-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-faint);
+  background: var(--surface-2);
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: var(--f-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.evidence-index-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.evidence-index-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  transition: background var(--fast), border-color var(--fast);
+}
+
+.evidence-index-item:hover {
+  background: var(--surface-2);
+}
+
+.evidence-index-item[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.evidence-item-title {
+  /* 索引里的标题常带 UUID 与来源说明；两行之内读完来源，比一行省略更可用。 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: var(--f-base);
+  line-height: 1.4;
+}
+
+.evidence-index-item[data-active="true"] .evidence-item-title {
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.evidence-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  line-height: 1.4;
+}
+
+.evidence-item-id {
+  color: var(--ink-3);
+}
+
+.evidence-index-item[data-active="true"] .evidence-item-id {
+  color: var(--accent-ink);
+}
+
+.evidence-item-kind {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  color: var(--ink-3);
+  font-family: var(--font-sans);
+}
+
+.evidence-index-empty {
+  padding: 22px 12px;
+  color: var(--ink-4);
+  font-size: var(--f-sm);
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* ---------- 阅读器 ---------- */
+.evidence-viewer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.evidence-viewer > .empty-state {
+  margin: 8px;
+}
+
+.evidence-viewer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.evidence-viewer-title {
+  min-width: 0;
+  flex: 1;
+}
+
+.evidence-ident {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.evidence-id {
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.evidence-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--ink-3);
+  font-size: var(--f-2xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.evidence-viewer-title h2 {
+  margin-top: 5px;
+  font-size: var(--f-md);
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.evidence-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 4px;
+  color: var(--ink-4);
+  font-size: var(--f-sm);
+}
+
+.evidence-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: none;
+}
+
+/* ---------- 元数据 ---------- */
+.evidence-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.evidence-meta > div {
+  min-width: 0;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.evidence-meta > div.wide {
+  grid-column: 1 / -1;
+}
+
+.evidence-meta dt {
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  letter-spacing: 0.02em;
+}
+
+.evidence-meta dd {
+  margin: 3px 0 0;
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.evidence-meta dd.evidence-hash {
+  font-family: var(--font-mono);
+  font-size: var(--f-xs);
+  color: var(--ink-3);
+  word-break: break-all;
+}
+
+/* ---------- 正文 ---------- */
+.evidence-content {
+  min-width: 0;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.evidence-content-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.evidence-content-head h3 {
+  font-size: var(--f-base);
+  font-weight: 600;
+}
+
+.evidence-content-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.evidence-note {
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--f-xs);
+  line-height: 1.6;
+}
+
+.evidence-error {
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--danger) 26%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--f-xs);
+  line-height: 1.6;
+}
+
+.evidence-pre {
+  max-height: 62vh;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  line-height: 1.65;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.evidence-loading {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.evidence-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.evidence-figure img {
+  max-width: 100%;
+  max-height: 62vh;
+  border-radius: var(--r-xs);
+}
+
+.evidence-figure figcaption {
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+}
+
+@media (max-width: 1279px) {
+  .evidence-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .evidence-index {
+    max-height: 44vh;
+  }
+}
+
+/* 索引仍占一栏时阅读器只有 ~600–730px，四项元数据挤在一起，回到两列。 */
+@media (min-width: 1280px) and (max-width: 1400px) {
+  .evidence-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .page.page-evidence {
+    padding-inline: 16px;
+  }
+
+  .evidence-search {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .evidence-actions {
+    width: 100%;
+  }
+
+  .evidence-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

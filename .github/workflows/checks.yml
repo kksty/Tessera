@@ -1,0 +1,42 @@
+name: Typecheck and tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.25.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test:coverage
+      - run: pnpm test:traffic
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:frontend-browser
+      - run: pnpm test:deletion-config-browser
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.25.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: docker build --build-arg DEBIAN_MIRROR=http://deb.debian.org --build-arg COREPACK_NPM_REGISTRY=https://registry.npmjs.org -t tessera-app:ci .
+      - run: docker build --build-arg DEBIAN_MIRROR=http://deb.debian.org --build-arg KALI_MIRROR=http://http.kali.org/kali --build-arg COREPACK_NPM_REGISTRY=https://registry.npmjs.org -f docker/worker.Dockerfile -t tessera-worker:ci .
+      - run: pnpm test:docker
+        env:
+          TESSERA_APP_IMAGE: tessera-app:ci
+          TESSERA_WORKER_IMAGE: tessera-worker:ci

@@ -1,0 +1,15 @@
+.git
+node_modules
+dist
+.tessera
+datas
+.env
+dispatch.yaml
+test-results
+explore-shots
+docs
+README
+tessera
+container
+legacy
+**/__pycache__

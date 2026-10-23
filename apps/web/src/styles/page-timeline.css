@@ -1,0 +1,335 @@
+/* 项目时间线（Timeline）页面样式。所有选择器都以 page-timeline / timeline- 限定。 */
+
+.page-timeline {
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  /* 与其它页面共用 .content 的内容栅格。 */
+  padding: 0;
+  min-width: 0;
+}
+
+.timeline-toolbar {
+  gap: 10px;
+  margin-bottom: var(--s3);
+}
+
+.timeline-audit {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--fast), background var(--fast), color var(--fast);
+}
+
+.timeline-audit:hover {
+  border-color: var(--line-strong);
+  color: var(--ink-2);
+}
+
+.timeline-audit input {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.timeline-audit:has(input:checked) {
+  border-color: var(--accent-line);
+  background: var(--accent-soft-2);
+  color: var(--accent-ink);
+}
+
+.timeline-search {
+  flex: 1 1 220px;
+  min-width: 200px;
+  max-width: 340px;
+}
+
+/* ---------- 纵向轨道 ---------- */
+.timeline-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.timeline-list::before {
+  content: "";
+  position: absolute;
+  left: 24px;
+  top: 16px;
+  bottom: 16px;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent 0,
+    var(--line) 16px,
+    var(--line) calc(100% - 16px),
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.timeline-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 14px;
+  padding: 13px 16px 13px 44px;
+  border-bottom: 1px solid var(--line-faint);
+  min-width: 0;
+  transition: background var(--fast);
+}
+
+.timeline-row:last-child {
+  border-bottom: 0;
+}
+
+.timeline-row:hover {
+  background: var(--surface-2);
+}
+
+.timeline-dot {
+  position: absolute;
+  left: 21px;
+  top: 17px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ink-4);
+  box-shadow: 0 0 0 3px var(--surface);
+  transition: background var(--fast), box-shadow var(--fast);
+}
+
+.timeline-row:hover .timeline-dot {
+  box-shadow: 0 0 0 3px var(--surface-2);
+}
+
+/* 分类只体现在圆点颜色上，行内不再重复标签。 */
+.timeline-row[data-category="milestones"] .timeline-dot {
+  background: var(--accent);
+}
+
+.timeline-row[data-category="exploration"] .timeline-dot {
+  background: var(--info);
+}
+
+.timeline-row[data-category="findings"] .timeline-dot {
+  background: var(--warn);
+}
+
+.timeline-row[data-category="human"] .timeline-dot {
+  background: var(--success);
+}
+
+.timeline-row[data-category="delivery"] .timeline-dot {
+  background: var(--ink-3);
+}
+
+.timeline-row[data-category="attention"] .timeline-dot {
+  background: var(--danger);
+}
+
+.timeline-row[data-category="attention"] {
+  background: color-mix(in srgb, var(--danger-soft) 55%, transparent);
+}
+
+.timeline-row[data-category="attention"]:hover {
+  background: var(--danger-soft);
+}
+
+.timeline-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.timeline-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.timeline-time {
+  flex: none;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.timeline-title {
+  font-size: var(--f-base);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.timeline-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.timeline-meta .mono {
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+  overflow-wrap: anywhere;
+}
+
+.timeline-detail {
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+
+.timeline-reason {
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.timeline-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.timeline-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--f-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color var(--fast), background var(--fast), color var(--fast);
+}
+
+.timeline-chip:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.timeline-replay {
+  align-self: start;
+  flex: none;
+  margin-top: -2px;
+}
+
+.timeline-empty {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.timeline-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.timeline-count {
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 860px) {
+  .page-timeline .page-header {
+    flex-wrap: wrap;
+    gap: var(--s3);
+  }
+
+  .page-timeline .page-actions {
+    flex-wrap: wrap;
+  }
+
+  /* 七个分类放不下一行时改为横向滚动，不撑破页面。 */
+  .page-timeline .segmented {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .page-timeline .segmented::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .timeline-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 12px 14px 12px 38px;
+  }
+
+  .timeline-replay {
+    justify-self: start;
+    margin-top: 0;
+  }
+
+  .timeline-list::before {
+    left: 20px;
+  }
+
+  .timeline-dot {
+    left: 17px;
+    top: 16px;
+  }
+
+  .timeline-search {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .timeline-toolbar {
+    gap: 8px;
+  }
+}

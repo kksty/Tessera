@@ -1,0 +1,30 @@
+# 可选覆盖层：从当前源码构建镜像，而不是拉取 GHCR 预构建镜像。
+#
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+#
+# 只构建：
+#   docker compose -f compose.yaml -f compose.build.yaml build
+#
+# 构建参数通过 .env 覆盖；中国大陆网络可在 .env 中设置：
+#   DEBIAN_MIRROR=https://mirrors.ustc.edu.cn
+#   KALI_MIRROR=http://mirrors.ustc.edu.cn/kali
+#   COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+services:
+  tessera-server:
+    build: &app-build
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org}
+        COREPACK_NPM_REGISTRY: ${COREPACK_NPM_REGISTRY:-https://registry.npmjs.org}
+  tessera-dispatcher:
+    build: *app-build
+  worker-image:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+      target: ${TESSERA_WORKER_TARGET:-runtime}
+      args:
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org}
+        KALI_MIRROR: ${KALI_MIRROR:-http://http.kali.org/kali}
+        COREPACK_NPM_REGISTRY: ${COREPACK_NPM_REGISTRY:-https://registry.npmjs.org}

@@ -1,0 +1,35 @@
+# 可选覆盖层：把平台数据（数据库 / 证据 / 凭据）从宿主机目录改为 Docker 命名卷。
+#
+# 背景：compose 的短语法挂载无法用变量在「本地目录」和「命名卷」之间切换 —— 源路径不是以
+# ./ ../ / ~ 开头时会被当作命名卷引用，必须在顶层 volumes: 声明。所以两种模式用两个文件表达，
+# compose.yaml 保持默认的本地目录挂载不变。
+#
+# 默认（本地目录，无需本文件）：
+#   docker compose up -d
+#   → ./datas/tessera 挂到 /data，宿主机可直接查看数据库
+#
+# 命名卷模式（本文件）：
+#   docker compose -f compose.yaml -f compose.volume.yaml up -d
+#   → 卷 tessera-data 挂到 /data，宿主机零文件
+#
+# 从源码构建时再叠加 compose.build.yaml：
+#   docker compose -f compose.yaml -f compose.build.yaml -f compose.volume.yaml up -d --build
+#
+# 注意：本文件不会迁移已有数据。首次使用前先把现有数据灌进去，否则新卷是空的，
+# 数据库与登录凭据都会重新生成：
+#   docker volume create tessera-data
+#   docker run --rm -v "$(pwd)/datas/tessera:/from:ro" -v tessera-data:/to \
+#     alpine sh -c "cp -a /from/. /to/"
+#
+# 回退：不带 -f compose.volume.yaml 启动即可回到本地目录；命名卷不会被自动删除。
+services:
+  tessera-server:
+    volumes:
+      - tessera-data:/data
+  tessera-dispatcher:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - tessera-data:/data
+volumes:
+  tessera-data:
+    name: ${TESSERA_DATA_VOLUME:-tessera-data}
