@@ -10,6 +10,8 @@
 
 ## 设计与历史记录
 
+历史记录中的提交哈希、`test-results/` 路径和本地镜像 ID 来自公开前的开发环境；公开仓库不包含这些对象，复现时以当前源码和最新验证命令为准。
+
 - [安全测试工作台架构调整实施方案](implementation/security-workbench-plan.md)：M0–M5 的设计依据、分阶段验收和回退边界。其中的历史状态不替代当前实现说明。
 - [效果对照基线](implementation/effect-baseline.json)：M6 真实模型小集的冻结配置与索引。
 - [从 Cairn 到 FGS](background/cairn-ai-pentest-architecture.md)：FGS 图、Decide / Execute、Finding 等概念的设计来源与背景文章。
