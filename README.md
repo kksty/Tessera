@@ -23,7 +23,7 @@
 docker compose up -d
 ```
 
-首次启动会从 GHCR 拉取预构建镜像（Worker 含 Kali 工具链，压缩后约 1.5 GB），之后复用本地缓存。预构建镜像当前为 `linux/amd64`，其他架构请从源码构建。
+首次启动会从 GHCR 拉取预构建镜像（Worker 含 Kali 工具链，压缩后约 1.5 GB），之后复用本地缓存。默认 `TESSERA_IMAGE_TAG=latest` 跟随 `main` 的代码；正式部署请在 `.env` 固定版本标签。预构建镜像当前为 `linux/amd64`，其他架构请从源码构建。
 
 打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。登录凭据留空时首次启动自动生成，在 `docker compose logs tessera-server` 中打印一次；登录后在设置页配置模型。
 
@@ -103,7 +103,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 - `ghcr.io/<owner>/tessera-server:<version>`：Server 与 Dispatcher。
 - `ghcr.io/<owner>/tessera-runtime:<version>`：项目 Worker 运行时。
 
-`compose.yaml` 默认使用 `ghcr.io/kksty` 与 `0.3.0`；可用 `TESSERA_IMAGE_REPO` / `TESSERA_IMAGE_TAG` 切换。发布后需确认两个包的可见性为 public（本项目当前已设置）；公开包可免登录拉取。发布新版本时同步更新 `package.json`、`.env.example` 中的 `TESSERA_IMAGE_TAG` 和 `compose.yaml` 的默认标签。
+`compose.yaml` 默认使用 `ghcr.io/kksty` 与 `latest`。`latest` 由 CI 在每次 `main` 代码变更后重建，因此 clone `main` 后拉到的镜像对应当前代码；正式部署请固定版本，例如 `TESSERA_IMAGE_TAG=0.3.0`。可用 `TESSERA_IMAGE_REPO` 切换 Registry 或镜像代理。发布后需确认两个包的可见性为 public（本项目当前已设置）；公开包可免登录拉取。发布新版本时同步更新 `package.json`，推送 `v*` 标签即可发布该版本镜像；`latest` 继续跟随 `main`。
 
 GHCR（GitHub Container Registry）是 GitHub 提供的容器镜像仓库，公开包可匿名拉取，适合存放本项目的预构建镜像；也可以把 `TESSERA_IMAGE_REPO` 指向 Docker Hub 或自建 Registry。
 

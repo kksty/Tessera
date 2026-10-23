@@ -8,12 +8,20 @@ test("compose pulls prebuilt images and keeps source builds opt-in", () => {
   for (const service of ["tessera-server", "tessera-dispatcher", "worker-image"])
     assert.equal(compose.services[service].build, undefined, `${service} must not build by default`);
   assert.match(compose.services["tessera-server"].image, /ghcr\.io/);
+  assert.match(compose.services["tessera-server"].image, /TESSERA_IMAGE_TAG:-latest/);
   assert.match(compose.services["worker-image"].image, /tessera-runtime/);
+  assert.match(compose.services["worker-image"].image, /TESSERA_IMAGE_TAG:-latest/);
+  assert.match(readFileSync(".env.example", "utf8"), /^TESSERA_IMAGE_TAG=latest$/m);
   assert.equal(
     compose.services["tessera-server"].environment.TESSERA_WORKER_IMAGE,
     compose.services["worker-image"].image,
     "server must dispatch the same worker image that compose pulls",
   );
+
+  const images = parse(readFileSync(".github/workflows/images.yml", "utf8"));
+  assert.deepEqual(images.on.push.branches, ["main"]);
+  assert.ok(images.on.push.paths.includes("apps/**"));
+  assert.ok(images.on.push.paths.includes("docker/**"));
 
   const build = parse(readFileSync("compose.build.yaml", "utf8"));
   assert.ok(build.services["tessera-server"].build);

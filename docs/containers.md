@@ -20,27 +20,29 @@ GHCR 只是默认选择。`compose.yaml` 通过 `TESSERA_IMAGE_REPO` 和 `TESSER
 
 镜像标签：
 
-- `0.3.0`：与 `package.json` 版本对应的发布标签，`compose.yaml` 默认使用它。
-- `latest`：最近一次手动发布或标签发布，便于试用；生产部署建议固定版本。
+- `latest`：跟随 `main` 的代码变更自动重建，`compose.yaml` 默认使用它。
+- `0.3.0`：与 `package.json` 版本对应的发布标签；正式部署固定它，避免 `latest` 漂移。
 - `sha-<commit>`：对应提交的可追溯标签。
 
 `worker-image` 是 Compose 中的一次性服务，只负责拉取并校验 Worker 镜像；实际项目 Worker 由 Dispatcher 创建，不是常驻服务。
 
 ## 发布流程
 
-[`.github/workflows/images.yml`](../.github/workflows/images.yml) 在两种情况下运行：
+[`.github/workflows/images.yml`](../.github/workflows/images.yml) 在三种情况下运行：
 
-1. 推送 `v*` 标签，例如 `v0.3.0`；
-2. 在 Actions 页面手动运行 **Publish images**。
+1. `main` 的代码变更（`apps/`、`packages/`、`docker/`、Dockerfile、依赖或构建脚本）；发布 `latest` 与 `sha-<commit>`；
+2. 推送 `v*` 标签，例如 `v0.3.0`；发布 `0.3.0` 与 `sha-<commit>`；
+3. 在 Actions 页面手动运行 **Publish images**；发布 `latest` 与 `sha-<commit>`。
 
-workflow 会分别构建并推送 `tessera-server` 和 `tessera-runtime`，使用 BuildKit 缓存和 `linux/amd64` 平台。Worker 镜像较大，首次构建时间明显长于应用镜像。
+仅文档、README 或测试变更不会触发镜像重建。workflow 会分别构建并推送 `tessera-server` 和 `tessera-runtime`，使用 BuildKit 缓存和 `linux/amd64` 平台。Worker 镜像较大，首次构建时间明显长于应用镜像。
 
 发布新版本时：
 
 1. 更新 `package.json` 的 `version`；
-2. 更新 `.env.example` 的 `TESSERA_IMAGE_TAG` 和 `compose.yaml` 中的默认标签；
-3. 推送 `v<version>` 标签，或手动运行 workflow；
-4. 在 GitHub Packages 中确认两个包的可见性为 public。
+2. 推送 `v<version>` 标签；
+3. 在 GitHub Packages 中确认两个包的可见性为 public。
+
+`main` 的 `latest` 镜像在代码推送后由 CI 重建；在 workflow 完成前，`latest` 仍可能指向上一版。需要精确复现时使用 `sha-<commit>` 或发布版本标签。
 
 ## 首次发布后的包可见性
 
@@ -57,16 +59,17 @@ docker compose pull
 
 ## 使用预构建镜像
 
-默认：
+默认 `latest` 跟随 `main` 的代码变更；clone `main` 后直接启动会拉取与当前代码对应的镜像（CI 完成后）：
 
 ```sh
 docker compose up -d
 ```
 
-指定其他版本：
+指定发布版本或精确提交：
 
 ```sh
 TESSERA_IMAGE_TAG=0.3.0 docker compose up -d
+TESSERA_IMAGE_TAG=sha-<commit> docker compose up -d
 ```
 
 指定其他 Registry 或镜像代理：
