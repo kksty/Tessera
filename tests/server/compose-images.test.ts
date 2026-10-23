@@ -8,7 +8,7 @@ test("compose pulls prebuilt images and keeps source builds opt-in", () => {
   for (const service of ["tessera-server", "tessera-dispatcher", "worker-image"])
     assert.equal(compose.services[service].build, undefined, `${service} must not build by default`);
   assert.match(compose.services["tessera-server"].image, /ghcr\.io/);
-  assert.match(compose.services["worker-image"].image, /tessera-worker/);
+  assert.match(compose.services["worker-image"].image, /tessera-runtime/);
   assert.equal(
     compose.services["tessera-server"].environment.TESSERA_WORKER_IMAGE,
     compose.services["worker-image"].image,

@@ -100,8 +100,8 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 
 镜像由 [`.github/workflows/images.yml`](.github/workflows/images.yml) 在推送 `v*` 标签或手动触发时构建并推送到 GHCR：
 
-- `ghcr.io/<owner>/tessera-app:<version>`
-- `ghcr.io/<owner>/tessera-worker:<version>`
+- `ghcr.io/<owner>/tessera-server:<version>`：Server 与 Dispatcher。
+- `ghcr.io/<owner>/tessera-runtime:<version>`：项目 Worker 运行时。
 
 `compose.yaml` 默认使用 `ghcr.io/kksty` 与 `0.3.0`；可用 `TESSERA_IMAGE_REPO` / `TESSERA_IMAGE_TAG` 切换。首次发布后需在 GitHub Packages 中把两个包设为 public，公开仓库的用户才能免登录拉取。发布新版本时同步更新 `package.json`、`.env.example` 中的 `TESSERA_IMAGE_TAG` 和 `compose.yaml` 的默认标签。
 

@@ -6,7 +6,7 @@ GHCR（GitHub Container Registry）是 GitHub 提供的 OCI 容器镜像仓库�
 
 - 公开包可以匿名 `docker pull`，不需要登录。
 - 私有包需要先用有 `read:packages` 权限的 GitHub Token 登录。
-- 镜像按 `<owner>/<image>:<tag>` 命名，例如 `ghcr.io/kksty/tessera-app:0.3.0`。
+- 镜像按 `<owner>/<image>:<tag>` 命名，例如 `ghcr.io/kksty/tessera-server:0.3.0`。
 - 本项目把镜像发布为公开包，用户启动时不需要 Docker Hub 账号。
 
 GHCR 只是默认选择。`compose.yaml` 通过 `TESSERA_IMAGE_REPO` 和 `TESSERA_IMAGE_TAG` 选择镜像，因此也可以使用 Docker Hub、阿里云 ACR、Harbor 或其他符合 OCI 规范的 Registry。
@@ -15,8 +15,8 @@ GHCR 只是默认选择。`compose.yaml` 通过 `TESSERA_IMAGE_REPO` 和 `TESSER
 
 | 镜像 | 用途 | 来源 |
 | --- | --- | --- |
-| `tessera-app` | Server 与 Dispatcher（同一镜像，不同命令） | 根目录 `Dockerfile` |
-| `tessera-worker` | Dispatcher 动态创建的项目 Worker，含 Kali 工具链 | `docker/worker.Dockerfile`，默认 `runtime` target |
+| `tessera-server` | Server 与 Dispatcher（同一镜像，不同命令） | 根目录 `Dockerfile` |
+| `tessera-runtime` | Dispatcher 动态创建的项目 Worker，含 Kali 工具链 | `docker/worker.Dockerfile`，默认 `runtime` target |
 
 镜像标签：
 
@@ -33,7 +33,7 @@ GHCR 只是默认选择。`compose.yaml` 通过 `TESSERA_IMAGE_REPO` 和 `TESSER
 1. 推送 `v*` 标签，例如 `v0.3.0`；
 2. 在 Actions 页面手动运行 **Publish images**。
 
-workflow 会分别构建并推送 `tessera-app` 和 `tessera-worker`，使用 BuildKit 缓存和 `linux/amd64` 平台。Worker 镜像较大，首次构建时间明显长于应用镜像。
+workflow 会分别构建并推送 `tessera-server` 和 `tessera-runtime`，使用 BuildKit 缓存和 `linux/amd64` 平台。Worker 镜像较大，首次构建时间明显长于应用镜像。
 
 发布新版本时：
 
@@ -44,7 +44,7 @@ workflow 会分别构建并推送 `tessera-app` 和 `tessera-worker`，使用 Bu
 
 ## 首次发布后的包可见性
 
-GHCR 包默认可能是 private。公开仓库的用户要免登录拉取，需要在 GitHub 仓库的 **Packages** 页面分别打开 `tessera-app` 和 `tessera-worker`，在 **Package settings → Danger Zone → Change visibility** 中改为 public。
+GHCR 包默认可能是 private。公开仓库的用户要免登录拉取，需要在 GitHub 仓库的 **Packages** 页面分别打开 `tessera-server` 和 `tessera-runtime`，在 **Package settings → Danger Zone → Change visibility** 中改为 public。
 
 如果包保持 private，用户需要：
 
@@ -78,8 +78,8 @@ TESSERA_IMAGE_REPO=ghcr.io/<owner> docker compose up -d
 完整覆盖单个镜像：
 
 ```sh
-TESSERA_APP_IMAGE=registry.example.com/tessera-app:custom \
-TESSERA_WORKER_IMAGE=registry.example.com/tessera-worker:custom \
+TESSERA_APP_IMAGE=registry.example.com/tessera-server:custom \
+TESSERA_WORKER_IMAGE=registry.example.com/tessera-runtime:custom \
 docker compose up -d
 ```
 

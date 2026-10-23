@@ -17,12 +17,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Store } from "../../packages/core/src/store.js";
-import {
-  createProjectSchema,
-  type DispatchConfig,
-  type Graph,
-  type Job,
-} from "../../packages/protocol/src/index.js";
+import { createProjectSchema, type DispatchConfig, type Graph, type Job } from "../../packages/protocol/src/index.js";
 import { RuntimeConfig } from "../../apps/server/src/runtime.js";
 import type { ModelConfig } from "../../packages/protocol/src/model-config.js";
 import { buildApp, testWorkerToken } from "../../tests/helpers/server.js";
@@ -92,7 +87,13 @@ interface RunReport {
     complete: boolean;
     payload_excerpt: string;
   };
-  usage: { requests: number; input_tokens: number; cache_read_tokens: number; cache_write_tokens: number; output_tokens: number };
+  usage: {
+    requests: number;
+    input_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    output_tokens: number;
+  };
   repair_attempts: number;
   verdict: "通过" | "部分通过（未回读原始证据）" | "漏查" | "错误引用" | "引用遗漏" | "协议提交失败" | "运行失败";
   notes: string[];
@@ -120,9 +121,13 @@ function readNdjson(file: string): Record<string, unknown>[] {
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
     .split("\n")
-    .filter(line => line.trim())
-    .flatMap(line => {
-      try { return [JSON.parse(line) as Record<string, unknown>]; } catch { return []; }
+    .filter((line) => line.trim())
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
     });
 }
 
@@ -132,11 +137,13 @@ function textOf(value: unknown): string {
 
 /** Builds the fixed acceptance scenario: one hidden early premise plus 220 later distractors. */
 function scenario(store: Store, run: number, mode: BookmarkMode) {
-  const graph = store.create(createProjectSchema.parse({
-    title: `历史找回真实模型验收 ${run}`,
-    origin: "https://example.test",
-    goal: "找回图早期保存的唯一前提，并引用其原始证据后再规划",
-  }));
+  const graph = store.create(
+    createProjectSchema.parse({
+      title: `历史找回真实模型验收 ${run}`,
+      origin: "https://example.test",
+      goal: "找回图早期保存的唯一前提，并引用其原始证据后再规划",
+    }),
+  );
   const project = graph.project.id;
   const evidence = store.addEvidence(project, {
     title: EVIDENCE_TITLE,
@@ -144,23 +151,36 @@ function scenario(store: Store, run: number, mode: BookmarkMode) {
     encoding: "utf8",
     mime_type: "text/plain",
   });
-  store.mutate(project, "acceptance.observations", true, g => {
+  store.mutate(project, "acceptance.observations", true, (g) => {
     for (let i = 0; i < 10; i++)
       g.facts.push({ id: `f-prefix${i}`, graph_id: "old", description: `早期其他观测 ${i}`, evidence_ids: [] });
-    g.facts.push({ id: EXPECTED_FACT_ID, graph_id: "old", description: PREMISE_DESCRIPTION, evidence_ids: [evidence.id] });
+    g.facts.push({
+      id: EXPECTED_FACT_ID,
+      graph_id: "old",
+      description: PREMISE_DESCRIPTION,
+      evidence_ids: [evidence.id],
+    });
     for (let i = 0; i < 220; i++)
       g.facts.push({ id: `f${i}`, graph_id: "main", description: `其他观测 ${i}`, evidence_ids: [] });
   });
   if (mode !== "none") {
     const seed = store.claim(project, `bookmark-seed-${run}`, 0)!;
-    const input = { worker: seed.worker, node_id: EXPECTED_FACT_ID, expected_version: 0,
-      reason: "后续问题可能需要核对这里的原始条件", revisit_when: "新问题涉及相同访问条件时", withdraw: false };
+    const input = {
+      worker: seed.worker,
+      node_id: EXPECTED_FACT_ID,
+      expected_version: 0,
+      reason: "后续问题可能需要核对这里的原始条件",
+      revisit_when: "新问题涉及相同访问条件时",
+      withdraw: false,
+    };
     store.bookmark(project, seed.run_id!, input);
     if (mode === "withdrawn") store.bookmark(project, seed.run_id!, { ...input, expected_version: 1, withdraw: true });
     store.release(project, seed);
   }
   // 把已写入的历史记为已处理：新 Decide 的变化窗口只包含下面这条新问题。
-  store.mutate(project, "", false, g => { g.decided_revision = g.observation_revision; });
+  store.mutate(project, "", false, (g) => {
+    g.decided_revision = g.observation_revision;
+  });
   store.hint(project, NEW_QUESTION);
   return { project, evidenceId: evidence.id };
 }
@@ -173,20 +193,59 @@ function failure(error: unknown): { message: string; isApi: boolean; status?: nu
   return { message: String(error), isApi: false };
 }
 
-async function runOnce(run: number, model: ModelConfig, outputDir: string, mode: BookmarkMode = "none"): Promise<RunReport> {
+async function runOnce(
+  run: number,
+  model: ModelConfig,
+  outputDir: string,
+  mode: BookmarkMode = "none",
+): Promise<RunReport> {
   const dir = mkdtempSync(join(tmpdir(), `tessera-memory-real-${run}-`));
   const workdir = join(dir, "workspace");
   mkdirSync(workdir, { recursive: true });
   const worker = `memory-planner-${run}`;
   const store = new Store(join(dir, "graph.db"));
   const report: RunReport = {
-    bookmark_mode: mode, run, worker, started_at: new Date().toISOString(), duration_ms: 0,
+    bookmark_mode: mode,
+    run,
+    worker,
+    started_at: new Date().toISOString(),
+    duration_ms: 0,
     model: { id: model.id, base_url: model.base_url, api: model.api, context_window: model.context_window },
     error: null,
-    entry: { chars: 0, counts: {}, control: {}, leaks_fact_id: false, leaks_premise_description: false, leaks_evidence_content: false, hint_visible: false },
+    entry: {
+      chars: 0,
+      counts: {},
+      control: {},
+      leaks_fact_id: false,
+      leaks_premise_description: false,
+      leaks_evidence_content: false,
+      hint_visible: false,
+    },
     tool_calls: [],
-    retrieval: { used_change_entry: false, read_change_event: false, queried_graph: false, keyword: null, found_fact_in_query_result: false, read_fact_record: false, read_original_evidence: false },
-    decision: { submitted: false, submission_state: null, rejected_status: null, cited_ids: [], cites_expected_fact: false, cited_distractor_ids: [], cited_unknown_ids: [], evidence_ids_in_from: [], steps: 0, updates: 0, goals: 0, complete: false, payload_excerpt: "" },
+    retrieval: {
+      used_change_entry: false,
+      read_change_event: false,
+      queried_graph: false,
+      keyword: null,
+      found_fact_in_query_result: false,
+      read_fact_record: false,
+      read_original_evidence: false,
+    },
+    decision: {
+      submitted: false,
+      submission_state: null,
+      rejected_status: null,
+      cited_ids: [],
+      cites_expected_fact: false,
+      cited_distractor_ids: [],
+      cited_unknown_ids: [],
+      evidence_ids_in_from: [],
+      steps: 0,
+      updates: 0,
+      goals: 0,
+      complete: false,
+      payload_excerpt: "",
+    },
     usage: { requests: 0, input_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, output_tokens: 0 },
     repair_attempts: 0,
     verdict: "运行失败",
@@ -205,7 +264,7 @@ async function runOnce(run: number, model: ModelConfig, outputDir: string, mode:
     await app.listen({ host: "127.0.0.1", port: 0 });
     const config: DispatchConfig = {
       server: app.listeningOrigin,
-      worker_image: "tessera-worker:0.3.0",
+      worker_image: "tessera-runtime:0.3.0",
       network: "tessera-network",
       volume_prefix: "tessera",
       max_workers: 1,
@@ -230,12 +289,20 @@ async function runOnce(run: number, model: ModelConfig, outputDir: string, mode:
       await app.close();
     }
     graph = store.get(project);
-    const recordedRun = store.runs(project).find(r => r.id === job.run_id);
-    report.run_usage = recordedRun ? { status: recordedRun.status, requests: recordedRun.request_count,
-      input: recordedRun.input, input_uncached: recordedRun.input_uncached ?? null,
-      cache_read: recordedRun.cache_read ?? null, cache_write: recordedRun.cache_write ?? null,
-      output: recordedRun.output, cost: recordedRun.cost,
-      unknown_request_count: recordedRun.unknown_request_count ?? null } : null;
+    const recordedRun = store.runs(project).find((r) => r.id === job.run_id);
+    report.run_usage = recordedRun
+      ? {
+          status: recordedRun.status,
+          requests: recordedRun.request_count,
+          input: recordedRun.input,
+          input_uncached: recordedRun.input_uncached ?? null,
+          cache_read: recordedRun.cache_read ?? null,
+          cache_write: recordedRun.cache_write ?? null,
+          output: recordedRun.output,
+          cost: recordedRun.cost,
+          unknown_request_count: recordedRun.unknown_request_count ?? null,
+        }
+      : null;
     collectEvidence(report, { store, project, workdir, worker, job: job as Job, evidenceId, graph, outputDir, run });
   } catch (error) {
     const info = failure(error);
@@ -252,16 +319,28 @@ async function runOnce(run: number, model: ModelConfig, outputDir: string, mode:
 
 function collectPartial(report: RunReport, workdir: string, worker: string) {
   const runDir = join(workdir, "runs", worker);
-  report.entry.chars = existsSync(join(runDir, "view.json")) ? readFileSync(join(runDir, "view.json"), "utf8").length : 0;
-  report.tool_calls = readNdjson(join(runDir, "tools.ndjson")).map(t => ({
-    name: String(t.toolName ?? ""), args: t.args, is_error: Boolean(t.isError), result_chars: textOf(t.result).length,
+  report.entry.chars = existsSync(join(runDir, "view.json"))
+    ? readFileSync(join(runDir, "view.json"), "utf8").length
+    : 0;
+  report.tool_calls = readNdjson(join(runDir, "tools.ndjson")).map((t) => ({
+    name: String(t.toolName ?? ""),
+    args: t.args,
+    is_error: Boolean(t.isError),
+    result_chars: textOf(t.result).length,
   }));
 }
 
 /** 保存可复核的原始轨迹：入口、工具轨迹、诊断、用量与最终提交记录。 */
 function preserveArtifacts(runDir: string, destDir: string) {
   mkdirSync(destDir, { recursive: true });
-  for (const file of ["view.json", "tools.ndjson", "diagnostics.ndjson", "usage.ndjson", "model-responses.ndjson", "pending-result.json"])
+  for (const file of [
+    "view.json",
+    "tools.ndjson",
+    "diagnostics.ndjson",
+    "usage.ndjson",
+    "model-responses.ndjson",
+    "pending-result.json",
+  ])
     if (existsSync(join(runDir, file))) copyFileSync(join(runDir, file), join(destDir, file));
   const reference = join(runDir, "pending-result.json");
   if (!existsSync(reference)) return;
@@ -273,23 +352,30 @@ function preserveArtifacts(runDir: string, destDir: string) {
   copyFileSync(source, join(destDir, "submissions", pointer.submission_file.split("/").at(-1) ?? "submission.json"));
 }
 
-function collectEvidence(report: RunReport, ctx: {
-  store: Store;
-  project: string;
-  workdir: string;
-  worker: string;
-  job: Job;
-  evidenceId: string;
-  graph: Graph;
-  outputDir: string;
-  run: number;
-}) {
+function collectEvidence(
+  report: RunReport,
+  ctx: {
+    store: Store;
+    project: string;
+    workdir: string;
+    worker: string;
+    job: Job;
+    evidenceId: string;
+    graph: Graph;
+    outputDir: string;
+    run: number;
+  },
+) {
   const { workdir, worker, evidenceId, graph, outputDir, run } = ctx;
   const runDir = join(workdir, "runs", worker);
   const viewFile = join(runDir, "view.json");
   const viewRaw = existsSync(viewFile) ? readFileSync(viewFile, "utf8") : "";
-  const view = viewRaw ? JSON.parse(viewRaw) as { view?: Record<string, unknown> } : {};
-  const entry = (view.view ?? {}) as { counts?: Record<string, number>; control?: Record<string, number>; changes?: unknown };
+  const view = viewRaw ? (JSON.parse(viewRaw) as { view?: Record<string, unknown> }) : {};
+  const entry = (view.view ?? {}) as {
+    counts?: Record<string, number>;
+    control?: Record<string, number>;
+    changes?: unknown;
+  };
   report.entry.chars = viewRaw.length;
   report.entry.counts = entry.counts ?? {};
   report.entry.control = entry.control ?? {};
@@ -299,22 +385,28 @@ function collectEvidence(report: RunReport, ctx: {
   report.entry.hint_visible = viewRaw.includes("legacy-cookie");
 
   const tools = readNdjson(join(runDir, "tools.ndjson"));
-  report.tool_calls = tools.map(t => ({
+  report.tool_calls = tools.map((t) => ({
     name: String(t.toolName ?? ""),
     args: t.args,
     is_error: Boolean(t.isError),
     result_chars: textOf(t.result).length,
   }));
   const callArgs = (t: Record<string, unknown>) => (t.args ?? {}) as Record<string, unknown>;
-  report.retrieval.used_change_entry = tools.some(t => t.toolName === "query_changes");
-  report.retrieval.read_change_event = tools.some(t => t.toolName === "read_change");
-  const queries = tools.filter(t => t.toolName === "query_graph");
+  report.retrieval.used_change_entry = tools.some((t) => t.toolName === "query_changes");
+  report.retrieval.read_change_event = tools.some((t) => t.toolName === "read_change");
+  const queries = tools.filter((t) => t.toolName === "query_graph");
   report.retrieval.queried_graph = queries.length > 0;
-  const keyword = queries.map(t => callArgs(t).keyword).find(k => typeof k === "string" && String(k).includes("legacy-cookie"));
+  const keyword = queries
+    .map((t) => callArgs(t).keyword)
+    .find((k) => typeof k === "string" && String(k).includes("legacy-cookie"));
   report.retrieval.keyword = typeof keyword === "string" ? keyword : null;
-  report.retrieval.found_fact_in_query_result = queries.some(t => textOf(t.result).includes(EXPECTED_FACT_ID));
-  report.retrieval.read_fact_record = tools.some(t => t.toolName === "read_graph" && callArgs(t).id === EXPECTED_FACT_ID);
-  report.retrieval.read_original_evidence = tools.some(t => t.toolName === "read_evidence" && callArgs(t).id === evidenceId);
+  report.retrieval.found_fact_in_query_result = queries.some((t) => textOf(t.result).includes(EXPECTED_FACT_ID));
+  report.retrieval.read_fact_record = tools.some(
+    (t) => t.toolName === "read_graph" && callArgs(t).id === EXPECTED_FACT_ID,
+  );
+  report.retrieval.read_original_evidence = tools.some(
+    (t) => t.toolName === "read_evidence" && callArgs(t).id === evidenceId,
+  );
 
   for (const event of readNdjson(join(runDir, "diagnostics.ndjson"))) {
     const data = (event.data ?? {}) as Record<string, unknown>;
@@ -333,15 +425,19 @@ function collectEvidence(report: RunReport, ctx: {
     const pointer = JSON.parse(readFileSync(reference, "utf8")) as { submission_file?: string };
     const submissionFile = join(runDir, pointer.submission_file ?? "");
     if (pointer.submission_file && existsSync(submissionFile)) {
-      const record = JSON.parse(readFileSync(submissionFile, "utf8")) as { payload?: Record<string, unknown>; state?: string; rejected_status?: number };
+      const record = JSON.parse(readFileSync(submissionFile, "utf8")) as {
+        payload?: Record<string, unknown>;
+        state?: string;
+        rejected_status?: number;
+      };
       const payload = record.payload ?? {};
       report.decision.submission_state = record.state ?? null;
       report.decision.rejected_status = record.rejected_status ?? null;
       report.decision.submitted = record.state === "accepted" || record.state === "pending";
       report.decision.payload_excerpt = JSON.stringify(payload).slice(0, 4000);
-      const steps = Array.isArray(payload.steps) ? payload.steps as Record<string, unknown>[] : [];
-      const updates = Array.isArray(payload.updates) ? payload.updates as unknown[] : [];
-      const goals = Array.isArray(payload.goals) ? payload.goals as unknown[] : [];
+      const steps = Array.isArray(payload.steps) ? (payload.steps as Record<string, unknown>[]) : [];
+      const updates = Array.isArray(payload.updates) ? (payload.updates as unknown[]) : [];
+      const goals = Array.isArray(payload.goals) ? (payload.goals as unknown[]) : [];
       report.decision.steps = steps.length;
       report.decision.updates = updates.length;
       report.decision.goals = goals.length;
@@ -351,11 +447,13 @@ function collectEvidence(report: RunReport, ctx: {
       const complete = payload.complete as { from?: string[] } | undefined;
       for (const id of complete?.from ?? []) cited.add(String(id));
       report.decision.cited_ids = [...cited];
-      const known = new Set(graph.facts.map(f => f.id));
+      const known = new Set(graph.facts.map((f) => f.id));
       report.decision.cites_expected_fact = cited.has(EXPECTED_FACT_ID);
-      report.decision.cited_distractor_ids = [...cited].filter(id => /^f\d+$/.test(id));
-      report.decision.cited_unknown_ids = [...cited].filter(id => id !== "origin" && !known.has(id) && !/^e\d+$/.test(id));
-      report.decision.evidence_ids_in_from = [...cited].filter(id => /^e\d+$/.test(id));
+      report.decision.cited_distractor_ids = [...cited].filter((id) => /^f\d+$/.test(id));
+      report.decision.cited_unknown_ids = [...cited].filter(
+        (id) => id !== "origin" && !known.has(id) && !/^e\d+$/.test(id),
+      );
+      report.decision.evidence_ids_in_from = [...cited].filter((id) => /^e\d+$/.test(id));
     }
   }
 
@@ -376,15 +474,27 @@ function collectEvidence(report: RunReport, ctx: {
     report.notes.push(`提交被服务端拒绝：${report.error}`);
   } else if (report.error) {
     report.verdict = "运行失败";
-  } else if (report.decision.cites_expected_fact && report.retrieval.read_fact_record && report.retrieval.read_original_evidence && !citedWrong) {
+  } else if (
+    report.decision.cites_expected_fact &&
+    report.retrieval.read_fact_record &&
+    report.retrieval.read_original_evidence &&
+    !citedWrong
+  ) {
     report.verdict = "通过";
-  } else if (report.decision.cites_expected_fact && (!report.retrieval.read_fact_record || !report.retrieval.read_original_evidence)) {
+  } else if (
+    report.decision.cites_expected_fact &&
+    (!report.retrieval.read_fact_record || !report.retrieval.read_original_evidence)
+  ) {
     report.verdict = "部分通过（未回读原始证据）";
   } else if (report.decision.cites_expected_fact && citedWrong) {
     report.verdict = "错误引用";
   } else if (citedWrong || report.decision.evidence_ids_in_from.length) {
     report.verdict = "错误引用";
-  } else if (report.retrieval.read_fact_record && report.retrieval.read_original_evidence && !report.decision.cites_expected_fact) {
+  } else if (
+    report.retrieval.read_fact_record &&
+    report.retrieval.read_original_evidence &&
+    !report.decision.cites_expected_fact
+  ) {
     report.verdict = "引用遗漏";
     report.notes.push("已回读旧节点与原始证据，但最终 from 未引用旧事实，文字提及不构成结构化来源。");
   } else {
@@ -394,11 +504,20 @@ function collectEvidence(report: RunReport, ctx: {
 }
 
 function summarize(reports: RunReport[]) {
-  const lines = ["# 历史找回真实模型验收", "", `运行次数：${reports.length}；书签场景：${reports.map(r => r.bookmark_mode).join(", ")}`, ""];
-  lines.push("| 次数 | 判定 | 变化入口 | 关键词查询 | 命中 f-old | 回读节点 | 回读证据 | 引用 f-old | 提交状态 | 工具调用 | 修复 | 耗时 s |");
+  const lines = [
+    "# 历史找回真实模型验收",
+    "",
+    `运行次数：${reports.length}；书签场景：${reports.map((r) => r.bookmark_mode).join(", ")}`,
+    "",
+  ];
+  lines.push(
+    "| 次数 | 判定 | 变化入口 | 关键词查询 | 命中 f-old | 回读节点 | 回读证据 | 引用 f-old | 提交状态 | 工具调用 | 修复 | 耗时 s |",
+  );
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const r of reports) {
-    lines.push(`| ${r.run} | ${r.verdict} | ${r.retrieval.used_change_entry ? "是" : "否"} | ${r.retrieval.keyword ?? (r.retrieval.queried_graph ? "有查询/无关键词" : "无")} | ${r.retrieval.found_fact_in_query_result ? "是" : "否"} | ${r.retrieval.read_fact_record ? "是" : "否"} | ${r.retrieval.read_original_evidence ? "是" : "否"} | ${r.decision.cites_expected_fact ? "是" : "否"} | ${r.decision.submission_state ?? "无"}${r.decision.rejected_status ? `(${r.decision.rejected_status})` : ""} | ${r.tool_calls.length} | ${r.repair_attempts} | ${(r.duration_ms / 1000).toFixed(1)} |`);
+    lines.push(
+      `| ${r.run} | ${r.verdict} | ${r.retrieval.used_change_entry ? "是" : "否"} | ${r.retrieval.keyword ?? (r.retrieval.queried_graph ? "有查询/无关键词" : "无")} | ${r.retrieval.found_fact_in_query_result ? "是" : "否"} | ${r.retrieval.read_fact_record ? "是" : "否"} | ${r.retrieval.read_original_evidence ? "是" : "否"} | ${r.decision.cites_expected_fact ? "是" : "否"} | ${r.decision.submission_state ?? "无"}${r.decision.rejected_status ? `(${r.decision.rejected_status})` : ""} | ${r.tool_calls.length} | ${r.repair_attempts} | ${(r.duration_ms / 1000).toFixed(1)} |`,
+    );
   }
   lines.push("", "## 逐次错误与备注", "");
   for (const r of reports) {
@@ -407,14 +526,22 @@ function summarize(reports: RunReport[]) {
   }
   lines.push("", "## 入口泄漏检查", "");
   for (const r of reports)
-    lines.push(`- 第 ${r.run} 次：入口 ${r.entry.chars} 字符；含 f-old=${r.entry.leaks_fact_id}；含前提描述=${r.entry.leaks_premise_description}；含证据正文=${r.entry.leaks_evidence_content}；含新问题关键词=${r.entry.hint_visible}`);
+    lines.push(
+      `- 第 ${r.run} 次：入口 ${r.entry.chars} 字符；含 f-old=${r.entry.leaks_fact_id}；含前提描述=${r.entry.leaks_premise_description}；含证据正文=${r.entry.leaks_evidence_content}；含新问题关键词=${r.entry.hint_visible}`,
+    );
   lines.push("", "## 引用明细", "");
   for (const r of reports)
-    lines.push(`- 第 ${r.run} 次引用：${r.decision.cited_ids.length ? r.decision.cited_ids.join(", ") : "（无）"}${r.decision.cited_unknown_ids.length ? `；未知 ID：${r.decision.cited_unknown_ids.join(", ")}` : ""}${r.decision.evidence_ids_in_from.length ? `；from 中出现证据 ID：${r.decision.evidence_ids_in_from.join(", ")}` : ""}`);
+    lines.push(
+      `- 第 ${r.run} 次引用：${r.decision.cited_ids.length ? r.decision.cited_ids.join(", ") : "（无）"}${r.decision.cited_unknown_ids.length ? `；未知 ID：${r.decision.cited_unknown_ids.join(", ")}` : ""}${r.decision.evidence_ids_in_from.length ? `；from 中出现证据 ID：${r.decision.evidence_ids_in_from.join(", ")}` : ""}`,
+    );
   lines.push("", "## 用量与工具轨迹", "");
   for (const r of reports) {
-    lines.push(`- 第 ${r.run} 次：${r.tool_calls.map(c => `${c.name}(${JSON.stringify(c.args)})`).join(" → ") || "（无工具调用）"}`);
-    lines.push(`  用量：请求 ${r.usage.requests}；input ${r.usage.input_tokens}；cache_read ${r.usage.cache_read_tokens}；output ${r.usage.output_tokens}`);
+    lines.push(
+      `- 第 ${r.run} 次：${r.tool_calls.map((c) => `${c.name}(${JSON.stringify(c.args)})`).join(" → ") || "（无工具调用）"}`,
+    );
+    lines.push(
+      `  用量：请求 ${r.usage.requests}；input ${r.usage.input_tokens}；cache_read ${r.usage.cache_read_tokens}；output ${r.usage.output_tokens}`,
+    );
   }
   return lines.join("\n");
 }
@@ -433,10 +560,15 @@ for (let run = 1; run <= totalRuns; run++) {
   console.log(`--- 第 ${run}/${totalRuns} 次（${mode}） ---`);
   const report = await runOnce(run, model, outputDir, mode);
   reports.push(report);
-  console.log(`判定: ${report.verdict}；工具: ${report.tool_calls.map(c => c.name).join(" → ") || "无"}；引用: ${report.decision.cited_ids.join(", ") || "无"}${report.error ? `；错误: ${report.error}` : ""}\n`);
+  console.log(
+    `判定: ${report.verdict}；工具: ${report.tool_calls.map((c) => c.name).join(" → ") || "无"}；引用: ${report.decision.cited_ids.join(", ") || "无"}${report.error ? `；错误: ${report.error}` : ""}\n`,
+  );
 }
 writeFileSync(join(outputDir, "summary.md"), summarize(reports));
-writeFileSync(join(outputDir, "summary.json"), JSON.stringify({ model: { ...model, api_key: "" }, runs: reports }, null, 2));
+writeFileSync(
+  join(outputDir, "summary.json"),
+  JSON.stringify({ model: { ...model, api_key: "" }, runs: reports }, null, 2),
+);
 console.log(summarize(reports));
 console.log(`\n结果目录: ${outputDir}`);
-if (reports.some(r => r.verdict !== "通过")) process.exitCode = 1;
+if (reports.some((r) => r.verdict !== "通过")) process.exitCode = 1;

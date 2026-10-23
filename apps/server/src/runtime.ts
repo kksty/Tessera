@@ -8,12 +8,22 @@ export { normalizeModelBaseURL };
 export const modelSchema = z.object({
   id: z.string().trim(),
   provider: z.string().trim().default(""),
-  base_url: z.string().trim().default("").refine(v => !v || /^https?:\/\//i.test(v) && URL.canParse(v) && !new URL(v).username && !new URL(v).password, "API 地址必须是 HTTP 或 HTTPS 地址，且不能内嵌凭据").transform(v => normalizeModelBaseURL(v)),
+  base_url: z
+    .string()
+    .trim()
+    .default("")
+    .refine(
+      (v) => !v || (/^https?:\/\//i.test(v) && URL.canParse(v) && !new URL(v).username && !new URL(v).password),
+      "API 地址必须是 HTTP 或 HTTPS 地址，且不能内嵌凭据",
+    )
+    .transform((v) => normalizeModelBaseURL(v)),
   api_key: z.string().default(""),
-  api: z
-    .enum(MODEL_APIS)
-    .default("openai-completions"),
-  context_window: z.number().int().refine(v => v === 0 || v >= 4096, "上下文窗口须为 0（自动）或至少 4096").default(0),
+  api: z.enum(MODEL_APIS).default("openai-completions"),
+  context_window: z
+    .number()
+    .int()
+    .refine((v) => v === 0 || v >= 4096, "上下文窗口须为 0（自动）或至少 4096")
+    .default(0),
   max_output_tokens: z.number().int().min(0).default(0),
 });
 export const configSchema = z
@@ -30,56 +40,88 @@ export const configSchema = z
     max_project_review_workers: z.number().int().min(1).max(32).default(1),
     interval_ms: z.number().int().min(500),
     debounce_ms: z.number().int().min(0),
-    task_timeout_seconds: z.number().int().refine(v => v === 0 || v >= 30, "Task timeout must be 0 (unlimited) or at least 30 seconds"),
+    task_timeout_seconds: z
+      .number()
+      .int()
+      .refine((v) => v === 0 || v >= 30, "Task timeout must be 0 (unlimited) or at least 30 seconds"),
     closeout_seconds: z.number().int().min(1).max(300).optional(),
     tool_timeout_seconds: z.number().int().min(0).max(600).default(0),
     result_repairs: z.number().int().min(0).max(3).default(1),
     model: modelSchema,
     review_model: modelSchema.optional(),
   })
-  .strict().transform(v => ({ ...v,
+  .strict()
+  .transform((v) => ({
+    ...v,
     model: { ...v.model, base_url: normalizeModelBaseURL(v.model.base_url, v.model.api) },
-    review_model: v.review_model ? { ...v.review_model, base_url: normalizeModelBaseURL(v.review_model.base_url, v.review_model.api) } : undefined,
-    closeout_seconds: v.closeout_seconds ?? (v.task_timeout_seconds === 0 ? 60 : Math.min(60, Math.floor(v.task_timeout_seconds / 3))) }))
-  .refine(v => v.task_timeout_seconds === 0 || v.closeout_seconds < v.task_timeout_seconds, "Closeout reserve must be shorter than the task deadline");
+    review_model: v.review_model
+      ? { ...v.review_model, base_url: normalizeModelBaseURL(v.review_model.base_url, v.review_model.api) }
+      : undefined,
+    closeout_seconds:
+      v.closeout_seconds ?? (v.task_timeout_seconds === 0 ? 60 : Math.min(60, Math.floor(v.task_timeout_seconds / 3))),
+  }))
+  .refine(
+    (v) => v.task_timeout_seconds === 0 || v.closeout_seconds < v.task_timeout_seconds,
+    "Closeout reserve must be shorter than the task deadline",
+  );
 export class RuntimeConfig {
   value: DispatchConfig;
   private persisted: Record<string, unknown>;
   private overrides: Record<string, unknown> = {};
   readonly readOnlyFields: string[] = [];
   private defaults = {
-      server: "http://tessera-server:8000",
-      worker_image: "tessera-worker:0.3.0",
-      network: "tessera-network",
-      volume_prefix: "tessera",
-      max_workers: 4,
-      max_project_workers: 4,
-      interval_ms: 1000,
-      debounce_ms: 2000,
-      task_timeout_seconds: 0,
-      model: {
-        id: "",
-        base_url: "",
-        api_key: "",
-        api: "openai-completions",
-        context_window: 0,
-      },
-    };
-  constructor(private file: string, environment: NodeJS.ProcessEnv = process.env) {
-    this.persisted = existsSync(file) ? z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(file, "utf8"))) : {};
+    server: "http://tessera-server:8000",
+    worker_image: "tessera-runtime:0.3.0",
+    network: "tessera-network",
+    volume_prefix: "tessera",
+    max_workers: 4,
+    max_project_workers: 4,
+    interval_ms: 1000,
+    debounce_ms: 2000,
+    task_timeout_seconds: 0,
+    model: {
+      id: "",
+      base_url: "",
+      api_key: "",
+      api: "openai-completions",
+      context_window: 0,
+    },
+  };
+  constructor(
+    private file: string,
+    environment: NodeJS.ProcessEnv = process.env,
+  ) {
+    this.persisted = existsSync(file)
+      ? z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(file, "utf8")))
+      : {};
     const specs: [string, string, boolean?][] = [
-      ["TESSERA_INTERNAL_URL", "server"], ["TESSERA_WORKER_IMAGE", "worker_image"], ["TESSERA_NETWORK", "network"], ["TESSERA_VOLUME_PREFIX", "volume_prefix"],
-      ["TESSERA_MAX_WORKERS", "max_workers", true], ["TESSERA_MAX_PROJECT_WORKERS", "max_project_workers", true],
+      ["TESSERA_INTERNAL_URL", "server"],
+      ["TESSERA_WORKER_IMAGE", "worker_image"],
+      ["TESSERA_NETWORK", "network"],
+      ["TESSERA_VOLUME_PREFIX", "volume_prefix"],
+      ["TESSERA_MAX_WORKERS", "max_workers", true],
+      ["TESSERA_MAX_PROJECT_WORKERS", "max_project_workers", true],
       ["TESSERA_MAX_PROJECT_REVIEW_WORKERS", "max_project_review_workers", true],
-      ["TESSERA_INTERVAL_MS", "interval_ms", true], ["TESSERA_DEBOUNCE_MS", "debounce_ms", true],
-      ["TESSERA_TASK_TIMEOUT_SECONDS", "task_timeout_seconds", true], ["TESSERA_CLOSEOUT_SECONDS", "closeout_seconds", true],
-      ["TESSERA_TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds", true], ["TESSERA_RESULT_REPAIRS", "result_repairs", true],
-      ["PI_MODEL", "model.id"], ["PI_BASE_URL", "model.base_url"], ["PI_API_KEY", "model.api_key"],
-      ["PI_PROVIDER", "model.provider"], ["PI_MAX_OUTPUT_TOKENS", "model.max_output_tokens", true],
-      ["PI_PROVIDER_API", "model.api"], ["PI_CONTEXT_WINDOW", "model.context_window", true],
-      ["PI_REVIEW_MODEL", "review_model.id"], ["PI_REVIEW_BASE_URL", "review_model.base_url"], ["PI_REVIEW_API_KEY", "review_model.api_key"],
-      ["PI_REVIEW_PROVIDER", "review_model.provider"], ["PI_REVIEW_MAX_OUTPUT_TOKENS", "review_model.max_output_tokens", true],
-      ["PI_REVIEW_PROVIDER_API", "review_model.api"], ["PI_REVIEW_CONTEXT_WINDOW", "review_model.context_window", true],
+      ["TESSERA_INTERVAL_MS", "interval_ms", true],
+      ["TESSERA_DEBOUNCE_MS", "debounce_ms", true],
+      ["TESSERA_TASK_TIMEOUT_SECONDS", "task_timeout_seconds", true],
+      ["TESSERA_CLOSEOUT_SECONDS", "closeout_seconds", true],
+      ["TESSERA_TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds", true],
+      ["TESSERA_RESULT_REPAIRS", "result_repairs", true],
+      ["PI_MODEL", "model.id"],
+      ["PI_BASE_URL", "model.base_url"],
+      ["PI_API_KEY", "model.api_key"],
+      ["PI_PROVIDER", "model.provider"],
+      ["PI_MAX_OUTPUT_TOKENS", "model.max_output_tokens", true],
+      ["PI_PROVIDER_API", "model.api"],
+      ["PI_CONTEXT_WINDOW", "model.context_window", true],
+      ["PI_REVIEW_MODEL", "review_model.id"],
+      ["PI_REVIEW_BASE_URL", "review_model.base_url"],
+      ["PI_REVIEW_API_KEY", "review_model.api_key"],
+      ["PI_REVIEW_PROVIDER", "review_model.provider"],
+      ["PI_REVIEW_MAX_OUTPUT_TOKENS", "review_model.max_output_tokens", true],
+      ["PI_REVIEW_PROVIDER_API", "review_model.api"],
+      ["PI_REVIEW_CONTEXT_WINDOW", "review_model.context_window", true],
     ];
     for (const [name, path, numeric] of specs) {
       const raw = environment[name];
@@ -99,19 +141,28 @@ export class RuntimeConfig {
     const value = { ...base, ...patch };
     for (const key of ["model", "review_model"]) {
       if (patch[key] && typeof patch[key] === "object" && !Array.isArray(patch[key]))
-        value[key] = { ...(base[key] as object), ...patch[key] as object };
+        value[key] = { ...(base[key] as object), ...(patch[key] as object) };
     }
     return value;
   }
   private effective(persisted: Record<string, unknown>): DispatchConfig {
     let base = this.merge(this.defaults, persisted);
     if (base.review_model || this.overrides.review_model)
-      base = { ...base, review_model: { ...this.defaults.model, ...base.review_model as object } };
+      base = { ...base, review_model: { ...this.defaults.model, ...(base.review_model as object) } };
     const value = configSchema.parse(this.merge(base, this.overrides));
     if (value.review_model) {
-      if (!value.review_model.id && !value.review_model.base_url && !value.review_model.provider && !value.review_model.api_key && !this.overrides.review_model)
+      if (
+        !value.review_model.id &&
+        !value.review_model.base_url &&
+        !value.review_model.provider &&
+        !value.review_model.api_key &&
+        !this.overrides.review_model
+      )
         value.review_model = undefined;
-      else if (!value.review_model.id || (!value.review_model.base_url && (!value.review_model.provider || value.review_model.provider === "custom")))
+      else if (
+        !value.review_model.id ||
+        (!value.review_model.base_url && (!value.review_model.provider || value.review_model.provider === "custom"))
+      )
         throw new Error("Review model requires a model ID and either a Pi provider or API URL");
     }
     return value;
@@ -127,26 +178,32 @@ export class RuntimeConfig {
       ...publicValue,
       read_only_fields: [...this.readOnlyFields],
       model: hide(this.value.model),
-      review_model: this.value.review_model
-        ? hide(this.value.review_model)
-        : undefined,
+      review_model: this.value.review_model ? hide(this.value.review_model) : undefined,
     };
   }
   requireModel() {
-    if (!this.value.model.base_url && (!this.value.model.provider || this.value.model.provider === "custom")) throw new Error("请先在设置中选择供应商或填写 API 地址，再启动任务。");
+    if (!this.value.model.base_url && (!this.value.model.provider || this.value.model.provider === "custom"))
+      throw new Error("请先在设置中选择供应商或填写 API 地址，再启动任务。");
     if (!this.value.model.id) throw new Error("请先在设置中选择模型，再启动任务。");
   }
   updatePublic(input: unknown) {
     const body = z.record(z.string(), z.unknown()).parse(input);
-    for (const key of ["server", "worker_image", "network", "volume_prefix"]) if (key in body) throw new Error("运行环境由服务端管理");
+    for (const key of ["server", "worker_image", "network", "volume_prefix"])
+      if (key in body) throw new Error("运行环境由服务端管理");
     return this.update(body);
   }
   update(input: unknown) {
     const { read_only_fields: _metadata, ...patch } = z.record(z.string(), z.unknown()).parse(input);
     for (const path of this.readOnlyFields) {
       const [parent, field] = path.split(".");
-      if (field ? parent in patch && (patch[parent] === null || typeof patch[parent] !== "object" ||
-          Object.prototype.hasOwnProperty.call(patch[parent], field)) : parent in patch)
+      if (
+        field
+          ? parent in patch &&
+            (patch[parent] === null ||
+              typeof patch[parent] !== "object" ||
+              Object.prototype.hasOwnProperty.call(patch[parent], field))
+          : parent in patch
+      )
         throw new Error("该字段由部署配置管理，不能通过设置接口修改");
     }
     const persisted = this.merge(structuredClone(this.persisted), patch);
@@ -156,12 +213,24 @@ export class RuntimeConfig {
       delete model.api_key_set;
       const previous = this.persisted[key] as Record<string, unknown> | undefined;
       const incoming = patch[key] as Record<string, unknown> | undefined;
-      if (key === "review_model" && incoming?.id === "" && incoming.base_url === "" && !incoming.provider && !incoming.api_key) {
+      if (
+        key === "review_model" &&
+        incoming?.id === "" &&
+        incoming.base_url === "" &&
+        !incoming.provider &&
+        !incoming.api_key
+      ) {
         delete persisted.review_model;
         continue;
       }
-      const changedEndpoint = incoming && "base_url" in incoming && normalizeModelBaseURL(String(incoming.base_url), String(incoming.api ?? previous?.api ?? "")) !==
-        normalizeModelBaseURL(String(previous?.base_url ?? this.defaults.model.base_url), String(previous?.api ?? ""));
+      const changedEndpoint =
+        incoming &&
+        "base_url" in incoming &&
+        normalizeModelBaseURL(String(incoming.base_url), String(incoming.api ?? previous?.api ?? "")) !==
+          normalizeModelBaseURL(
+            String(previous?.base_url ?? this.defaults.model.base_url),
+            String(previous?.api ?? ""),
+          );
       const changedProvider = incoming && "provider" in incoming && incoming.provider !== (previous?.provider ?? "");
       if ((changedEndpoint || changedProvider) && !incoming?.api_key) model.api_key = "";
       else if (incoming && incoming.api_key === "") model.api_key = previous?.api_key ?? "";
