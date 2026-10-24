@@ -76,7 +76,7 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const tab: TaskTab = savedTab === "runs" ? "runs" : "list";
   const filter: StateFilter = isFilter(savedFilter) ? savedFilter : "all";
   const runLimit = isRunLimit(savedLimit) ? savedLimit : DEFAULT_RUN_LIMIT;
-  const { runs, error: runsError, reload: reloadRuns } = useRuns(projectId, runLimit);
+  const { runs, error: runsError } = useRuns(projectId, runLimit);
 
   // 一条 needs_attention 运行只要还没结案，就仍然是“需关注”，即使它的任务行
   // 因为状态优先级（例如已执行完待关闭）没有显示成需人工检查。
@@ -186,7 +186,7 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
         <TaskList filter={filter} onFilter={setFilter} orphanRuns={orphanRuns} onOpenRuns={() => setSavedTab("runs")} />
       ) : (
         <div className="tasks-runs">
-          <RunHistory runs={runs} error={runsError} limit={runLimit} onLimit={setRunLimit} onReload={reloadRuns} />
+          <RunHistory runs={runs} error={runsError} limit={runLimit} onLimit={setRunLimit} />
         </div>
       )}
     </section>
@@ -233,22 +233,27 @@ function TaskList({
 
   const steps = useMemo(
     () =>
-      graph.steps.filter((step) => {
-        if (!matchesFilter(step, filter)) return false;
-        if (!needle) return true;
-        return [
-          step.id,
-          step.description,
-          step.property,
-          step.method_hint,
-          step.summary,
-          step.graph_id,
-          (step.hint_ids ?? []).join(" "),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(needle);
-      }),
+      graph.steps
+        .filter((step) => {
+          if (!matchesFilter(step, filter)) return false;
+          if (!needle) return true;
+          return [
+            step.id,
+            step.description,
+            step.property,
+            step.method_hint,
+            step.summary,
+            step.graph_id,
+            (step.hint_ids ?? []).join(" "),
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(needle);
+        })
+        .sort((a, b) => {
+          const newest = Date.parse(b.created_at) - Date.parse(a.created_at);
+          return newest || b.id.localeCompare(a.id, undefined, { numeric: true });
+        }),
     [graph.steps, filter, needle],
   );
 

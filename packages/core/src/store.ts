@@ -52,6 +52,7 @@ import { memoryKinds } from "./memory.js";
 import { conclusionFrom } from "./projection.js";
 import { CvssError, scoreCvss, severityFromScore, validateImpactEvidence, type CvssRecord } from "./cvss.js";
 import { archiveFinding, duplicateFindingGroups, relatedFindingGroups } from "./finding-merges.js";
+import { acceptInformational, informationalAwaitingReview } from "./informational-review.js";
 import { findingKind, classificationReviewRequired } from "../../protocol/src/finding-policy.js";
 import { planningRevision, decidedPlanningRevision, searchState } from "../../protocol/src/planning.js";
 import { planningChanged } from "./planning-changes.js";
@@ -119,6 +120,11 @@ export class Store {
   private readonly graphs: GraphStorage;
   readonly retention: Retention;
   private transactionDepth = 0;
+  /**
+   * Operator review scope. When true, explicitly informational Findings that
+   * already cite evidence are accepted without starting a Review run.
+   */
+  skipInformationalReview = false;
   constructor(
     file: string,
     public leaseSeconds = 120,
@@ -395,6 +401,7 @@ export class Store {
           review_worker: null,
           review_heartbeat: null,
           review_run_id: undefined,
+          review_exempt: undefined,
           retry_at: undefined,
           human_feedback: feedback,
           last_referenced_round: g.project.decision_round ?? 0,
@@ -1433,6 +1440,8 @@ export class Store {
       severity_before_review: undefined,
       severity_reason_before_review: undefined,
       review_status: merged.status === "rejected" ? "rejected" : "pending",
+      // A new version is never born exempt; Review scope is re-evaluated below.
+      review_exempt: undefined,
       created_at: old?.created_at || now(),
       graph_id: old?.graph_id || graphId,
       // A submitted/revised Finding is current work; rank it from birth.
@@ -1442,14 +1451,15 @@ export class Store {
     if (candidate.status === "confirmed") candidate.status = "candidate";
     if (old) archiveFinding(old, "revision", "Finding claim or supporting material revised");
     if (candidate.kind === "informational") candidate.cvss = null;
-    if (old)
-      Object.assign(old, candidate, {
-        review_worker: null,
-        review_heartbeat: null,
-        retry_at: undefined,
-      });
-    else g.findings.push(candidate);
-    return old || candidate;
+    const saved = old
+      ? Object.assign(old, candidate, {
+          review_worker: null,
+          review_heartbeat: null,
+          retry_at: undefined,
+        })
+      : (g.findings.push(candidate), candidate);
+    if (this.skipInformationalReview && informationalAwaitingReview(saved)) acceptInformational(g, saved);
+    return saved;
   }
 
   private decisionContext(): DecisionContext {
@@ -1468,6 +1478,7 @@ export class Store {
       settleBlockedRun: this.settleBlockedRun.bind(this),
       evidenceIds: this.evidenceIds.bind(this),
       next: this.next.bind(this),
+      skipInformationalReview: this.skipInformationalReview,
     };
   }
   previewDeletions(id: string, inputs: z.infer<typeof decideSchema>["delete_nodes"]) {
@@ -2040,6 +2051,42 @@ export class Store {
       return { count, resumed: !!g.project.reaudit };
     });
   }
+  /**
+   * Stop an in-flight review-only pass. Reviews that already settled stay in
+   * the graph; unfinished Review runs are cancelled and the project returns to
+   * the lifecycle it had when the window opened. A partially reviewed pass that
+   * produced new planning input stays active so Decide can process it, matching
+   * the normal end-of-reaudit rule.
+   */
+  cancelReaudit(id: string) {
+    const current = this.get(id);
+    if (!current.project.reaudit) fail(409, "没有正在进行的重新审核");
+    return this.mutate(id, "project.reaudit.cancelled", true, (g) => {
+      const reaudit = g.project.reaudit!;
+      for (const run of this.execution.list(id, 10000).filter((r) => r.status === "running"))
+        this.endRun(g, run.worker, "cancelled", "重新审核已取消", run.id);
+      for (const finding of g.findings) {
+        finding.review_worker = null;
+        finding.review_heartbeat = null;
+        finding.retry_at = undefined;
+      }
+      for (const step of g.steps) if (!step.concluded_at) step.worker = null;
+      g.project.reaudit = undefined;
+      g.project.reason = null;
+      if (reaudit.restore_status === "completed" && planningRevision(g) > reaudit.planning_revision) {
+        g.project.status = "active";
+        const goal = g.goals.find((v) => v.id === "goal");
+        if (goal) goal.state = "active";
+        return { cancelled: true, status: g.project.status };
+      }
+      g.project.status = reaudit.restore_status;
+      if (reaudit.restore_status === "completed") {
+        const goal = g.goals.find((v) => v.id === "goal");
+        if (goal) goal.state = "satisfied";
+      }
+      return { cancelled: true, status: g.project.status };
+    });
+  }
   rename(id: string, title: string) {
     return this.mutate(id, "project.renamed", false, (g) => {
       g.project.title = title;
@@ -2377,6 +2424,7 @@ export class Store {
       f.severity_reason = severityReason;
       f.reviewed_version = f.version;
       f.review_status = body.verdict;
+      f.review_exempt = undefined;
       f.status = body.verdict === "pass" ? "confirmed" : body.verdict === "rejected" ? "rejected" : "candidate";
       f.review_worker = null;
       f.review_heartbeat = null;
@@ -2406,6 +2454,29 @@ export class Store {
     this.reasonLeaseSeconds = input.reason_timeout;
     return input;
   }
+  /**
+   * Switching Review to vulnerability-only is retroactive: information-class
+   * findings already waiting for a Review verdict must stop blocking their
+   * project. In-flight Reviews are left to finish and are never rewritten.
+   */
+  setSkipInformationalReview(value: boolean) {
+    this.skipInformationalReview = value;
+    if (!value) return;
+    for (const row of this.rows("SELECT id FROM platform_projects")) {
+      const id = String(row.id);
+      try {
+        const graph = this.get(id);
+        if (graph.project.deletion || !graph.findings.some((finding) => informationalAwaitingReview(finding))) continue;
+        this.mutate(id, "finding.review_skipped", false, (g) => {
+          for (const finding of g.findings) if (informationalAwaitingReview(finding)) acceptInformational(g, finding);
+        });
+      } catch {
+        // A concurrent write, deletion or unreadable legacy row leaves the
+        // finding queued; the next claim, submission or settings change applies
+        // the same policy. Setting the platform switch itself must not fail.
+      }
+    }
+  }
   claim(
     id: string,
     worker: string,
@@ -2433,6 +2504,10 @@ export class Store {
           f.retry_at = this.failedJob(g, "review", "Review lease expired");
           f.review_worker = null;
         }
+      // Same policy as submission: an evidence-backed information class never
+      // waits for a Review slot, including findings queued before the switch.
+      if (this.skipInformationalReview)
+        for (const f of g.findings) if (informationalAwaitingReview(f)) acceptInformational(g, f);
       if (g.project.status !== "active" || !ready(g.project.model_retry_at)) return null;
       if (this.execution.worker(id, worker)?.status === "running") return null;
       const projectLimit = limits.max_project_workers ?? 4;

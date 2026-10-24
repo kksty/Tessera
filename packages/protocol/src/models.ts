@@ -205,6 +205,11 @@ export interface Finding {
   version: number;
   reviewed_version: number;
   review_status: "pending" | "pass" | "needs_evidence" | "rejected";
+  /**
+   * Current version was accepted without a Review run because the operator
+   * limited Review to vulnerability claims. Informational only; never a verdict.
+   */
+  review_exempt?: "informational";
   created_at: string;
   graph_id: string;
   asset_id?: string;
@@ -270,7 +275,7 @@ export interface ReviewIssueWaiver {
   at: string;
 }
 export interface Review {
-  source?: "model" | "human";
+  source?: "model" | "human" | "system";
   /** Explicit new questions for Decide; ordinary pass has none. */
   planning_issues?: string[];
   /** Human waivers for planning_issues by zero-based index. */
@@ -669,6 +674,13 @@ export interface DispatchConfig {
   /** 0 disables the platform shell limit; the model may still supply a timeout. */
   tool_timeout_seconds?: number;
   result_repairs?: number;
+  /** Injects the capture proxy into Execute runs. False keeps the original direct network path. */
+  capture_enabled?: boolean;
+  /**
+   * Review scope. True accepts explicitly informational Findings without a
+   * Review run; vulnerability and unclassified claims are always reviewed.
+   */
+  skip_informational_review?: boolean;
   model: import("./model-config.js").ModelConfig;
   review_model?: import("./model-config.js").ModelConfig;
 }

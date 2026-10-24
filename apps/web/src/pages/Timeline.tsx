@@ -3,6 +3,7 @@ import { ArrowUpRight, History, RefreshCw, Search } from "lucide-react";
 import { EmptyState, PageHeader, Segmented } from "../components/ui.js";
 import { fmt, locateRecord, useWorkspace } from "../workspace.js";
 import { projectActivity, type ActivityRow } from "../project-activity.js";
+import { blackboardIndexAt } from "../replay.js";
 import { useViewState } from "../view-state.js";
 import { TasksPage } from "./Tasks.js";
 
@@ -38,9 +39,7 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
   const [query, setQuery] = useViewState(`${prefix}query`, "");
   const [limit, setLimit] = useViewState(`${prefix}limit`, PAGE);
 
-  const category: Category = categoryOptions.some(([key]) => key === savedCategory)
-    ? savedCategory
-    : "all";
+  const category: Category = categoryOptions.some(([key]) => key === savedCategory) ? savedCategory : "all";
 
   const rows = useMemo(() => projectActivity(ws.events, graph, all), [ws.events, graph, all]);
   const needle = query.trim().toLowerCase();
@@ -88,12 +87,12 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
 
   /** 回放一个时刻：选中这条事件改动的第一个节点并居中；画布仍是总视图。 */
   function replayNow(row: ActivityRow) {
-    const focusId =
-      row.targets.find((id) => graph.steps.some((step) => step.id === id)) ??
-      row.targets[0] ??
-      null;
+    const focusId = row.targets.find((id) => graph.steps.some((step) => step.id === id)) ?? row.targets[0] ?? null;
     ws.setPlaying(false);
-    ws.setReplayIndex(row.index);
+    // 项目时间线是完整历史；黑板回放只按「图有变化」的时刻推进，停在最近一次图变化。
+    const seq = ws.events[row.index]?.seq;
+    const index = seq === undefined ? -1 : blackboardIndexAt(ws.boardEvents, seq);
+    ws.setReplayIndex(index < 0 ? null : index);
     ws.navigate("blackboard");
     ws.clearGraphScope();
     ws.setHistoryTab("detail");
@@ -114,12 +113,7 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
                 {filtered.length} 条进展
               </span>
             )}
-            <button
-              type="button"
-              className="button"
-              disabled={ws.refreshing}
-              onClick={() => void ws.refresh()}
-            >
+            <button type="button" className="button" disabled={ws.refreshing} onClick={() => void ws.refresh()}>
               <RefreshCw size={13} className={ws.refreshing ? "spin" : ""} aria-hidden="true" />
               刷新
             </button>
@@ -128,140 +122,131 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
       />
 
       <div className="toolbar">
-        <Segmented
-          ariaLabel="时间线视图"
-          value={view}
-          onChange={setView}
-          options={viewOptions}
-        />
+        <Segmented ariaLabel="时间线视图" value={view} onChange={setView} options={viewOptions} />
       </div>
 
       {view === "tasks" ? (
         <TasksPage embedded />
       ) : (
         <>
-      <div className="toolbar timeline-toolbar">
-        <Segmented
-          ariaLabel="时间线分类"
-          value={category}
-          onChange={(next) => {
-            setCategory(next);
-            setLimit(PAGE);
-          }}
-          options={categoryOptions}
-        />
-        <label className="timeline-audit">
-          <input
-            type="checkbox"
-            checked={all}
-            onChange={(event) => {
-              setAll(event.target.checked);
-              setLimit(PAGE);
-            }}
-          />
-          <span>全部事件</span>
-        </label>
-        <label className="search-input timeline-search">
-          <Search size={14} aria-hidden="true" />
-          <input
-            aria-label="搜索时间线"
-            placeholder="搜索进展、执行者或记录 ID"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setLimit(PAGE);
-            }}
-          />
-        </label>
-      </div>
-
-      {visible.length > 0 && (
-        <ol className="timeline-list">
-          {visible.map((row) => (
-            <li className="timeline-row" key={row.key} data-category={row.category}>
-              <span className="timeline-dot" aria-hidden="true" />
-              <div className="timeline-main">
-                <div className="timeline-head">
-                  <time className="timeline-time mono" dateTime={row.time}>
-                    {fmt(row.time)}
-                  </time>
-                  <strong className="timeline-title">{row.title}</strong>
-                </div>
-                <div className="timeline-meta">
-                  <span>{row.actor}</span>
-                  {all && (
-                    <span className="mono">
-                      {row.kind} · 版本 {ws.events[row.index]?.revision ?? "—"}
-                    </span>
-                  )}
-                </div>
-                {row.detail && <p className="timeline-detail">{row.detail}</p>}
-                {row.reason && <p className="timeline-reason">理由：{row.reason}</p>}
-                {row.targets.length > 0 && (
-                  <div className="timeline-targets">
-                    {row.targets.slice(0, 8).map((id) => (
-                      <button
-                        type="button"
-                        className="timeline-chip"
-                        key={id}
-                        title={id}
-                        onClick={() => openTarget(id)}
-                      >
-                        {targetName(id)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                className="button ghost small timeline-replay"
-                onClick={() => replayNow(row)}
-                title="在黑板回放这条事件改动的时刻"
-              >
-                回放此刻
-                <ArrowUpRight size={12} aria-hidden="true" />
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-
-      {!rows.length ? (
-        <div className="timeline-empty">
-          <EmptyState
-            title="还没有项目动态"
-            desc="项目开始探索后，这里会按时间顺序记录每一次推进、人工操作与结论变化。"
-          />
-        </div>
-      ) : (
-        !filtered.length && (
-          <div className="timeline-empty">
-            <EmptyState
-              title="没有匹配的进展"
-              desc="调整分类或搜索关键词；审计记录需要勾选「全部事件」才会显示。"
+          <div className="toolbar timeline-toolbar">
+            <Segmented
+              ariaLabel="时间线分类"
+              value={category}
+              onChange={(next) => {
+                setCategory(next);
+                setLimit(PAGE);
+              }}
+              options={categoryOptions}
             />
+            <label className="timeline-audit">
+              <input
+                type="checkbox"
+                checked={all}
+                onChange={(event) => {
+                  setAll(event.target.checked);
+                  setLimit(PAGE);
+                }}
+              />
+              <span>全部事件</span>
+            </label>
+            <label className="search-input timeline-search">
+              <Search size={14} aria-hidden="true" />
+              <input
+                aria-label="搜索时间线"
+                placeholder="搜索进展、执行者或记录 ID"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setLimit(PAGE);
+                }}
+              />
+            </label>
           </div>
-        )
-      )}
 
-      {filtered.length > 0 && (
-        <div className="timeline-foot">
-          <span className="timeline-count">
-            已显示 {visible.length} / {filtered.length} 条
-          </span>
-          {filtered.length > limit && (
-            <button
-              type="button"
-              className="button small"
-              onClick={() => setLimit((value) => value + PAGE)}
-            >
-              <History size={12} aria-hidden="true" />
-              继续加载 · 还有 {filtered.length - limit} 条
-            </button>
+          {visible.length > 0 && (
+            <ol className="timeline-list">
+              {visible.map((row) => (
+                <li className="timeline-row" key={row.key} data-category={row.category}>
+                  <span className="timeline-dot" aria-hidden="true" />
+                  <div className="timeline-main">
+                    <div className="timeline-head">
+                      <time className="timeline-time mono" dateTime={row.time}>
+                        {fmt(row.time)}
+                      </time>
+                      <strong className="timeline-title">{row.title}</strong>
+                    </div>
+                    <div className="timeline-meta">
+                      <span>{row.actor}</span>
+                      {all && (
+                        <span className="mono">
+                          {row.kind} · 版本 {ws.events[row.index]?.revision ?? "—"}
+                        </span>
+                      )}
+                    </div>
+                    {row.detail && <p className="timeline-detail">{row.detail}</p>}
+                    {row.reason && <p className="timeline-reason">理由：{row.reason}</p>}
+                    {row.targets.length > 0 && (
+                      <div className="timeline-targets">
+                        {row.targets.slice(0, 8).map((id) => (
+                          <button
+                            type="button"
+                            className="timeline-chip"
+                            key={id}
+                            title={id}
+                            onClick={() => openTarget(id)}
+                          >
+                            {targetName(id)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="button ghost small timeline-replay"
+                    onClick={() => replayNow(row)}
+                    title="在黑板回放这条事件改动的时刻"
+                  >
+                    回放此刻
+                    <ArrowUpRight size={12} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ol>
           )}
-        </div>
-      )}
+
+          {!rows.length ? (
+            <div className="timeline-empty">
+              <EmptyState
+                title="还没有项目动态"
+                desc="项目开始探索后，这里会按时间顺序记录每一次推进、人工操作与结论变化。"
+              />
+            </div>
+          ) : (
+            !filtered.length && (
+              <div className="timeline-empty">
+                <EmptyState
+                  title="没有匹配的进展"
+                  desc="调整分类或搜索关键词；审计记录需要勾选「全部事件」才会显示。"
+                />
+              </div>
+            )
+          )}
+
+          {filtered.length > 0 && (
+            <div className="timeline-foot">
+              <span className="timeline-count">
+                已显示 {visible.length} / {filtered.length} 条
+              </span>
+              {filtered.length > limit && (
+                <button type="button" className="button small" onClick={() => setLimit((value) => value + PAGE)}>
+                  <History size={12} aria-hidden="true" />
+                  继续加载 · 还有 {filtered.length - limit} 条
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
     </section>

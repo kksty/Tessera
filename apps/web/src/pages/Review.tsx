@@ -11,6 +11,7 @@ import { fmt, fromNow, pct, reviewTone, statusLabels, verdictLabel } from "../fo
 import { useViewState } from "../view-state.js";
 import { useWorkspace } from "../workspace.js";
 import { FindingKindBadge } from "../components/FindingKindBadge.js";
+import { CancelReauditButton } from "../components/CancelReauditButton.js";
 import { ReauditButton } from "../components/ReauditButton.js";
 import { reviewedFindingSnapshot, reviewVersionLabel } from "../review-history.js";
 
@@ -185,7 +186,7 @@ function ReviewRecord({ review, finding }: { review: Review; finding?: Finding }
         <span className="mono" title={review.worker}>
           执行者 {review.worker}
         </span>
-        <span>{review.source === "human" ? "人工处理" : "模型审核"}</span>
+        <span>{review.source === "human" ? "人工处理" : review.source === "system" ? "信息类免审" : "模型审核"}</span>
         <span className="review-sep" aria-hidden="true" />
         <span>{review.evidence_ids.length} 份证据</span>
         {review.verification_step_id && (
@@ -514,6 +515,16 @@ export function ReviewPage() {
           </>
         }
       />
+
+      {graph.project.reaudit && (
+        <div className="banner warn" role="status">
+          <Clock3 size={15} aria-hidden="true" />
+          <span className="banner-text">
+            正在按当前分类与证据规则重新审核；此窗口只做审核，不重新规划或执行探索。取消会停止未完成的审核并恢复项目原状态；若本轮已产生新的规划问题，项目会保持运行中交由决策处理。已经产生的审核结果保留。
+          </span>
+          <CancelReauditButton projectId={graph.project.id} />
+        </div>
+      )}
 
       <details className="review-notation">
         <summary>编号、版本和审核状态怎么看？</summary>

@@ -18,16 +18,14 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  RotateCcw,
   Search,
   Settings,
   ShieldCheck,
   Sun,
   FileSearch,
 } from "lucide-react";
-import type {
-  Graph,
-  ProjectSummary,
-} from "../../../../packages/protocol/src/index.js";
+import type { Graph, ProjectSummary } from "../../../../packages/protocol/src/index.js";
 import { brand } from "../brand.js";
 import { fromNow } from "../format.js";
 import { pendingReviews } from "../../../../packages/protocol/src/review-scheduling.js";
@@ -53,6 +51,7 @@ const workspaceIcons: Record<WorkspacePage, typeof ShieldCheck> = {
 
 const projectIcons: Record<ProjectPage, typeof LayoutDashboard> = {
   overview: LayoutDashboard,
+  retry: RotateCcw,
   findings: Bug,
   review: ClipboardCheck,
   assets: Globe2,
@@ -108,7 +107,16 @@ export function Sidebar({
   const sidebarRef = useRef<HTMLElement>(null);
   useDialogFocus(mobileOpen, sidebarRef, onCloseMobile);
   return (
-    <aside ref={sidebarRef} className="sidebar" data-collapsed={collapsed} data-mobile-open={mobileOpen} role={mobileOpen ? "dialog" : undefined} aria-modal={mobileOpen || undefined} aria-label="工作区导航" tabIndex={-1}>
+    <aside
+      ref={sidebarRef}
+      className="sidebar"
+      data-collapsed={collapsed}
+      data-mobile-open={mobileOpen}
+      role={mobileOpen ? "dialog" : undefined}
+      aria-modal={mobileOpen || undefined}
+      aria-label="工作区导航"
+      tabIndex={-1}
+    >
       <div className="sidebar-head">
         <button
           type="button"
@@ -126,58 +134,55 @@ export function Sidebar({
             <strong>{brand.name}</strong>
           </span>
         </button>
-        <button
-          type="button"
-          className="icon-button sidebar-close"
-          aria-label="关闭导航"
-          onClick={onCloseMobile}
-        >
+        <button type="button" className="icon-button sidebar-close" aria-label="关闭导航" onClick={onCloseMobile}>
           <ChevronLeft size={16} />
         </button>
       </div>
 
       <nav className="sidebar-scroll" aria-label="主导航">
         {!currentId && (
-        <div className="nav-section">
-          <span className="nav-section-label">工作区</span>
-          {/* 设置常驻侧栏底部，工作区导航里不再重复一份。 */}
-          {workspacePages
-            .filter(([key]) => key !== "settings")
-            .map(([key, label]) => {
-            const Icon = workspaceIcons[key as WorkspacePage];
-            const active = !currentId && page === key;
-            const badge =
-              key === "vulns"
-                ? counts.findings
-                : key === "reviews"
-                  ? counts.pendingReview
-                : key === "projects"
-                  ? counts.projects
-                  : undefined;
-            return (
-              <button
-                key={key}
-                type="button"
-                className="nav-item"
-                data-active={active || undefined}
-                aria-current={active ? "page" : undefined}
-                title={label}
-                onClick={() => {
-                  onNavigate(key);
-                  onCloseMobile();
-                }}
-              >
-                <Icon size={16} strokeWidth={1.9} aria-hidden="true" />
-                <span className="nav-label">{label}</span>
-                {badge !== undefined && badge > 0 && (
-                  <span className="nav-meta">
-                    <span className="nav-count" title={key === "reviews" ? `${badge} 条发现待审核` : undefined}>{badge}</span>
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+          <div className="nav-section">
+            <span className="nav-section-label">工作区</span>
+            {/* 设置常驻侧栏底部，工作区导航里不再重复一份。 */}
+            {workspacePages
+              .filter(([key]) => key !== "settings")
+              .map(([key, label]) => {
+                const Icon = workspaceIcons[key as WorkspacePage];
+                const active = !currentId && page === key;
+                const badge =
+                  key === "vulns"
+                    ? counts.findings
+                    : key === "reviews"
+                      ? counts.pendingReview
+                      : key === "projects"
+                        ? counts.projects
+                        : undefined;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className="nav-item"
+                    data-active={active || undefined}
+                    aria-current={active ? "page" : undefined}
+                    title={label}
+                    onClick={() => {
+                      onNavigate(key);
+                      onCloseMobile();
+                    }}
+                  >
+                    <Icon size={16} strokeWidth={1.9} aria-hidden="true" />
+                    <span className="nav-label">{label}</span>
+                    {badge !== undefined && badge > 0 && (
+                      <span className="nav-meta">
+                        <span className="nav-count" title={key === "reviews" ? `${badge} 条发现待审核` : undefined}>
+                          {badge}
+                        </span>
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+          </div>
         )}
 
         <div className="nav-section project-section">
@@ -198,7 +203,10 @@ export function Sidebar({
               <button
                 type="button"
                 className="project-chip"
-                onClick={() => { onNavigate("overview"); onCloseMobile(); }}
+                onClick={() => {
+                  onNavigate("overview");
+                  onCloseMobile();
+                }}
                 title={current?.title || graph?.project.title}
               >
                 <span
@@ -219,7 +227,9 @@ export function Sidebar({
                         : graph?.project.status === "completed"
                           ? "已完成"
                           : "读取中"}
-                    {graph ? ` · ${graph.steps.filter((step) => !step.concluded_at && !step.discarded).length} 个待办` : ""}
+                    {graph
+                      ? ` · ${graph.steps.filter((step) => !step.concluded_at && !step.discarded).length} 个待办`
+                      : ""}
                   </small>
                 </span>
               </button>
@@ -233,7 +243,15 @@ export function Sidebar({
                       // 深链到 tasks 时导航仍然要落在「时间线」这一项上。
                       const active = page === key || (key === "timeline" && page === "tasks");
                       const pending =
-                        key === "review" && graph ? pendingReviews(graph).length : undefined;
+                        key === "review"
+                          ? graph
+                            ? pendingReviews(graph).length
+                            : undefined
+                          : key === "retry"
+                            ? graph?.steps.filter(
+                                (step) => step.blocked_run_id && !step.concluded_at && !step.discarded,
+                              ).length
+                            : undefined;
                       return (
                         <button
                           key={key}
@@ -271,20 +289,14 @@ export function Sidebar({
               <ul className="recent-projects">
                 {projects.slice(0, 5).map((project) => (
                   <li key={project.id}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenProject(project.id)}
-                      title={project.title}
-                    >
+                    <button type="button" onClick={() => onOpenProject(project.id)} title={project.title}>
                       <span className="live-dot" data-status={project.status} aria-hidden="true" />
                       <span className="recent-title">{project.title}</span>
                       <span className="recent-time">{fromNow(project.created_at)}</span>
                     </button>
                   </li>
                 ))}
-                {!projects.length && (
-                  <li className="recent-empty">还没有项目。新建一个开始探索。</li>
-                )}
+                {!projects.length && <li className="recent-empty">还没有项目。新建一个开始探索。</li>}
               </ul>
             </>
           )}
@@ -337,8 +349,7 @@ export function Sidebar({
   );
 }
 
-const isMacPlatform = () =>
-  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+const isMacPlatform = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 export function Topbar({
   page,
@@ -379,13 +390,17 @@ export function Topbar({
           <button type="button" className="crumb" onClick={onHome}>
             工作区
           </button>
-          <span className="crumb-sep" aria-hidden="true">/</span>
+          <span className="crumb-sep" aria-hidden="true">
+            /
+          </span>
           {inProject ? (
             <>
               <button type="button" className="crumb" onClick={onProject} title={projectTitle}>
                 {projectTitle}
               </button>
-              <span className="crumb-sep" aria-hidden="true">/</span>
+              <span className="crumb-sep" aria-hidden="true">
+                /
+              </span>
               <span className="crumb current">{pageTitles[page]}</span>
             </>
           ) : (

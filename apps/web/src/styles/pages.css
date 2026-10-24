@@ -15,15 +15,27 @@
 
 .compatibility-notice {
   flex: none;
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 7px 20px;
+  padding: 7px 52px 7px 20px;
   background: var(--warn-soft);
   border-bottom: 1px solid var(--warn-ring);
   color: var(--ink-2);
   font-size: var(--f-xs);
   line-height: 1.55;
+}
+
+.compatibility-close {
+  position: absolute;
+  top: 5px;
+  right: 14px;
+  color: var(--ink-3);
+}
+
+.compatibility-close:hover {
+  color: var(--ink-1);
 }
 
 .compatibility-action {

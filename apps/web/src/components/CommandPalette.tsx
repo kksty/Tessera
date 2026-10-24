@@ -16,28 +16,21 @@ import {
   LogOut,
   Moon,
   Plus,
+  RotateCcw,
   Search,
   Settings,
   ShieldCheck,
   Sun,
 } from "lucide-react";
-import type {
-  Graph,
-  OverviewFinding,
-  ProjectSummary,
-} from "../../../../packages/protocol/src/index.js";
+import type { Graph, OverviewFinding, ProjectSummary } from "../../../../packages/protocol/src/index.js";
 import { severityLabels, statusLabels } from "../format.js";
-import {
-  pageTitles,
-  workspacePages,
-  type Page,
-  type ProjectPage,
-} from "../workspace.js";
+import { pageTitles, workspacePages, type Page, type ProjectPage } from "../workspace.js";
 import { Kbd } from "./ui.js";
 import { useDialogFocus } from "./useDialogFocus.js";
 
 const projectIcons: Record<ProjectPage, typeof LayoutDashboard> = {
   overview: LayoutDashboard,
+  retry: RotateCcw,
   findings: Bug,
   review: ClipboardCheck,
   assets: Globe2,
@@ -116,9 +109,10 @@ export function CommandPalette({
   const items = useMemo<Item[]>(() => {
     const list: Item[] = [];
     const pages: (readonly [Page, string])[] = [...workspacePages];
-    if (graph) for (const [key, label] of Object.entries(pageTitles)) {
-      if (key in projectIcons) pages.push([key as ProjectPage, label]);
-    }
+    if (graph)
+      for (const [key, label] of Object.entries(pageTitles)) {
+        if (key in projectIcons) pages.push([key as ProjectPage, label]);
+      }
     for (const [key, label] of pages) {
       const Icon = workspaceIcons[key] || projectIcons[key as ProjectPage] || LayoutDashboard;
       list.push({
@@ -215,19 +209,28 @@ export function CommandPalette({
       },
     );
     return list;
-  }, [graph, projects, findings, currentId, theme, onNavigate, onOpenProject, onOpenFinding, onLocate, onNew, onToggleTheme, onLogout]);
+  }, [
+    graph,
+    projects,
+    findings,
+    currentId,
+    theme,
+    onNavigate,
+    onOpenProject,
+    onOpenFinding,
+    onLocate,
+    onNew,
+    onToggleTheme,
+    onLogout,
+  ]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const matched = needle
-      ? items.filter((item) =>
-          `${item.label} ${item.hint || ""} ${item.group}`.toLowerCase().includes(needle),
-        )
+      ? items.filter((item) => `${item.label} ${item.hint || ""} ${item.group}`.toLowerCase().includes(needle))
       : items.filter((item) => item.group !== "当前项目" && item.group !== "全部漏洞");
     const order = ["页面", "项目", "当前项目", "全部漏洞", "操作"];
-    return matched
-      .sort((left, right) => order.indexOf(left.group) - order.indexOf(right.group))
-      .slice(0, 40);
+    return matched.sort((left, right) => order.indexOf(left.group) - order.indexOf(right.group)).slice(0, 40);
   }, [items, query]);
 
   useEffect(() => {
@@ -260,9 +263,7 @@ export function CommandPalette({
   }, [open, filtered, active, onClose]);
 
   useEffect(() => {
-    listRef.current
-      ?.querySelector<HTMLElement>(`[data-index="${active}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
   if (!open) return null;
@@ -321,9 +322,16 @@ export function CommandPalette({
           )}
         </div>
         <div className="palette-foot">
-          <span><Kbd>↑</Kbd><Kbd>↓</Kbd> 选择</span>
-          <span><Kbd>↵</Kbd> 打开</span>
-          <span><Kbd>ESC</Kbd> 关闭</span>
+          <span>
+            <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd> 选择
+          </span>
+          <span>
+            <Kbd>↵</Kbd> 打开
+          </span>
+          <span>
+            <Kbd>ESC</Kbd> 关闭
+          </span>
         </div>
       </div>
     </div>,

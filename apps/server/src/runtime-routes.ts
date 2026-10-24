@@ -33,10 +33,15 @@ const PROBE_SAFETY_TOKENS = 4096;
 // keeps Pi's clamp authoritative, so the probe can never overrun the declaration.
 const PROBE_CHARS_PER_TOKEN = 3.5;
 const PROBE_TIMEOUT_MS = 180_000;
-const PROBE_VOCABULARY =
-  "asset finding evidence probe context boundary request decision review step observation graph revision " +
-  "worker lease heartbeat session fingerprint capacity window completion stream transport adapter provider " +
-  "endpoint credential envelope render surface anchor receipt queue batch retry deadline budget".split(" ");
+// Join before splitting: `a + b + c.split(" ")` would coerce the array back into a
+// comma-joined string, so indexing it would yield single characters and commas.
+const PROBE_VOCABULARY = [
+  "asset finding evidence probe context boundary request decision review step observation graph revision",
+  "worker lease heartbeat session fingerprint capacity window completion stream transport adapter provider",
+  "endpoint credential envelope render surface anchor receipt queue batch retry deadline budget",
+]
+  .join(" ")
+  .split(" ");
 
 function probeBudget(metadata: ModelMetadata) {
   const available = metadata.context_window - metadata.max_output_tokens - PROBE_SAFETY_TOKENS;
@@ -65,6 +70,7 @@ export function registerRuntimeRoutes(
   runtime: RuntimeConfig,
   operatorCheck: (req: FastifyRequest) => void,
   workerCheck: (req: FastifyRequest) => void,
+  onUpdate?: (value: RuntimeConfig["value"]) => void,
 ) {
   api.get("/runtime", (req) => {
     operatorCheck(req);
@@ -100,7 +106,9 @@ export function registerRuntimeRoutes(
     // change deployment fields (server, image, network, volume prefix).
     operatorCheck(req);
     try {
-      return runtime.updatePublic(req.body);
+      const redacted = runtime.updatePublic(req.body);
+      onUpdate?.(runtime.value);
+      return redacted;
     } catch (e) {
       if (e instanceof z.ZodError) throw e;
       throw new DomainError(422, (e as Error).message);
@@ -177,6 +185,10 @@ export function registerRuntimeRoutes(
         },
       );
       const elapsed = Date.now() - started;
+      // Pi reports uncached input in `input` and cache hits separately; the operator
+      // needs the prompt the deployment actually saw, not only its cache miss.
+      const usage = result.usage;
+      const promptTokens = usage ? usage.input + usage.cacheRead + usage.cacheWrite : null;
       if (result.stopReason === "error" || result.stopReason === "aborted")
         throw capacityFailure(metadata, budget, sent, elapsed, result.errorMessage || result.stopReason, cfg.api_key);
       if (!result.content.length)
@@ -191,8 +203,9 @@ export function registerRuntimeRoutes(
           output_limit: metadata.max_output_tokens,
           context_probe_tokens: budget.context,
           max_tokens: sent,
-          prompt_tokens: result.usage?.input ?? null,
-          completion_tokens: result.usage?.output ?? null,
+          prompt_tokens: promptTokens,
+          cached_tokens: usage ? usage.cacheRead + usage.cacheWrite : null,
+          completion_tokens: usage?.output ?? null,
         },
       };
     } catch (error) {

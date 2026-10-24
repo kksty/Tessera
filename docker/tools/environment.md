@@ -6,4 +6,4 @@ Linux / Kali，预装 Node.js、npm、Python。`/workspace` 是各 Step 共享�
 
 Nuclei 已移除，不重新安装引擎或下载模板库。根据当前问题使用已有工具和针对性脚本核查；历史扫描产物仅作为已有证据读取。
 
-按需参考 `/opt/tessera/tools/reference.md`：工具示例、字典路径、证据归档与代理边界。参数以本机帮助为准，参考资料不规定探索顺序。
+按需参考 `/opt/tessera/tools/reference.md`：工具示例、字典路径、证据归档，以及网络代理与录制边界。参数以本机帮助为准，参考资料不规定探索顺序。

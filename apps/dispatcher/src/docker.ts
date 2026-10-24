@@ -1,9 +1,6 @@
 import Docker from "dockerode";
 import { setTimeout as sleep } from "node:timers/promises";
-import type {
-  DispatchConfig,
-  Job,
-} from "../../../packages/protocol/src/index.js";
+import type { DispatchConfig, Job } from "../../../packages/protocol/src/index.js";
 import { projectToken } from "../../../packages/protocol/src/internal-auth.js";
 import { workerConfig } from "./worker-config.js";
 
@@ -14,14 +11,8 @@ export interface DemuxState {
    4 字节大端长度）+ 负载。直接把 chunk 当文本拼接会把帧头字节混进正文，
    错误信息因此会出现 "PAPI 409:"、"/API 422:" 之类的乱码前缀。
    这里按帧还原负载，只把正文交给 sink，并返回未凑齐的尾巴留到下一次。 */
-export function demuxDockerChunk(
-  chunk: Buffer,
-  state: DemuxState,
-  sink: (text: string) => void,
-): DemuxState {
-  let pending = state.pending.length
-    ? Buffer.concat([state.pending, chunk])
-    : chunk;
+export function demuxDockerChunk(chunk: Buffer, state: DemuxState, sink: (text: string) => void): DemuxState {
+  let pending = state.pending.length ? Buffer.concat([state.pending, chunk]) : chunk;
   while (pending.length >= 8) {
     const size = pending.readUInt32BE(4);
     if (size > 8 * 1024 * 1024) {
@@ -63,13 +54,24 @@ export class DockerBackend implements JobBackend {
   private creating = new Map<string, Promise<Docker.Container>>();
   private deleting = new Set<string>();
   private async volumeExists(name: string) {
-    try { await this.docker.getVolume(name).inspect(); return true; }
-    catch (error) { if ((error as { statusCode?: number }).statusCode === 404) return false; throw error; }
+    try {
+      await this.docker.getVolume(name).inspect();
+      return true;
+    } catch (error) {
+      if ((error as { statusCode?: number }).statusCode === 404) return false;
+      throw error;
+    }
   }
-  blockProject(projectId: string) { this.deleting.add(projectId); }
-  isDeleting(projectId: string) { return this.deleting.has(projectId); }
+  blockProject(projectId: string) {
+    this.deleting.add(projectId);
+  }
+  isDeleting(projectId: string) {
+    return this.deleting.has(projectId);
+  }
   async drainCreation(projectId: string) {
-    await Promise.allSettled([...this.creating.entries()].filter(([name]) => name.endsWith(`-worker-${projectId}`)).map(([, task]) => task));
+    await Promise.allSettled(
+      [...this.creating.entries()].filter(([name]) => name.endsWith(`-worker-${projectId}`)).map(([, task]) => task),
+    );
   }
   async prepare(projectId: string, config: DispatchConfig, busy: boolean): Promise<boolean> {
     if (this.isDeleting(projectId)) return false;
@@ -77,7 +79,12 @@ export class DockerBackend implements JobBackend {
     const desired = await this.docker.getImage(config.worker_image).inspect();
     const container = this.docker.getContainer(`${config.volume_prefix}-worker-${projectId}`);
     let state: Docker.ContainerInspectInfo;
-    try { state = await container.inspect(); } catch(e) { if ((e as any).statusCode === 404) return true; throw e; }
+    try {
+      state = await container.inspect();
+    } catch (e) {
+      if ((e as any).statusCode === 404) return true;
+      throw e;
+    }
     if (state.Image === desired.Id) return true;
     if (busy) return false;
     for (const id of state.ExecIDs || []) if ((await this.docker.getExec(id).inspect()).Running) return false;
@@ -102,14 +109,17 @@ export class DockerBackend implements JobBackend {
       }
       if (state) {
         const desired = await this.docker.getImage(config.worker_image).inspect();
-        if (state.Image !== desired.Id) throw new Error("Worker image changed; waiting for active runs to drain before refreshing the container");
+        if (state.Image !== desired.Id)
+          throw new Error("Worker image changed; waiting for active runs to drain before refreshing the container");
         if (this.isDeleting(job.project_id)) throw new Error("项目正在删除");
         // A container whose workspace volume was deleted cannot start. Remove the
         // container (not its data, which is already gone) and recreate both.
         const volumeName = `${config.volume_prefix}-workspace-${job.project_id}`;
-        const mounted = state.Mounts?.find(mount => mount.Destination === "/workspace")?.Name;
+        const mounted = state.Mounts?.find((mount) => mount.Destination === "/workspace")?.Name;
         if (mounted && mounted !== volumeName)
-          throw new Error(`Worker container uses workspace volume ${mounted}, expected ${volumeName}; refusing to discard it automatically`);
+          throw new Error(
+            `Worker container uses workspace volume ${mounted}, expected ${volumeName}; refusing to discard it automatically`,
+          );
         // Only self-heal when the container itself declares the expected volume.
         // Older/fixture inspect payloads may omit Mounts entirely.
         if (mounted === volumeName && !(await this.volumeExists(volumeName))) {
@@ -179,7 +189,12 @@ export class DockerBackend implements JobBackend {
     }
   }
   /** 名字已被占用但 inspect 暂时看不到：等它出现并复用，而不是把任务判失败。 */
-  private async reuseExisting(name: string, config: DispatchConfig, projectId: string, conflict: unknown): Promise<Docker.Container> {
+  private async reuseExisting(
+    name: string,
+    config: DispatchConfig,
+    projectId: string,
+    conflict: unknown,
+  ): Promise<Docker.Container> {
     for (let attempt = 0; attempt < 8; attempt++) {
       await sleep(attempt === 0 ? 100 : 500);
       const container = this.docker.getContainer(name);
@@ -187,7 +202,9 @@ export class DockerBackend implements JobBackend {
         const state = await container.inspect();
         const desired = await this.docker.getImage(config.worker_image).inspect();
         if (state.Image !== desired.Id)
-          throw new Error("Worker container name is held by a container built from a different image; refusing to reuse it");
+          throw new Error(
+            "Worker container name is held by a container built from a different image; refusing to reuse it",
+          );
         if (state.State.Running) return container;
         try {
           await container.start();
@@ -217,6 +234,7 @@ export class DockerBackend implements JobBackend {
         `TESSERA_PROJECT_TOKEN=${projectToken(process.env.TESSERA_WORKER_TOKEN || "", job.project_id)}`,
         `TESSERA_CAPTURE_UPSTREAM=${process.env.TESSERA_CAPTURE_UPSTREAM || ""}`,
         `TESSERA_CAPTURE_BYPASS=${process.env.TESSERA_CAPTURE_BYPASS || ""}`,
+        `TESSERA_CAPTURE_TLS_MAX=${process.env.TESSERA_CAPTURE_TLS_MAX || ""}`,
       ],
       AttachStdout: true,
       AttachStderr: true,
@@ -242,9 +260,12 @@ export class DockerBackend implements JobBackend {
           // A process that ignores SIGTERM must not keep running after the Run was
           // cancelled. Escalate once, then let the stream close.
           const timer = setTimeout(() => {
-            void exec.inspect().then(async (current) => {
-              if (current.Running) await signal("KILL");
-            }).catch(() => {});
+            void exec
+              .inspect()
+              .then(async (current) => {
+                if (current.Running) await signal("KILL");
+              })
+              .catch(() => {});
           }, 5000);
           timer.unref();
         })
@@ -260,18 +281,17 @@ export class DockerBackend implements JobBackend {
       });
       const state = await exec.inspect();
       if (state.ExitCode !== 0)
-        throw new Error(
-          text.replace(/[\x00-\x08]/g, "").slice(-2000) ||
-            `Worker exited ${state.ExitCode}`,
-        );
+        throw new Error(text.replace(/[\x00-\x08]/g, "").slice(-2000) || `Worker exited ${state.ExitCode}`);
     } finally {
       signal.removeEventListener("abort", abort);
     }
   }
   /** Reclaim execs left running by an earlier dispatcher process. */
   async recover() {
-    const containers = await this.docker.listContainers({ all: true,
-      filters: JSON.stringify({ label: ["tessera.managed=true"] }) });
+    const containers = await this.docker.listContainers({
+      all: true,
+      filters: JSON.stringify({ label: ["tessera.managed=true"] }),
+    });
     for (const listed of containers) {
       const container = this.docker.getContainer(listed.Id);
       const state = await container.inspect().catch(() => null);
@@ -286,7 +306,12 @@ export class DockerBackend implements JobBackend {
         };
         await kill("TERM").catch(() => {});
         const timer = setTimeout(() => {
-          void exec.inspect().then(async current => { if (current.Running) await kill("KILL"); }).catch(() => {});
+          void exec
+            .inspect()
+            .then(async (current) => {
+              if (current.Running) await kill("KILL");
+            })
+            .catch(() => {});
         }, 5000);
         timer.unref();
       }
@@ -294,9 +319,7 @@ export class DockerBackend implements JobBackend {
   }
   async suspend(projectId: string, config: DispatchConfig) {
     try {
-      const c = this.docker.getContainer(
-        `${config.volume_prefix}-worker-${projectId}`,
-      );
+      const c = this.docker.getContainer(`${config.volume_prefix}-worker-${projectId}`);
       const info = await c.inspect();
       if (info.State.Running) await c.stop({ t: 3 });
     } catch (e) {
@@ -310,11 +333,7 @@ export class DockerBackend implements JobBackend {
     });
     for (const c of containers) {
       const pid = c.Labels["tessera.project"];
-      if (
-        pid &&
-        !active.has(pid) &&
-        c.Names.some((n) => n.startsWith(`/${config.volume_prefix}-worker-`))
-      )
+      if (pid && !active.has(pid) && c.Names.some((n) => n.startsWith(`/${config.volume_prefix}-worker-`)))
         await this.docker.getContainer(c.Id).stop({ t: 3 });
     }
   }

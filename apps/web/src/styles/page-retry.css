@@ -1,0 +1,369 @@
+/* 人工重试（项目内）：把“中断后要不要重跑”的判断集中到一页。
+   选择器统一 retry- 前缀，颜色只取 tokens.css。 */
+
+.page.page-retry {
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.page-retry > .card {
+  margin-top: 14px;
+}
+
+/* ---------- 判断顺序 ---------- */
+.retry-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.retry-guide li {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line-faint);
+}
+
+.retry-guide li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.retry-guide li:last-child {
+  padding-bottom: 0;
+}
+
+.retry-guide-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--f-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.retry-guide strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+  font-size: var(--f-sm);
+  font-weight: 600;
+}
+
+.retry-guide p {
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  line-height: 1.65;
+}
+
+/* ---------- 待处理列表 ---------- */
+.retry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 8px 8px;
+}
+
+.retry-empty {
+  padding: 4px;
+}
+
+.retry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 13px 14px 12px 13px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.retry-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 9px;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+}
+
+.retry-kind {
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.retry-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: -4px;
+  padding: 1px 4px;
+  border-radius: var(--r-xs);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  font-weight: 500;
+  transition: background var(--fast), color var(--fast);
+}
+
+.retry-step:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.retry-step svg {
+  color: var(--ink-4);
+}
+
+.retry-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--f-2xs);
+  white-space: nowrap;
+}
+
+.retry-desc {
+  color: var(--ink-2);
+  font-size: var(--f-base);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.retry-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 18%, transparent);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--f-sm);
+  line-height: 1.55;
+}
+
+.retry-error svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.retry-hint {
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  line-height: 1.65;
+}
+
+.retry-hint.quiet {
+  color: var(--ink-4);
+}
+
+.retry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.retry-evidence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-faint);
+  color: var(--ink-4);
+  font-size: var(--f-sm);
+}
+
+.retry-evidence svg {
+  flex: none;
+}
+
+.retry-evidence-link {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-ink);
+  font-size: var(--f-sm);
+  text-align: left;
+}
+
+.retry-evidence-link:hover {
+  text-decoration: underline;
+}
+
+.retry-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-faint);
+}
+
+.retry-actions .button {
+  height: 26px;
+}
+
+/* ---------- 已处理 ---------- */
+.retry-history {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px 10px;
+}
+
+.retry-history-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-faint);
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+}
+
+.retry-history-row:first-child {
+  border-top: 0;
+}
+
+.retry-history-note {
+  min-width: 0;
+  color: var(--ink-4);
+  overflow-wrap: anywhere;
+}
+
+.retry-history-row time {
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  white-space: nowrap;
+}
+
+/* ---------- 重试确认 ---------- */
+.retry-modal-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--f-sm);
+  line-height: 1.6;
+}
+
+.retry-modal-warn svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.retry-modal-explain {
+  margin-top: 12px;
+  color: var(--ink-2);
+  font-size: var(--f-base);
+  line-height: 1.7;
+}
+
+.retry-modal-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.retry-modal-box p {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  line-height: 1.6;
+}
+
+.retry-modal-box strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.retry-modal-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 12px;
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  line-height: 1.65;
+}
+
+.retry-modal-info svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--info);
+}
+
+.retry-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--ink-2);
+  font-size: var(--f-sm);
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.retry-check input {
+  flex: none;
+  margin-top: 2px;
+}
+
+@media (max-width: 860px) {
+  .page.page-retry {
+    padding-inline: 16px;
+  }
+
+  .retry-modal-box p {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

@@ -6,6 +6,7 @@ import { reviewGateLabels, reviewQueue, reviewSummary } from "../review-queue.js
 import { useViewState } from "../view-state.js";
 import { useWorkspace } from "../workspace.js";
 import { FindingKindBadge } from "../components/FindingKindBadge.js";
+import { CancelReauditButton } from "../components/CancelReauditButton.js";
 import { ReauditButton } from "../components/ReauditButton.js";
 
 type Filter = "all" | "reviewing" | "waiting";
@@ -59,6 +60,7 @@ export function ReviewsPage() {
   }, [queue]);
   const stalledCount = stalled.reduce((sum, [, row]) => sum + row.count, 0);
   const stalledLegacy = stalled.reduce((sum, [, row]) => sum + row.legacy, 0);
+  const reauditing = ws.projects.filter((project) => project.reaudit);
 
   return (
     <section className="page page-reviews">
@@ -72,6 +74,21 @@ export function ReviewsPage() {
           </button>
         }
       />
+      {reauditing.length > 0 && (
+        <section className="review-reaudit" aria-label="正在重新审核">
+          <div className="review-reaudit-copy">
+            <strong>{reauditing.length} 个项目正在按当前分类与证据规则重新审核</strong>
+            <p>
+              审核窗口只处理待复核发现，不重新规划或执行探索。取消会停止未完成的审核，已经产生的审核结果保留；未产生新规划问题时项目恢复原状态。
+            </p>
+          </div>
+          <div className="review-reaudit-actions">
+            {reauditing.map((project) => (
+              <CancelReauditButton key={project.id} projectId={project.id} label={`取消复审 ${project.title}`} />
+            ))}
+          </div>
+        </section>
+      )}
       {stalled.length > 0 && (
         <section className="review-reaudit" aria-label="待重新审核">
           <div className="review-reaudit-copy">

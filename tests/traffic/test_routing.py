@@ -37,6 +37,13 @@ class RoutingTests(unittest.TestCase):
         routing.configure(env, [], 'run', 'step', '/ca.pem')
         self.assertEqual(env['no_proxy'], 'pinned.test,mtls.test')
 
+    def test_upstream_tls_ceiling_defaults_to_tls12(self):
+        self.assertEqual(routing.tls_max_version(''), 'TLS1_2')
+        self.assertEqual(routing.tls_max_version(None), 'TLS1_2')
+        self.assertEqual(routing.tls_max_version('tls1_3'), 'TLS1_3')
+        self.assertEqual(routing.tls_max_version('UNBOUNDED'), 'UNBOUNDED')
+        with self.assertRaises(ValueError): routing.tls_max_version('TLS1_1')
+
     def test_upstreams_use_explicit_http_listener(self):
         self.assertEqual(routing.upstream_mode(''), 'regular@127.0.0.1:8081')
         self.assertEqual(routing.upstream_mode('http://user:pass@proxy.test:3128'), 'upstream:http://proxy.test:3128@127.0.0.1:8081')

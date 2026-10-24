@@ -150,3 +150,76 @@ test("a manual lifecycle decision ends the review-only window", () => {
     f.store.close();
   }
 });
+
+test("an operator can cancel a review-only pass and restore the project lifecycle", () => {
+  const f = fixture();
+  try {
+    f.review({ kind: "informational" });
+    f.store.mutate(f.id, "fixture.legacy", false, (graph) => {
+      delete graph.findings[0].kind;
+      graph.project.status = "completed";
+      graph.goals.find((goal) => goal.id === "goal")!.state = "satisfied";
+    });
+    f.store.startReaudit(f.id);
+    const job = f.store.claim(f.id, "reviewer", deferDecideMs)!;
+    assert.equal(job.kind, "review");
+    assert.equal(f.store.get(f.id).findings[0].review_worker, "reviewer");
+
+    assert.deepEqual(f.store.cancelReaudit(f.id), { cancelled: true, status: "completed" });
+    const graph = f.store.get(f.id);
+    assert.equal(graph.project.status, "completed");
+    assert.equal(graph.project.reaudit, undefined);
+    assert.equal(graph.findings[0].review_worker, null);
+    assert.equal(graph.goals.find((goal) => goal.id === "goal")!.state, "satisfied");
+    assert.equal(
+      f.store.execution.list(f.id, 10).some((run) => run.status === "running"),
+      false,
+      "cancelling the window must stop unfinished Review runs",
+    );
+    assert.equal(pendingReviews(graph).length, 1, "unreviewed findings stay queued for a later pass");
+    assert.throws(() => f.store.cancelReaudit(f.id), /没有正在进行的重新审核/);
+  } finally {
+    f.store.close();
+  }
+});
+
+test("cancelling a re-audit that produced planning issues leaves the project active", () => {
+  const f = fixture();
+  try {
+    f.store.mutate(f.id, "fixture.legacy", false, (graph) => {
+      const base = structuredClone(graph.findings[0]);
+      delete base.kind;
+      base.id = "v002";
+      base.title = "Second historical conclusion";
+      graph.findings.push(base);
+      graph.project.status = "completed";
+      graph.goals.find((goal) => goal.id === "goal")!.state = "satisfied";
+    });
+    f.store.startReaudit(f.id);
+    const job = f.store.claim(f.id, "reviewer", deferDecideMs)!;
+    assert.equal(job.kind, "review");
+    f.store.review(
+      f.id,
+      job.finding_id!,
+      reviewSchema.parse({
+        worker: job.worker,
+        finding_version: job.finding_version,
+        verdict: "needs_evidence",
+        reason: "The old pass did not establish authorization boundaries",
+        planning_issues: ["Verify whether the endpoint is reachable without authentication"],
+      }),
+    );
+    const during = f.store.get(f.id);
+    assert.equal(during.project.status, "active");
+    assert.ok(during.project.reaudit, "another pending finding keeps the window open");
+
+    f.store.cancelReaudit(f.id);
+    const graph = f.store.get(f.id);
+    assert.equal(graph.project.reaudit, undefined);
+    assert.equal(graph.project.status, "active", "new planning input must not be hidden behind a restored lifecycle");
+    assert.equal(graph.goals.find((goal) => goal.id === "goal")!.state, "active");
+    assert.equal(pendingReviews(graph).length, 1);
+  } finally {
+    f.store.close();
+  }
+});

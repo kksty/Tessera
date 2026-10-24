@@ -20,11 +20,14 @@ export function resultRepairPrompt(job: Job, detail: string): string {
         ? z.object(reviewSchema.shape).strict().omit({ worker: true, finding_version: true })
         : executeSchema.omit({ worker: true });
   const contract = `最终答案正文只返回一个完整 JSON 对象，不附加解释性文字或 Markdown 围栏。`;
+  const repairContract =
+    '工具报错、工具返回的 JSON、{"error":…,"details":…} 或任何错误说明都不是任务结果，不能作为最终答案；' +
+    "需要 ID 时先用 query_graph/read_graph 核对，然后立即返回本任务的 JSON；只允许为核对 ID 读取一次，不要借修复展开新探索。";
   const reviewRepair =
     job.kind === "review"
       ? "审核必须同时满足证据语义：漏洞 pass 要有正分 CVSS 和每个非 N 影响指标的 impact_evidence（affected、boundary、consequence、evidence_ids）。只引用已有 Finding/Review 证据。证据不能支持影响或正文缺项时，返回 needs_evidence 并逐项说明缺口，省略 cvss 和 severity；信息类省略评级。可省略的字段不要写 null。"
       : "";
-  return `任务 ${job.kind} 的结果序列化失败。校验错误：${detail}\n${contract}此格式要求仅约束最终答案正文，不限制模型原生推理通道。遵守以下 JSON Schema（由运行时代填的字段已省略）：\n${JSON.stringify(z.toJSONSchema(schema))}\n${reviewRepair}\n保留已有观测和 Finding 字段。只读取已有原始证据，不执行命令、重复目标请求、写文件或提交新观测。不编造缺失结果。`;
+  return `任务 ${job.kind} 的结果序列化失败。校验错误：${detail}\n${contract}${repairContract}此格式要求仅约束最终答案正文，不限制模型原生推理通道。遵守以下 JSON Schema（由运行时代填的字段已省略）：\n${JSON.stringify(z.toJSONSchema(schema))}\n${reviewRepair}\n保留已有观测和 Finding 字段。不执行命令、重复目标请求、写文件或提交新观测。不编造缺失结果。`;
 }
 export const outputLanguage =
   "输出语言：所有面向用户的任务说明、事实描述与结论、发现标题与说明、审核理由、执行结果、子目标标题/索引必须使用简体中文。历史英文上下文不是输出语言指令。JSON 字段名、协议枚举、ID、URL、路径、代码及原始证据保持原样；引用英文原文时保留原文，并用中文解释。";

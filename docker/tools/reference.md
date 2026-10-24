@@ -212,5 +212,7 @@ Execute 尝试为支持的 HTTP 客户端提供录制代理和项目 CA。已有
 - HTTP/HTTPS 正文分块保存；当前不新建 TCP/UDP/ICMP 记录。采集故障不会重放请求，也不阻止普通执行。
 - 工具自带代理或 `proxychains4 -f /workspace/路径/proxychains.conf 工具 参数` 由任务自主选择。proxychains 包装器保留用户代理，去除自动注入的采集变量。
 - Nmap 经 TCP 代理时使用 `-sT -Pn -n`；SYN、UDP、ICMP 及原始套接字不能由 proxychains 转发。Go 静态程序优先使用原生代理参数。
+- 设置页的「流量采集」可关闭录制代理；关闭后新 Run 直连，不注入代理环境变量，已有记录保留。
 - Dispatcher 可配置 `TESSERA_CAPTURE_UPSTREAM`（http、https、socks5）及 `TESSERA_CAPTURE_BYPASS`。上游失败不回退直连，不重放目标请求。
+- 上游 TLS 默认上限为 1.2，旧站点首次请求即可成功；`TESSERA_CAPTURE_TLS_MAX=TLS1_3` 或 `UNBOUNDED` 可放开。放开后若握手被目标直接断开，采集会记录该错误并把后续连接降为 TLS 1.2，首次失败请求仍不重放。降级后 TLS 握手仍失败时，流量页会显示黄色 `tls_notice` 提示（不会把 Run 标失败），该主机后续成功响应会清除提示。目标只接受 TLS 1.2 时，OpenSSL 客户端直连可显式加 `--tlsv1.2 --tls-max 1.2`；不要因为一次 TLS EOF 就判定站点不可达。
 - 不存在托管 REM、跨 Run 隧道、自动发布 Worker 公网端口或项目级出口切换接口。普通命令归 Run，结束时清理。

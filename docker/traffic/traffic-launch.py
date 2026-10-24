@@ -24,6 +24,14 @@ root=Path('/var/lib/tessera-proxy');control=Path('/var/lib/tessera-capture')
 root.mkdir(mode=0o700,exist_ok=True);control.mkdir(mode=0o700,exist_ok=True)
 os.environ.update(TESSERA_PROXY_DIR=str(root),TESSERA_CAPTURE_SERVER=config['server'],TESSERA_CAPTURE_PROJECT=job['project_id'])
 spec=spec_from_file_location('capture_guard','/opt/tessera/traffic/traffic-guard.py');guard=module_from_spec(spec);spec.loader.exec_module(guard)
+if not config.get('capture_enabled', True):
+    # A previous Run may have left the recorder running in this worker container.
+    for file in (root/'pid',control/'guard-pid',control/'upstream-pid',control/'network-pid'):
+        try:os.kill(int(file.read_text()),signal.SIGTERM)
+        except (OSError,ValueError):pass
+    try:guard.bypass()
+    except Exception:pass
+    os.execvp('node',['node','/opt/tessera/dist/runner.mjs'])
 items=guard.endpoints(config)
 spec=spec_from_file_location('routing','/opt/tessera/traffic/traffic-routing.py');routing=module_from_spec(spec);spec.loader.exec_module(routing)
 original_env=dict(os.environ)
@@ -78,7 +86,8 @@ try:
         os.chown(root,account.pw_uid,account.pw_gid)
         spool=root/'spool';spool.mkdir(mode=0o700,exist_ok=True);os.chown(spool,account.pw_uid,account.pw_gid)
         scan=pwd.getpwnam('tessera-scan');os.chown(control,0,scan.pw_gid);control.chmod(0o750)
-        signature=hashlib.sha256(json.dumps(['explicit-http-v1',config['server'],items,upstream,os.environ.get('TESSERA_PROJECT_TOKEN') or os.environ.get('TESSERA_WORKER_TOKEN','')]).encode()).hexdigest()
+        tls_max=routing.tls_max_version(os.environ.get('TESSERA_CAPTURE_TLS_MAX'))
+        signature=hashlib.sha256(json.dumps(['explicit-http-v1',config['server'],items,upstream,tls_max,os.environ.get('TESSERA_PROJECT_TOKEN') or os.environ.get('TESSERA_WORKER_TOKEN','')]).encode()).hexdigest()
         same=(control/'signature').exists() and (control/'signature').read_text()==signature
         if not same:
             reap(control/'guard-pid');reap(root/'pid');reap(control/'upstream-pid');reap(control/'network-pid')
@@ -105,7 +114,7 @@ try:
                 with (control/'upstream.log').open('ab') as log:
                     bridge=subprocess.Popen(['setpriv','--reuid',str(account.pw_uid),'--regid',str(account.pw_gid),'--clear-groups','python3','/opt/tessera/traffic/traffic-socks.py'],stdout=log,stderr=log,start_new_session=True)
                 (control/'upstream-pid').write_text(str(bridge.pid))
-            args=['setpriv','--reuid',str(account.pw_uid),'--regid',str(account.pw_gid),'--clear-groups','mitmdump','--mode',mode,'--set','rawtcp=false','--set',f'confdir={root}','--set','block_global=false','--set','flow_detail=0','--set','termlog_verbosity=error','--ignore-hosts','^('+'|'.join(patterns)+')$', '-s','/opt/tessera/traffic/traffic-addon.py']
+            args=['setpriv','--reuid',str(account.pw_uid),'--regid',str(account.pw_gid),'--clear-groups','mitmdump','--mode',mode,'--set','rawtcp=false','--set',f'confdir={root}','--set','block_global=false','--set','flow_detail=0','--set','termlog_verbosity=error','--set',f'tls_version_server_max={tls_max}','--ignore-hosts','^('+'|'.join(patterns)+')$', '-s','/opt/tessera/traffic/traffic-addon.py']
             parsed=urllib.parse.urlsplit(upstream)
             if parsed.scheme in ('http','https') and parsed.username is not None:
                 args.extend(['--set','upstream_auth='+urllib.parse.unquote(parsed.username)+':'+urllib.parse.unquote(parsed.password or '')])

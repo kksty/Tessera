@@ -11,7 +11,11 @@ import {
   type FindingReviewFilter,
 } from "../finding-review.js";
 import { confirmedVulnerability } from "../project-activity.js";
-import { findingKind, classificationReviewRequired } from "../../../../packages/protocol/src/finding-policy.js";
+import {
+  findingKind,
+  classificationReviewRequired,
+  informationalReviewExempt,
+} from "../../../../packages/protocol/src/finding-policy.js";
 import { scopeForFinding } from "../graph-scope.js";
 import { Card, EmptyState, Segmented, SeverityBadge } from "../components/ui.js";
 import { FindingDetails } from "../components/FindingDetails.js";
@@ -185,6 +189,11 @@ export function FindingsPage() {
                   : "待分类"}
             </span>
             {findingKind(finding) !== "informational" && <SeverityBadge severity={finding.severity} />}
+            {informationalReviewExempt(finding) && (
+              <span className="tag" title="信息类发现已按当前审核范围直接归档，未启动独立审核。">
+                免审
+              </span>
+            )}
             <span className="status-pill" data-tone={reviewTone(reviewStatus)}>
               {findingReviewLabels[reviewStatus]}
             </span>

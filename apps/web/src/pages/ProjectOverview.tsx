@@ -279,6 +279,11 @@ export function ProjectOverviewPage() {
               <button type="button" className="button small" onClick={() => locateRecord(ws, step.id)}>
                 检查任务
               </button>
+              {stepState(step) === "needs_attention" && (
+                <button type="button" className="button small danger" onClick={() => ws.navigate("retry")}>
+                  人工重试
+                </button>
+              )}
             </div>
           ))}
         </Card>

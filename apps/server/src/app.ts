@@ -70,6 +70,9 @@ export function buildApp(
   });
   requestLogging(app, () => [workerToken, runtime.value.model.api_key, runtime.value.review_model?.api_key || ""]);
   registerModelRelay(app, store, runtime, workerToken);
+  // Review scope is a persisted platform setting; mirror it into the store so
+  // submission, revision and scheduling all apply the same rule.
+  store.skipInformationalReview = runtime.value.skip_informational_review === true;
   // Control-plane timing: receive to response, per route, plus the store's own
   // transaction cost. Recording is best-effort and never affects the response.
   controlPlane.startEventLoopDelay();
@@ -379,6 +382,10 @@ export function buildApp(
         operatorCheck(req);
         requireModel();
         return store.startReaudit(req.params.id);
+      });
+      api.delete<{ Params: { id: string } }>("/projects/:id/reaudit", (req) => {
+        operatorCheck(req);
+        return store.cancelReaudit(req.params.id);
       });
       api.get<{ Params: { id: string }; Querystring: { history?: string } }>("/projects/:id/fgs", (req) => {
         projectReadCheck(req, req.params.id);
@@ -1092,7 +1099,9 @@ export function buildApp(
             .parse(req.body),
         );
       });
-      registerRuntimeRoutes(api, runtime, operatorCheck, workerCheck);
+      registerRuntimeRoutes(api, runtime, operatorCheck, workerCheck, (value) => {
+        store.setSkipInformationalReview(value.skip_informational_review === true);
+      });
       api.post<{ Params: { id: string } }>("/projects/:id/jobs/claim", async (req) => {
         workerCheck(req, req.params.id);
         const b = z

@@ -22,6 +22,7 @@ export type WorkspacePage = "security" | "projects" | "vulns" | "reviews" | "set
 /** 项目内页面。 */
 export type ProjectPage =
   | "overview"
+  | "retry"
   | "blackboard"
   | "tasks"
   | "assets"
@@ -34,12 +35,7 @@ export type ProjectPage =
 
 export type Page = WorkspacePage | ProjectPage;
 
-export type ModalName =
-  | "create"
-  | "rename"
-  | "reopen"
-  | "discard"
-  | null;
+export type ModalName = "create" | "rename" | "reopen" | "discard" | null;
 
 export type RuntimeModel = DispatchConfig["model"] & { api_key_set?: boolean };
 
@@ -62,6 +58,7 @@ export const workspacePages: readOnlyPages = [
 
 export const projectPages: readOnlyPages = [
   ["overview", "项目概览"],
+  ["retry", "人工重试"],
   ["findings", "发现"],
   ["review", "审核队列"],
   ["assets", "资产与范围"],
@@ -75,17 +72,17 @@ export const projectPages: readOnlyPages = [
 
 type readOnlyPages = readonly (readonly [Page, string])[];
 
-export const pageTitles: Record<string, string> = Object.fromEntries([
-  ...workspacePages,
-  ...projectPages,
-]);
+export const pageTitles: Record<string, string> = Object.fromEntries([...workspacePages, ...projectPages]);
 
 /** 侧栏分组：项目页按用途分组，探索放在最前面。 */
-export const projectNavGroups: readonly (readonly [
-  string,
-  readonly (readonly [ProjectPage, string])[],
-])[] = [
-  ["概览", [["overview", "项目概览"]]],
+export const projectNavGroups: readonly (readonly [string, readonly (readonly [ProjectPage, string])[]])[] = [
+  [
+    "概览",
+    [
+      ["overview", "项目概览"],
+      ["retry", "人工重试"],
+    ],
+  ],
   [
     "探索",
     [
@@ -118,6 +115,8 @@ export interface Workspace {
   visible: Graph | null;
   graphId: string;
   events: Event[];
+  /** 只会改变黑板画面的历史时刻；黑板时间线与回放共用这一条序列。 */
+  boardEvents: Event[];
   projects: ProjectSummary[];
   overview: SecurityOverview | null;
   overviewLoading: boolean;
@@ -211,21 +210,17 @@ export function readableError(raw?: string): string {
       const detail = parsed.detail ?? parsed.message;
       if (typeof detail === "string" && detail.trim()) return detail.trim();
       if (Array.isArray(detail)) {
-        const messages = detail
-          .map((item: { message?: string }) => item?.message)
-          .filter(Boolean);
+        const messages = detail.map((item: { message?: string }) => item?.message).filter(Boolean);
         if (messages.length) return messages.join("；");
       }
     } catch {}
   }
   const wrapped = text.match(/^[\w.-]+\s+\w+:\s*\(?\s*(.+)$/);
-  if (wrapped && /^(API \d|Invalid|Unknown|Asset|Step|Graph|Passing)/.test(wrapped[1]))
-    text = wrapped[1];
+  if (wrapped && /^(API \d|Invalid|Unknown|Asset|Step|Graph|Passing)/.test(wrapped[1])) text = wrapped[1];
   return text.replace(/[)\s]+$/, "");
 }
 
-export const tokenTotal = (graph: Graph) =>
-  graph.usage.reduce((n, u) => n + (u.input || 0) + (u.output || 0), 0);
+export const tokenTotal = (graph: Graph) => graph.usage.reduce((n, u) => n + (u.input || 0) + (u.output || 0), 0);
 
 export function stepState(step: Step) {
   return step.discarded

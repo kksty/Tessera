@@ -1,17 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import {
-  AlertCircle,
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  RefreshCw,
-  Search,
-} from "lucide-react";
-import type {
-  TrafficRecord,
-  TrafficStatus,
-  TrafficSummary,
-} from "../../../../packages/protocol/src/traffic.js";
+import { AlertCircle, AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-react";
+import type { TrafficRecord, TrafficStatus, TrafficSummary } from "../../../../packages/protocol/src/traffic.js";
 import { api, path } from "../api.js";
 import { Drawer, EmptyState, PageHeader, Segmented, Skeleton } from "../components/ui.js";
 import { fmt, fmtBytes, fmtTime } from "../format.js";
@@ -24,16 +13,14 @@ type BodyPage = { body_base64: string; offset: number; size: number; next: numbe
 
 const kindLabels: Record<string, string> = { http: "HTTP", connection: "连接", packet: "数据包" };
 
-const messageOf = (failure: unknown) =>
-  failure instanceof Error ? failure.message : String(failure);
+const messageOf = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure));
 
 /** base64 → 字节；损坏的正文返回 null，而不是抛出。 */
 function decodeBase64(value: string): Uint8Array | null {
   try {
     const binary = atob(value);
     const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1)
-      bytes[index] = binary.charCodeAt(index);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
     return bytes;
   } catch {
     return null;
@@ -43,9 +30,7 @@ function decodeBase64(value: string): Uint8Array | null {
 function hexDump(bytes: Uint8Array, offset: number) {
   const lines: string[] = [];
   for (let index = 0; index < bytes.length; index += 16) {
-    const chunk = Array.from(bytes.slice(index, index + 16), (byte) =>
-      byte.toString(16).padStart(2, "0"),
-    ).join(" ");
+    const chunk = Array.from(bytes.slice(index, index + 16), (byte) => byte.toString(16).padStart(2, "0")).join(" ");
     lines.push(`${(offset + index).toString(16).padStart(6, "0")}  ${chunk}`);
   }
   return lines.join("\n");
@@ -54,8 +39,7 @@ function hexDump(bytes: Uint8Array, offset: number) {
 /** 非 HTTP 记录没有可判定的状态码：连接看生命周期，数据包看聚合数量。 */
 function stateLabel(row: TrafficSummary) {
   if (row.error) return "失败";
-  if (row.capture_kind === "connection")
-    return row.capture_state === "closed" ? "已结束" : "进行中";
+  if (row.capture_kind === "connection") return row.capture_state === "closed" ? "已结束" : "进行中";
   if (row.capture_kind === "packet") return `累计 ${row.packet_count || 0} 个包`;
   return row.status ? String(row.status) : "请求中";
 }
@@ -68,10 +52,8 @@ function statusTone(status: number) {
 }
 
 function volumeLabel(row: TrafficSummary) {
-  if (row.capture_kind === "connection")
-    return `↑${fmtBytes(row.request_size)} ↓${fmtBytes(row.response_size)}`;
-  if (row.capture_kind === "packet")
-    return `${fmtBytes(row.request_size)} · ${row.packet_count || 0} 包`;
+  if (row.capture_kind === "connection") return `↑${fmtBytes(row.request_size)} ↓${fmtBytes(row.response_size)}`;
+  if (row.capture_kind === "packet") return `${fmtBytes(row.request_size)} · ${row.packet_count || 0} 包`;
   return `${fmtBytes(row.response_size)}${row.truncated ? " *" : ""}`;
 }
 
@@ -231,10 +213,7 @@ export function TrafficPage() {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const current = generation.current;
-    const url = path(
-      id,
-      `/traffic?limit=200&kind=${kind}&q=${encodeURIComponent(debounced)}`,
-    );
+    const url = path(id, `/traffic?limit=200&kind=${kind}&q=${encodeURIComponent(debounced)}`);
     const poll = async () => {
       try {
         const result = await api<TrafficList>(url);
@@ -274,11 +253,9 @@ export function TrafficPage() {
     };
   }, [id, selected, updated]);
 
-  const rows = [
-    ...new Map(
-      [...(list?.records || []), ...older].map((row) => [row.id, row] as const),
-    ).values(),
-  ].sort((a, b) => b.seq - a.seq);
+  const rows = [...new Map([...(list?.records || []), ...older].map((row) => [row.id, row] as const)).values()].sort(
+    (a, b) => b.seq - a.seq,
+  );
 
   async function loadOlder() {
     const last = rows[rows.length - 1];
@@ -287,10 +264,7 @@ export function TrafficPage() {
     const current = generation.current;
     try {
       const result = await api<TrafficList>(
-        path(
-          id,
-          `/traffic?before=${last.seq}&limit=200&kind=${kind}&q=${encodeURIComponent(debounced)}`,
-        ),
+        path(id, `/traffic?before=${last.seq}&limit=200&kind=${kind}&q=${encodeURIComponent(debounced)}`),
       );
       if (current === generation.current) setOlder((existing) => [...existing, ...result.records]);
     } catch (failure) {
@@ -301,6 +275,7 @@ export function TrafficPage() {
   }
 
   const capture = list?.capture;
+  const captureDisabled = ws.config?.capture_enabled === false;
   const projectStatus = ws.graph?.project.status;
   const paused = projectStatus === "stopped" || projectStatus === "completed";
   const stale =
@@ -308,46 +283,52 @@ export function TrafficPage() {
     (capture?.state === "active" || capture?.state === "degraded") &&
     !!capture?.last_seen &&
     Date.now() - Date.parse(capture.last_seen) > 45_000;
-  const captureLabel = paused
-    ? projectStatus === "completed"
-      ? "采集已结束"
-      : "采集已暂停"
-    : stale
-      ? "采集心跳中断"
-      : capture?.state === "degraded"
-        ? "采集降级"
-        : capture?.state === "active"
-          ? "采集中"
-          : capture?.state === "starting"
-            ? "采集启动中"
-            : capture?.state === "unavailable"
-              ? "采集不可用"
-              : "等待测试运行";
-  const captureTone = paused
+  const captureLabel = captureDisabled
+    ? "采集已关闭"
+    : paused
+      ? projectStatus === "completed"
+        ? "采集已结束"
+        : "采集已暂停"
+      : stale
+        ? "采集心跳中断"
+        : capture?.state === "degraded"
+          ? "采集降级"
+          : capture?.state === "active"
+            ? "采集中"
+            : capture?.state === "starting"
+              ? "采集启动中"
+              : capture?.state === "unavailable"
+                ? "采集不可用"
+                : "等待测试运行";
+  const captureTone = captureDisabled
     ? "neutral"
-    : stale
-      ? "warn"
-      : capture?.state === "degraded"
+    : paused
+      ? "neutral"
+      : stale
         ? "warn"
-        : capture?.state === "active"
-          ? "success"
-          : capture?.state === "starting"
-            ? "info"
-            : capture?.state === "unavailable"
-              ? "danger"
-              : "neutral";
-  const captureTitle = paused
-    ? projectStatus === "completed"
-      ? "项目已完成，采集不再新增记录"
-      : "项目已暂停，采集不再新增记录"
-    : stale
-      ? `超过 45 秒未收到心跳（最近 ${fmt(capture?.last_seen)}），记录可能缺失`
-      : capture?.last_seen
-        ? `最近心跳 ${fmt(capture.last_seen)}`
-        : "尚未收到采集状态上报";
+        : capture?.state === "degraded"
+          ? "warn"
+          : capture?.state === "active"
+            ? "success"
+            : capture?.state === "starting"
+              ? "info"
+              : capture?.state === "unavailable"
+                ? "danger"
+                : "neutral";
+  const captureTitle = captureDisabled
+    ? "录制代理已在设置中关闭；新执行的 Run 不再注入代理，流量不会新增"
+    : paused
+      ? projectStatus === "completed"
+        ? "项目已完成，采集不再新增记录"
+        : "项目已暂停，采集不再新增记录"
+      : stale
+        ? `超过 45 秒未收到心跳（最近 ${fmt(capture?.last_seen)}），记录可能缺失`
+        : capture?.last_seen
+          ? `最近心跳 ${fmt(capture.last_seen)}`
+          : "尚未收到采集状态上报";
 
   const filtering = debounced.trim() !== "" || (kind !== "" && kind !== "http");
-  const captureOff = !paused && (capture?.state === "stopped" || capture?.state === "unavailable");
+  const captureOff = captureDisabled || (!paused && (capture?.state === "stopped" || capture?.state === "unavailable"));
 
   const metadata: [string, string][] = record
     ? [
@@ -409,10 +390,7 @@ export function TrafficPage() {
           <dl className="traffic-scope-list">
             <div>
               <dt>捕获方式</dt>
-              <dd>
-                仅录制通过录制代理、且识别为 HTTP / HTTPS 的流量；支持任意目标端口，不根据 80 / 443
-                判断协议。
-              </dd>
+              <dd>仅录制通过录制代理、且识别为 HTTP / HTTPS 的流量；支持任意目标端口，不根据 80 / 443 判断协议。</dd>
             </div>
             <div>
               <dt>未覆盖</dt>
@@ -424,15 +402,12 @@ export function TrafficPage() {
             <div>
               <dt>TLS</dt>
               <dd>
-                HTTPS 使用受信任的项目 CA 解密；证书固定、双向 TLS
-                等不兼容连接请使用原连接方式，系统不自动重试请求。
+                HTTPS 使用受信任的项目 CA 解密；证书固定、双向 TLS 等不兼容连接请使用原连接方式，系统不自动重试请求。
               </dd>
             </div>
             <div>
               <dt>保存</dt>
-              <dd>
-                请求与响应正文完整保存，页面分页预览并支持完整下载；不按条数或累计大小自动删除历史。
-              </dd>
+              <dd>请求与响应正文完整保存，页面分页预览并支持完整下载；不按条数或累计大小自动删除历史。</dd>
             </div>
             <div>
               <dt>故障</dt>
@@ -458,6 +433,12 @@ export function TrafficPage() {
           <span>
             旧采集策略曾拦截 {capture.blocked} 个 TCP 数据包（非连接数）；新策略只记录，不主动阻断，不阻止任务。
           </span>
+        </div>
+      )}
+      {!captureDisabled && capture?.tls_notice && (
+        <div className="banner warn" role="status">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>{capture.tls_notice}</span>
         </div>
       )}
       {capture?.error && (
@@ -520,11 +501,13 @@ export function TrafficPage() {
               icon={<Search size={20} aria-hidden="true" />}
               title="尚无测试流量"
               desc={
-                captureOff
-                  ? "采集尚未开始：项目运行后，经录制代理的 HTTP / HTTPS 请求会出现在这里。"
-                  : paused
-                    ? "项目已暂停或结束，采集不会再新增记录。"
-                    : "兼容代理环境变量的工具会自动接入；浏览器需显式设置录制代理，未接入的请求不会出现在这里。"
+                captureDisabled
+                  ? "录制代理已在设置中关闭；重新启用后，新执行的 Run 才会继续采集。"
+                  : captureOff
+                    ? "采集尚未开始：项目运行后，经录制代理的 HTTP / HTTPS 请求会出现在这里。"
+                    : paused
+                      ? "项目已暂停或结束，采集不会再新增记录。"
+                      : "兼容代理环境变量的工具会自动接入；浏览器需显式设置录制代理，未接入的请求不会出现在这里。"
               }
             />
           )}
@@ -584,9 +567,7 @@ export function TrafficPage() {
                   <td className="num mono" title={row.truncated ? "正文被截断" : undefined}>
                     {volumeLabel(row)}
                   </td>
-                  <td className="num mono">
-                    {row.duration_ms === null ? "—" : `${Math.round(row.duration_ms)} ms`}
-                  </td>
+                  <td className="num mono">{row.duration_ms === null ? "—" : `${Math.round(row.duration_ms)} ms`}</td>
                   <td className="mono quiet">{row.step_id || "—"}</td>
                 </tr>
               ))}
@@ -616,9 +597,7 @@ export function TrafficPage() {
           }}
         >
           <div className="traffic-insp-bar">
-            <span className="traffic-insp-meta mono">
-              {record ? fmt(record.created_at) : "读取中…"}
-            </span>
+            <span className="traffic-insp-meta mono">{record ? fmt(record.created_at) : "读取中…"}</span>
             <span className="spacer" />
             {record?.capture_kind === "http" && (
               <Segmented<MessageMode>
@@ -649,23 +628,13 @@ export function TrafficPage() {
           {record && record.capture_kind === "http" && (
             <>
               <div className="traffic-insp-sub">
-                {record.run_id ? (
-                  <span className="mono">{record.run_id}</span>
-                ) : (
-                  <span>未关联运行</span>
-                )}
+                {record.run_id ? <span className="mono">{record.run_id}</span> : <span>未关联运行</span>}
                 {record.step_id && <span className="mono">· {record.step_id}</span>}
                 {record.error && <span className="traffic-bad">· {record.error}</span>}
               </div>
               <div className="traffic-messages">
                 {(["request", "response"] as const).map((side) => (
-                  <MessageView
-                    key={`${record.id}-${side}`}
-                    project={id}
-                    record={record}
-                    side={side}
-                    mode={mode}
-                  />
+                  <MessageView key={`${record.id}-${side}`} project={id} record={record} side={side} mode={mode} />
                 ))}
               </div>
             </>
@@ -673,9 +642,7 @@ export function TrafficPage() {
 
           {record && record.capture_kind !== "http" && (
             <>
-              <p className="traffic-note">
-                仅记录网络元数据：载荷原样转发，不解析、不解密、不保存。
-              </p>
+              <p className="traffic-note">仅记录网络元数据：载荷原样转发，不解析、不解密、不保存。</p>
               {record.error && (
                 <div className="banner danger" role="alert">
                   <AlertCircle size={15} aria-hidden="true" />

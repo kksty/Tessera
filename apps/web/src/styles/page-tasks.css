@@ -408,6 +408,16 @@
   font-size: var(--f-sm);
 }
 
+.tasks-runs .run-row > summary {
+  flex-wrap: wrap;
+}
+
+.tasks-runs .run-row > summary time {
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  white-space: nowrap;
+}
+
 .tasks-runs .task-row {
   padding: 8px 12px;
   border: 1px solid var(--line);

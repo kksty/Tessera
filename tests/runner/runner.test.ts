@@ -140,6 +140,7 @@ test("repair contracts describe the correct job without requiring runtime identi
   for (const kind of ["decide", "execute", "review"] as const) {
     const prompt = resultRepairPrompt({ kind } as any, "specific error");
     assert.match(prompt, /specific error/);
+    assert.match(prompt, /错误说明都不是任务结果/);
     const schema = JSON.parse(prompt.split("\n").find((line) => line.startsWith("{"))!);
     assert.equal(schema.additionalProperties, false);
     assert.equal(schema.properties.worker, undefined);
@@ -2621,6 +2622,110 @@ test("Decide repairs the observed unmatched fence using its exact planning contr
     assert.equal(f.store.get(f.graph.project.id).steps.length, 1);
     assert.equal(f.store.get(f.graph.project.id).steps[0].description, "整理原始证据");
     assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
+  } finally {
+    await f.close();
+  }
+});
+
+test("Decide repair keeps graph reads but rejects tool submissions", async () => {
+  const f = await sdkFixture("decide");
+  let calls = 0;
+  f.model.post("/v1/chat/completions", (req: any, reply) => {
+    calls++;
+    if (calls === 1) return streamFixture(reply, { role: "assistant", content: "不是结果信封" }, 1000);
+    if (calls === 2)
+      return streamFixture(
+        reply,
+        {
+          role: "assistant",
+          tool_calls: [
+            toolCall("read_graph", {}),
+            toolCall("submit_decisions", { steps: [{ from: ["origin"], description: "工具提交不应生效" }] }, 1),
+          ],
+        },
+        1000,
+      );
+    const toolMessages = req.body.messages
+      .filter((message: any) => message.role === "tool")
+      .map((message: any) => String(message.content));
+    assert.ok(
+      toolMessages.some((content: string) => content.includes("origin")),
+      "repair reads the current graph",
+    );
+    assert.ok(
+      toolMessages.some((content: string) => content.includes("Repair accepts only existing-material reads")),
+      "repair rejects a tool submission",
+    );
+    assert.ok(
+      !toolMessages.some((content: string) => content.includes("Closeout permits")),
+      "Decide repair is not an Execute closeout",
+    );
+    streamFixture(
+      reply,
+      { role: "assistant", content: JSON.stringify({ steps: [{ from: ["origin"], description: "修复后计划" }] }) },
+      1000,
+    );
+  });
+  try {
+    await f.run();
+    assert.equal(calls, 3);
+    const steps = f.store.get(f.graph.project.id).steps;
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0].description, "修复后计划");
+    assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a missing read_graph record is a tool error, not a JSON result the model can copy", async () => {
+  const f = await sdkFixture("decide");
+  let calls = 0;
+  f.model.post("/v1/chat/completions", (req: any, reply) => {
+    calls++;
+    if (calls === 1)
+      return streamFixture(reply, { role: "assistant", tool_calls: [toolCall("read_graph", { id: "f1" })] });
+    const toolMessages = req.body.messages
+      .filter((message: any) => message.role === "tool")
+      .map((message: any) => String(message.content));
+    const missing = toolMessages.find((content: string) => content.includes("Record not found"));
+    assert.ok(missing, "the missing record reaches the model as a tool error");
+    assert.match(missing!, /query_graph/);
+    assert.ok(
+      !missing!.trim().startsWith('{"error"'),
+      "a tool error is never a success-shaped JSON object with an error key",
+    );
+    streamFixture(reply, {
+      role: "assistant",
+      content: JSON.stringify({ steps: [{ from: ["origin"], description: "重新规划" }] }),
+    });
+  });
+  try {
+    await f.run();
+    assert.equal(calls, 2);
+    const steps = f.store.get(f.graph.project.id).steps;
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0].description, "重新规划");
+    assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a security gateway interception fails the Run without a JSON repair", async () => {
+  const f = await sdkFixture("decide");
+  let calls = 0;
+  f.model.post("/v1/chat/completions", (_req: any, reply) => {
+    calls++;
+    streamFixture(reply, {
+      role: "assistant",
+      content:
+        '⚠️ [此消息为llm-guard回复] 回答内容存在风险，已被安全网关拦截，拦截类型为"违反社会主义核心价值观的内容"。',
+    });
+  });
+  try {
+    await assert.rejects(f.run(), /Model provider failure: 安全网关拦截/);
+    assert.equal(calls, 1, "a blocked response must not be sent through result repair");
   } finally {
     await f.close();
   }

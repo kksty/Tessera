@@ -35,7 +35,7 @@ import { taskResources } from "./task-resources.js";
 import { redactModelError } from "../../protocol/src/model-errors.js";
 import { diagnosticText, diagnosticBuild, ValidationTraces, type Diagnostic } from "../../core/src/diagnostics.js";
 import { Capacity } from "./capacity.js";
-import { admitCloseoutTool, closeoutReads } from "./closeout.js";
+import { admitCloseoutTool, admitRepairTool, closeoutReads } from "./closeout.js";
 import { useAtomicResult, withResultFormat } from "./result-format.js";
 import { queryReferences, readReference } from "./references.js";
 import { ProcessSessions, processTools } from "./process-sessions.js";
@@ -459,8 +459,15 @@ async function runJobInternal(
         const full = await client.request<Graph>(p(a.history ? "/fgs?history=true" : "/fgs"));
         if (!a.history) observeGraph(full);
         const record = readMemoryRecord(full, a.id, a.offset, a.limit, a.expected_hash, !!a.history);
-        if (!record.error && !record.deleted && !a.history)
-          void client.request(p("/fgs/read"), { id: a.id }).catch(() => {});
+        // A missing or stale record is a tool error, not a successful JSON result:
+        // otherwise the model tends to imitate `{"error": ...}` in its final answer.
+        if (record.error)
+          throw new Error(
+            `${record.error}: ${a.id}.${record.record_hash ? ` The record changed to ${record.record_hash}.` : ""} ` +
+              "Use query_graph to find the current id or read_graph without id to refresh the view; " +
+              "a tool error is not a job result.",
+          );
+        if (!record.deleted && !a.history) void client.request(p("/fgs/read"), { id: a.id }).catch(() => {});
         return record;
       },
     ),
@@ -889,7 +896,11 @@ async function runJobInternal(
   session.agent.beforeToolCall = async (context, signal) => {
     if (Date.now() >= explorationDeadline) beginCloseout("探索时间预算已用尽，请根据已有证据完成收尾。");
     const args = context.args as Record<string, unknown>;
-    const closeoutError = closing ? admitCloseoutTool(context.toolCall.name, args, repairing) : undefined;
+    const closeoutError = closing
+      ? admitCloseoutTool(context.toolCall.name, args, repairing)
+      : repairing
+        ? admitRepairTool(context.toolCall.name)
+        : undefined;
     if (decisionsCommitted) {
       diagnose("tool_blocked", {
         request_id: currentRequest || null,
@@ -1480,7 +1491,11 @@ async function runJobInternal(
       diagnose: (type, data) =>
         diagnose(type, { ...data, request_id: currentRequest, generation: capacity.generation }),
       repair: async (detail) => {
-        closing = true;
+        // Execute repair is a closeout: no further world actions. Decide and
+        // Review repair still need their read-only graph tools; admitRepairTool
+        // blocks writes while `closing` stays false so the gate message does not
+        // describe an Execute closeout that never happened.
+        if (job.kind === "execute") closing = true;
         repairing = true;
         session.setAutoCompactionEnabled(false);
         await session.prompt(resultRepairPrompt(job, detail));

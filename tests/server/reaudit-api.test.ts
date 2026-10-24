@@ -9,7 +9,7 @@ import { buildApp } from "../helpers/server.js";
 import { createProjectSchema, findingSchema } from "../../packages/protocol/src/index.js";
 import { classificationReviewRequired } from "../../packages/protocol/src/finding-policy.js";
 
-test("POST /projects/:id/reaudit opens a review-only window for a completed project", async () => {
+test("reaudit API opens and cancels a review-only window for a completed project", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tessera-reaudit-api-")),
     store = new Store(join(dir, "graph.db"));
   const runtime = new RuntimeConfig(join(dir, "runtime.json"), {});
@@ -45,6 +45,16 @@ test("POST /projects/:id/reaudit opens a review-only window for a completed proj
     const graph = store.get(id);
     assert.equal(graph.project.status, "active");
     assert.equal(graph.project.reaudit?.restore_status, "completed");
+
+    const cancelled = await app.inject({ method: "DELETE", url: `/api/projects/${id}/reaudit` });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    assert.deepEqual(cancelled.json(), { cancelled: true, status: "completed" });
+    const restored = store.get(id);
+    assert.equal(restored.project.status, "completed");
+    assert.equal(restored.project.reaudit, undefined);
+
+    const again = await app.inject({ method: "DELETE", url: `/api/projects/${id}/reaudit` });
+    assert.equal(again.statusCode, 409, again.body);
   } finally {
     await app.close();
     store.close();

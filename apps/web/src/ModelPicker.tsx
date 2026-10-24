@@ -78,6 +78,7 @@ type Check = {
     context_probe_tokens: number;
     max_tokens: number | null;
     prompt_tokens: number | null;
+    cached_tokens: number | null;
     completion_tokens: number | null;
   };
 };
@@ -396,9 +397,9 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
           {(check.capacity.max_tokens ?? check.capacity.output_limit).toLocaleString()} tokens
           {check.capacity.prompt_tokens === null
             ? ""
-            : `（部署实测提示词 ${check.capacity.prompt_tokens.toLocaleString()} tokens、输出 ${(
-                check.capacity.completion_tokens ?? 0
-              ).toLocaleString()} tokens）`}
+            : `（部署实测提示词 ${check.capacity.prompt_tokens.toLocaleString()} tokens${
+                check.capacity.cached_tokens ? `，其中缓存读 ${check.capacity.cached_tokens.toLocaleString()}` : ""
+              }、输出 ${(check.capacity.completion_tokens ?? 0).toLocaleString()} tokens）`}
           。自动压缩{check.compaction.enabled ? "已启用" : "已关闭"}，预留{" "}
           {check.compaction.reserveTokens.toLocaleString()} tokens。
         </p>

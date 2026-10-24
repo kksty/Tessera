@@ -40,7 +40,7 @@ export function runAttention(run: Run, step?: Step): RunAttention | null {
   if (step.blocked_run_id !== run.id)
     return { actionable: false, label: "已处理", note: "该任务已由后续运行接管，此运行仅留档。" };
   if (step.worker) return { actionable: false, label: "已处理", note: "任务已有新的执行者占用，此运行仅留档。" };
-  return { actionable: true, label: "需人工检查", note: "检查工作区与原始证据后确认重试。" };
+  return { actionable: true, label: "需人工检查", note: "先核对原始证据与外部动作，再决定重试或关闭。" };
 }
 
 /** 还需要人拍板的运行：没有结案标记，且 Step 仍在进行中的问题里。 */

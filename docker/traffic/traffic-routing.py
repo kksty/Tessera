@@ -2,6 +2,15 @@
 from urllib.parse import quote, urlsplit
 
 PROXIES = ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY')
+TLS_MAX_VALUES = ('TLS1_2', 'TLS1_3', 'UNBOUNDED')
+
+
+def tls_max_version(value):
+    """Upstream TLS ceiling; TLS 1.2 is the compatibility default for legacy sites."""
+    version = (value or 'TLS1_2').strip().upper()
+    if version not in TLS_MAX_VALUES:
+        raise ValueError('TESSERA_CAPTURE_TLS_MAX must be TLS1_2, TLS1_3 or UNBOUNDED')
+    return version
 
 
 def upstream_mode(value):

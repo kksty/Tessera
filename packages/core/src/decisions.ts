@@ -18,6 +18,7 @@ import { planNodeDeletions, applyNodeDeletions, previewNodeDeletions } from "./n
 import { isActiveNode } from "../../protocol/src/node-lifecycle.js";
 import { planningRevision } from "../../protocol/src/planning.js";
 import { reviewIssueConflicts } from "./review-issues.js";
+import { acceptInformational, informationalAwaitingReview } from "./informational-review.js";
 
 type StepInput = Pick<Step, "from" | "description"> &
   Partial<Pick<Step, "priority" | "asset_id" | "goal_id" | "hint_ids" | "lead_ids" | "property" | "method_hint">>;
@@ -37,6 +38,8 @@ export interface DecisionContext {
   sourceHint(graph: Graph, id: string): string;
   evidenceIds(graph: Graph, ids: string[]): void;
   next(items: { id: string }[], prefix: string): string;
+  /** Operator review scope: informational findings are accepted without a Review run. */
+  skipInformationalReview: boolean;
 }
 const now = () => new Date().toISOString();
 
@@ -661,6 +664,16 @@ export function submitDecisionBatch(
     ctx.applyAssetStates(g, body.assets);
     applyFindingMerges(g, body.finding_merges, body.worker, ctx.endRun);
     applyFindingUpdates(g, body.finding_updates, body.worker, ctx.endRun);
+    // Revisions and merges produce a new version; an information class that
+    // still cites evidence stays outside Review under the same policy.
+    if (ctx.skipInformationalReview) {
+      const touched = new Set([
+        ...body.finding_updates.map((update) => update.id),
+        ...body.finding_merges.flatMap((merge) => [merge.target_id, ...merge.source_ids]),
+      ]);
+      for (const finding of g.findings)
+        if (touched.has(finding.id) && informationalAwaitingReview(finding)) acceptInformational(g, finding);
+    }
     applyLeadDispositions(g, body);
     for (const { input, step } of updates) {
       if (input.priority !== undefined) {

@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 import os
 import json
+import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -34,7 +35,7 @@ class CaptureTests(unittest.TestCase):
   capture.master=SimpleNamespace(shutdown=lambda:None)
   with patch.object(Path,'write_text',side_effect=AssertionError('disk I/O on proxy hook')):
    capture.fail('storage unavailable')
-  self.assertEqual(capture.dropped,1);self.assertEqual(capture.error,'storage unavailable');self.assertEqual(shutdown,[])
+  self.assertEqual(capture.dropped,1);self.assertEqual(capture.capture_error,'storage unavailable');self.assertEqual(shutdown,[])
 
  def test_streaming_saves_entire_large_body_and_correlates_without_auth_leak(self):
   capture=module.Capture();f=flow();f.request.headers['X-Large']='a'*70000;capture.requestheaders(f)
@@ -50,6 +51,54 @@ class CaptureTests(unittest.TestCase):
   record=capture.queue.get_nowait();self.assertEqual((Path(self.directory.name)/'bodies'/record['response']['body_id']).read_bytes(),b'proof')
   other=flow();other.request.headers.pop('proxy-authorization');capture.identity(other);self.assertEqual(other.metadata['tessera_identity']['run_id'],'run_1')
   capture.client_disconnected(f.client_conn);self.assertEqual(capture.connections,{})
+ def test_error_hook_records_upstream_failure_instead_of_being_shadowed(self):
+  capture=module.Capture();f=flow();capture.requestheaders(f);f.request.stream(b'')
+  capture.request(f);capture.queue.get_nowait()
+  self.assertTrue(callable(capture.error))
+  f.error='connection closed';capture.error(f)
+  record=capture.queue.get_nowait()
+  self.assertEqual(record['error'],'connection closed');self.assertIsNone(record['status']);self.assertIsNone(record['response'])
+ def test_error_hook_ignores_flows_without_an_http_request(self):
+  capture=module.Capture();f=flow();f.request=None;f.error='connection closed'
+  capture.error(f);self.assertTrue(capture.queue.empty())
+ def test_server_tls_failure_requires_tls12_fallback(self):
+  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False)
+  self.assertTrue(capture.needs_tls12(f))
+  f.server_conn.tls_established=True;self.assertFalse(capture.needs_tls12(f))
+  f.server_conn.tls_established=False;f.request.scheme='http';self.assertFalse(capture.needs_tls12(f))
+  f.request.scheme='https';f.server_conn=None;self.assertFalse(capture.needs_tls12(f))
+ def test_tls_fallback_lowers_only_an_unbounded_upstream_setting(self):
+  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False)
+  fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='UNBOUNDED'))
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.fallback_tls(f)
+  self.assertEqual(fake.ctx.options.tls_version_server_max,'TLS1_2')
+  fake.ctx.options.tls_version_server_max='TLS1_2'
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.fallback_tls(f)
+  self.assertEqual(fake.ctx.options.tls_version_server_max,'TLS1_2')
+ def test_tls12_handshake_failure_sets_notice_and_response_clears_it(self):
+  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=time.time())
+  capture.requestheaders(f);f.request.stream(b'');capture.request(f);capture.queue.get_nowait()
+  fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='TLS1_2'))
+  f.error='connection closed'
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(f)
+  self.assertIn('example.test',capture.tls_notice);self.assertIn('TLS 上限为 1.2',capture.tls_notice)
+  self.assertIn('TLS 上限为 1.2',capture.queue.get_nowait()['error'])
+  f.response=SimpleNamespace(headers=Headers({'content-type':'text/plain'}),http_version='HTTP/1.1',status_code=200,reason='OK',timestamp_end=time.time(),raw_content=None)
+  capture.response(f)
+  self.assertIsNone(capture.tls_notice);self.assertEqual(capture.tls_notice_hosts,set())
+ def test_tls13_failure_downgrades_without_notice_but_next_tls12_failure_notices(self):
+  capture=module.Capture();fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='UNBOUNDED'))
+  first=flow();first.request.scheme='https';first.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=time.time());first.error='connection closed'
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(first)
+  self.assertEqual(fake.ctx.options.tls_version_server_max,'TLS1_2');self.assertIsNone(capture.tls_notice)
+  second=flow();second.request.scheme='https';second.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=time.time());second.error='connection closed'
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(second)
+  self.assertIn('example.test',capture.tls_notice)
+ def test_tcp_failure_does_not_trigger_tls_notice(self):
+  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=None);f.error='connection refused'
+  fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='TLS1_2'))
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(f)
+  self.assertIsNone(capture.tls_notice)
  def test_disk_failure_reports_incomplete_without_changing_forwarded_bytes(self):
   capture=module.Capture();f=flow();capture.requestheaders(f)
   item=f.metadata['tessera_request'];item['file'].close()

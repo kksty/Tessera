@@ -11,6 +11,7 @@ import "./styles/page-assets.css";
 import "./styles/page-evidence.css";
 import "./styles/page-files.css";
 import "./styles/page-review.css";
+import "./styles/page-retry.css";
 import "./styles/page-settings.css";
 import "./styles/page-tasks.css";
 import "./styles/page-timeline.css";
@@ -19,6 +20,12 @@ import "./styles/page-traffic.css";
 try {
   const theme = localStorage.getItem("tessera.theme");
   if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
-} catch { /* The login screen also works when browser storage is unavailable. */ }
+} catch {
+  /* The login screen also works when browser storage is unavailable. */
+}
 
-createRoot(document.getElementById("root")!).render(<ErrorBoundary><AppRoot /></ErrorBoundary>);
+createRoot(document.getElementById("root")!).render(
+  <ErrorBoundary>
+    <AppRoot />
+  </ErrorBoundary>,
+);

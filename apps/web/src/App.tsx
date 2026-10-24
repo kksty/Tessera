@@ -1,14 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AlertCircle,
-  ArrowUpRight,
-  Ban,
-  FileText,
-  Pause,
-  Play,
-  RotateCcw,
-  X,
-} from "lucide-react";
+import { AlertCircle, ArrowUpRight, Ban, FileText, Pause, Play, RotateCcw, X } from "lucide-react";
 import type {
   Event,
   Evidence,
@@ -39,9 +30,10 @@ import { TimelinePage } from "./pages/Timeline.js";
 import { TrafficPage } from "./pages/Traffic.js";
 import { EvidencePage } from "./pages/Evidence.js";
 import { FilesPage } from "./pages/Files.js";
+import { RetryPage } from "./pages/Retry.js";
 import { SettingsPage } from "./pages/Settings.js";
 import { pageScroll } from "./view-state.js";
-import { replay } from "./replay.js";
+import { blackboardEvents, replayBoard } from "./replay.js";
 import { eventTargets, type GraphScope } from "./graph-scope.js";
 import {
   WorkspaceContext,
@@ -67,7 +59,13 @@ function parseRoute(): { id: string | null; page: Page } {
   if (project) {
     const candidate = project[2] || "overview";
     return {
-      id: (() => { try { return decodeURIComponent(project[1]); } catch { return project[1]; } })(),
+      id: (() => {
+        try {
+          return decodeURIComponent(project[1]);
+        } catch {
+          return project[1];
+        }
+      })(),
       page: projectPageSet.has(candidate) ? (candidate as ProjectPage) : "overview",
     };
   }
@@ -116,14 +114,14 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   const [speed, setSpeed] = useState(1100);
   const [message, setMessage] = useState("");
   const [findingSeverity, setFindingSeverity] = useState("all");
-  const [theme, setThemeState] = useState<"light" | "dark">(
-    () => readPreference("tessera.theme") === "dark" ? "dark" : "light",
+  const [theme, setThemeState] = useState<"light" | "dark">(() =>
+    readPreference("tessera.theme") === "dark" ? "dark" : "light",
   );
   const [collapsed, setCollapsed] = useState(() => readPreference("tessera.sidebarCollapsed") === "true");
   const [mobileNav, setMobileNav] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(
-    () => Math.max(280, Math.min(720, Number(readPreference("tessera.sidePanelWidth")) || 360)),
+  const [panelWidth, setPanelWidth] = useState(() =>
+    Math.max(280, Math.min(720, Number(readPreference("tessera.sidePanelWidth")) || 360)),
   );
   const [focusFinding, setFocusFinding] = useState<{
     projectId: string;
@@ -131,6 +129,8 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const authenticated = session?.authenticated === true;
+  // 时间线和回放按「图有变化」推进：用量与证据归档不产生新的画面时刻。
+  const graphEvents = useMemo(() => blackboardEvents(events), [events]);
 
   const backStack = useRef<
     Array<{
@@ -170,9 +170,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   const [evidenceReturn, setEvidenceReturn] = useState<EvidenceBookmark | null>(null);
   const restoringEvidence = useRef<EvidenceBookmark | null>(null);
   const scrollKey = `${id || "workspace"}:${page}`;
-  const pendingNavigation = useRef<{ projectId: string | null; page: Page; anchor?: string } | null>(
-    null,
-  );
+  const pendingNavigation = useRef<{ projectId: string | null; page: Page; anchor?: string } | null>(null);
   const [navigationSequence, setNavigationSequence] = useState(0);
 
   const rememberNavigation = () => {
@@ -212,13 +210,10 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       const request = pendingNavigation.current;
       if (container && request && request.page === page && request.projectId === id) {
         container.scrollTop = 0;
-        document
-          .querySelectorAll(".navigation-target")
-          .forEach((el) => el.classList.remove("navigation-target"));
+        document.querySelectorAll(".navigation-target").forEach((el) => el.classList.remove("navigation-target"));
         const anchor = request.anchor ? document.getElementById(request.anchor) : null;
         if (anchor) {
-          container.scrollTop =
-            anchor.getBoundingClientRect().top - container.getBoundingClientRect().top - 24;
+          container.scrollTop = anchor.getBoundingClientRect().top - container.getBoundingClientRect().top - 24;
           anchor.classList.add("navigation-target");
           anchor.focus({ preventScroll: true });
         }
@@ -264,9 +259,10 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       setOverview(nextOverview);
       setAllFindings(nextFindings);
       setReviewFindings(nextReviews);
+      // 兼容性提示不属于总览数据，但它的计数会随审核结束而变化。
+      window.dispatchEvent(new Event("tessera:workspace-refreshed"));
     } catch (failure) {
-      if (seq === sequence.current)
-        setLoadError(failure instanceof Error ? failure.message : "读取总览失败");
+      if (seq === sequence.current) setLoadError(failure instanceof Error ? failure.message : "读取总览失败");
     } finally {
       if (seq === sequence.current) setOverviewLoading(false);
     }
@@ -288,9 +284,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       if (seq !== sequence.current) return;
       setProjects(list);
       setGraph((old) =>
-        old?.project.id === nextGraph.project.id && old.revision === nextGraph.revision
-          ? old
-          : nextGraph,
+        old?.project.id === nextGraph.project.id && old.revision === nextGraph.revision ? old : nextGraph,
       );
       let cursor = eventCursor.current;
       const additions: Event[] = [];
@@ -405,15 +399,20 @@ export function App({ session, setSession }: { session: Session; setSession: (se
         timer = undefined;
         pending = false;
         running = true;
-        try { await refresh(); }
-        finally {
+        try {
+          await refresh();
+        } finally {
           running = false;
           if (active && pending) schedule();
         }
       }, 120);
     };
     stream.addEventListener("refresh", schedule);
-    return () => { active = false; clearTimeout(timer); stream.close(); };
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      stream.close();
+    };
   }, [refresh, authenticated]);
 
   useEffect(() => {
@@ -428,11 +427,15 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     writePreference("tessera.theme", theme);
   }, [theme]);
 
-  useEffect(() => { writePreference("tessera.sidebarCollapsed", String(collapsed)); }, [collapsed]);
+  useEffect(() => {
+    writePreference("tessera.sidebarCollapsed", String(collapsed));
+  }, [collapsed]);
 
   useEffect(() => {
     const desktop = matchMedia("(min-width: 901px)");
-    const closeMobile = () => { if (desktop.matches) setMobileNav(false); };
+    const closeMobile = () => {
+      if (desktop.matches) setMobileNav(false);
+    };
     desktop.addEventListener("change", closeMobile);
     return () => desktop.removeEventListener("change", closeMobile);
   }, []);
@@ -447,8 +450,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
         return;
       }
       if (!authenticated || id || modal || paletteOpen || mobileNav) return;
-      if (event.key.toLowerCase() !== "n" || event.metaKey || event.ctrlKey || event.altKey)
-        return;
+      if (event.key.toLowerCase() !== "n" || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
       event.preventDefault();
@@ -468,13 +470,13 @@ export function App({ session, setSession }: { session: Session; setSession: (se
 
   useEffect(() => {
     if (!playing || replayIndex === null) return;
-    if (replayIndex >= events.length - 1) {
+    if (replayIndex >= graphEvents.length - 1) {
       setPlaying(false);
       return;
     }
     const timer = setTimeout(() => setReplayIndex((index) => (index ?? 0) + 1), speed);
     return () => clearTimeout(timer);
-  }, [playing, replayIndex, speed, events.length]);
+  }, [playing, replayIndex, speed, graphEvents.length]);
 
   useEffect(() => {
     if (!message) return;
@@ -484,7 +486,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
 
   useEffect(() => {
     if (replayIndex === null || !playing || !graph) return;
-    const event = events[replayIndex];
+    const event = graphEvents[replayIndex];
     if (!event) return;
     const targets = eventTargets(graph, event);
     if (targets.length) setSelected(targets[0]);
@@ -499,8 +501,8 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   }, [paletteOpen, allFindings.length]);
 
   const visible = useMemo(
-    () => (replayIndex !== null ? replay(events, replayIndex) || graph : graph),
-    [events, replayIndex, graph],
+    () => (replayIndex !== null ? replayBoard(events, graphEvents, replayIndex) || graph : graph),
+    [events, graphEvents, replayIndex, graph],
   );
   const node =
     visible &&
@@ -653,10 +655,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       setEvents([]);
       eventCursor.current = 0;
     }
-    const target =
-      destination ||
-      (projectViews.current.get(nextId)?.page as ProjectPage | undefined) ||
-      "overview";
+    const target = destination || (projectViews.current.get(nextId)?.page as ProjectPage | undefined) || "overview";
     setId(nextId);
     setPage(target);
     setMobileNav(false);
@@ -706,14 +705,10 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       if (request !== evidenceRequest.current) return;
       setEvidencePreview({
         item,
-        text:
-          raw.length > 150000
-            ? raw.slice(0, 150000) + "\n…预览已截断；可下载原始内容"
-            : raw,
+        text: raw.length > 150000 ? raw.slice(0, 150000) + "\n…预览已截断；可下载原始内容" : raw,
       });
     } catch (failure) {
-      if (request === evidenceRequest.current)
-        setError(failure instanceof Error ? failure.message : "读取证据失败");
+      if (request === evidenceRequest.current) setError(failure instanceof Error ? failure.message : "读取证据失败");
     }
   }
   function returnFromEvidence() {
@@ -787,8 +782,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       }
     }
     if (modal === "rename") {
-      if (await action(() => api(path(id!, "/title"), { title: values.get("title") }, "PUT")))
-        setModal(null);
+      if (await action(() => api(path(id!, "/title"), { title: values.get("title") }, "PUT"))) setModal(null);
     }
     if (modal === "reopen") {
       if (
@@ -806,11 +800,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       if (
         step &&
         (await action(() =>
-          api(
-            path(id!, `/fgs/steps/${step.id}`),
-            { discard: true, reason: values.get("reason") },
-            "PUT",
-          ),
+          api(path(id!, `/fgs/steps/${step.id}`), { discard: true, reason: values.get("reason") }, "PUT"),
         ))
       ) {
         setModal(null);
@@ -826,6 +816,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     visible,
     graphId,
     events,
+    boardEvents: graphEvents,
     projects,
     overview,
     overviewLoading,
@@ -915,8 +906,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   const counts = {
     projects: projects.length,
     findings:
-      overview?.totals.confirmed ??
-      projects.reduce((sum, item) => sum + (item.confirmed_finding_count ?? 0), 0),
+      overview?.totals.confirmed ?? projects.reduce((sum, item) => sum + (item.confirmed_finding_count ?? 0), 0),
     pendingReview: reviewFindings.length,
   };
 
@@ -1034,6 +1024,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
             {!id && page === "reviews" && <ReviewsPage />}
             {!id && page === "projects" && <ProjectsPage />}
             {id && graph && page === "overview" && <ProjectOverviewPage />}
+            {id && graph && page === "retry" && <RetryPage />}
             {id && graph && page === "findings" && <FindingsPage />}
             {id && graph && page === "review" && <ReviewPage />}
             {id && graph && page === "assets" && <AssetsPage />}
@@ -1043,7 +1034,13 @@ export function App({ session, setSession }: { session: Session; setSession: (se
             {id && graph && page === "evidence" && <EvidencePage />}
             {id && graph && page === "files" && <FilesPage />}
             {id && graph && page === "blackboard" && visible && (
-              <Suspense fallback={<div className="empty-state" role="status">正在加载黑板…</div>}>
+              <Suspense
+                fallback={
+                  <div className="empty-state" role="status">
+                    正在加载黑板…
+                  </div>
+                }
+              >
                 <BoardPage />
               </Suspense>
             )}
@@ -1073,11 +1070,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
         </div>
 
         {evidencePreview && page !== "evidence" && (
-          <Drawer
-            label="证据预览"
-            title={evidencePreview.item.title}
-            onClose={() => setEvidencePreview(null)}
-          >
+          <Drawer label="证据预览" title={evidencePreview.item.title} onClose={() => setEvidencePreview(null)}>
             {evidencePreview.item.source_path && (
               <div className="evidence-hash">来源文件：{evidencePreview.item.source_path}</div>
             )}
@@ -1141,12 +1134,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
             </label>
             <label className="field">
               <span className="field-label">目标</span>
-              <textarea
-                name="goal"
-                required
-                rows={3}
-                placeholder="希望模型完成的目标或评估范围"
-              />
+              <textarea name="goal" required rows={3} placeholder="希望模型完成的目标或评估范围" />
             </label>
             <div className="initial-hints">
               <div className="initial-hints-heading">

@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Cpu, Download, FileText, Gauge, RotateCcw, Save, ShieldCheck, Wrench } from "lucide-react";
+import {
+  AlertCircle,
+  Cpu,
+  Download,
+  FileText,
+  Gauge,
+  Network,
+  RotateCcw,
+  Save,
+  ShieldCheck,
+  Wrench,
+} from "lucide-react";
 import { api } from "../api.js";
 import { ModelPicker, ProviderPicker } from "../ModelPicker.js";
 import type { ModelConfig } from "../../../../packages/protocol/src/model-config.js";
@@ -51,6 +62,8 @@ const FIELD_LABELS: Record<string, string> = {
   closeout_seconds: "收尾预留",
   tool_timeout_seconds: "命令上限",
   result_repairs: "结果修复次数",
+  capture_enabled: "录制代理",
+  skip_informational_review: "信息类免审",
 };
 
 function flatten(value: unknown, prefix = "", out: Record<string, unknown> = {}) {
@@ -157,26 +170,38 @@ export function SettingsPage() {
   }, [ws.config]);
 
   const changes = useMemo(
-    () =>
-      draft && baseline
-        ? changedPaths(editableRuntimeUpdate(baseline), editableRuntimeUpdate(draft))
-        : [],
+    () => (draft && baseline ? changedPaths(editableRuntimeUpdate(baseline), editableRuntimeUpdate(draft)) : []),
     [draft, baseline],
   );
   const dirty = changes.length > 0;
   const locked = (field: string) => (draft ? readOnlyRuntimeField(draft, field) : false);
   const lockedHint = (field: string, hint?: string) =>
     locked(field) ? `${hint ? `${hint} ` : ""}由环境变量管理，不可在此修改。` : hint;
-  const reviewLocked = locked("review_model.base_url") || locked("review_model.id") || locked("review_model.api_key") || locked("review_model.provider");
-  const modelLocks = (scope: "model" | "review_model") => Object.fromEntries(
-    ["provider", "id", "base_url", "api", "api_key", "context_window", "max_output_tokens"].map(key => [key, locked(`${scope}.${key}`)]));
+  const reviewLocked =
+    locked("review_model.base_url") ||
+    locked("review_model.id") ||
+    locked("review_model.api_key") ||
+    locked("review_model.provider");
+  const modelLocks = (scope: "model" | "review_model") =>
+    Object.fromEntries(
+      ["provider", "id", "base_url", "api", "api_key", "context_window", "max_output_tokens"].map((key) => [
+        key,
+        locked(`${scope}.${key}`),
+      ]),
+    );
   const changeModel = (scope: "model" | "review_model", next: ModelConfig) => {
     if (!draft) return;
     const previous = draft[scope];
     const changed = previous?.provider !== next.provider || previous?.base_url !== next.base_url;
-    setDraft({ ...draft, [scope]: { ...previous, ...next,
-      api_key: changed && previous?.api_key === next.api_key && !locked(`${scope}.api_key`) ? "" : next.api_key,
-      api_key_set: changed ? false : previous?.api_key_set } });
+    setDraft({
+      ...draft,
+      [scope]: {
+        ...previous,
+        ...next,
+        api_key: changed && previous?.api_key === next.api_key && !locked(`${scope}.api_key`) ? "" : next.api_key,
+        api_key_set: changed ? false : previous?.api_key_set,
+      },
+    });
   };
   const review = draft?.review_model;
 
@@ -233,11 +258,7 @@ export function SettingsPage() {
           <div className="banner danger" role="alert">
             <AlertCircle size={15} aria-hidden="true" />
             <span>{loadError}</span>
-            <button
-              type="button"
-              className="button small"
-              onClick={() => setRetryKey((value) => value + 1)}
-            >
+            <button type="button" className="button small" onClick={() => setRetryKey((value) => value + 1)}>
               重试
             </button>
           </div>
@@ -270,23 +291,21 @@ export function SettingsPage() {
               {draft.model.id || "未选择模型"}
             </span>
             <span className="settings-source">
-              {readOnlyCount
-                ? `${readOnlyCount} 项由环境变量管理，其余可在此修改`
-                : "当前没有由环境变量锁定的字段"}
+              {readOnlyCount ? `${readOnlyCount} 项由环境变量管理，其余可在此修改` : "当前没有由环境变量锁定的字段"}
             </span>
           </>
         }
       />
 
       <div className="section-stack">
-        <Card
-          title="主模型"
-          note="未配置独立审核模型时共用"
-          icon={<Cpu size={15} />}
-        >
+        <Card title="主模型" note="未配置独立审核模型时共用" icon={<Cpu size={15} />}>
           <div className="settings-grid">
             <div className="settings-field-wide">
-              <ProviderPicker model={draft.model} readOnly={modelLocks("model")} onChange={model => changeModel("model", model)} />
+              <ProviderPicker
+                model={draft.model}
+                readOnly={modelLocks("model")}
+                onChange={(model) => changeModel("model", model)}
+              />
             </div>
             <Field
               label="API 地址"
@@ -301,9 +320,7 @@ export function SettingsPage() {
                 disabled={locked("model.base_url")}
                 value={draft.model.base_url}
                 placeholder="https://api.example.com/v1"
-                onChange={(event) =>
-                  changeModel("model", { ...draft.model, base_url: event.target.value })
-                }
+                onChange={(event) => changeModel("model", { ...draft.model, base_url: event.target.value })}
               />
             </Field>
 
@@ -312,9 +329,7 @@ export function SettingsPage() {
               htmlFor="settings-api-key"
               hint={lockedHint(
                 "model.api_key",
-                draft.model.api_key_set
-                  ? "已保存密钥，留空表示继续沿用。"
-                  : "密钥保存在服务端，保存后不再回显。",
+                draft.model.api_key_set ? "已保存密钥，留空表示继续沿用。" : "密钥保存在服务端，保存后不再回显。",
               )}
             >
               <input
@@ -341,13 +356,20 @@ export function SettingsPage() {
               >
                 <select
                   id="settings-api-protocol"
-                  disabled={locked("model.api") || !!draft.model.provider && draft.model.provider !== "custom" && !draft.model.base_url}
-                  value={draft.model.provider && draft.model.provider !== "custom" && !draft.model.base_url ? "__pi" : draft.model.api}
-                  onChange={(event) =>
-                    setDraft({ ...draft, model: { ...draft.model, api: event.target.value } })
+                  disabled={
+                    locked("model.api") ||
+                    (!!draft.model.provider && draft.model.provider !== "custom" && !draft.model.base_url)
                   }
+                  value={
+                    draft.model.provider && draft.model.provider !== "custom" && !draft.model.base_url
+                      ? "__pi"
+                      : draft.model.api
+                  }
+                  onChange={(event) => setDraft({ ...draft, model: { ...draft.model, api: event.target.value } })}
                 >
-                  <option value="__pi" disabled>Pi 按所选模型自动配置</option>
+                  <option value="__pi" disabled>
+                    Pi 按所选模型自动配置
+                  </option>
                   {API_PROTOCOLS.map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
@@ -373,11 +395,7 @@ export function SettingsPage() {
           </div>
         </Card>
 
-        <Card
-          title="审核模型"
-          note="候选发现可用独立模型审核；未启用时与主模型共用"
-          icon={<ShieldCheck size={15} />}
-        >
+        <Card title="审核模型" note="候选发现可用独立模型审核；未启用时与主模型共用" icon={<ShieldCheck size={15} />}>
           <label className="settings-toggle">
             <input
               type="checkbox"
@@ -387,17 +405,32 @@ export function SettingsPage() {
             />
             <span>使用独立审核模型</span>
           </label>
-          {reviewLocked && (
-            <p className="settings-hint">审核模型由环境变量管理，不能在此关闭或修改。</p>
-          )}
-          {!reviewEnabled && !reviewLocked && (
-            <p className="settings-hint">未启用：Review 使用主模型与主模型密钥。</p>
-          )}
+          {reviewLocked && <p className="settings-hint">审核模型由环境变量管理，不能在此关闭或修改。</p>}
+          {!reviewEnabled && !reviewLocked && <p className="settings-hint">未启用：Review 使用主模型与主模型密钥。</p>}
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={draft.skip_informational_review === true}
+              disabled={locked("skip_informational_review") || saving}
+              onChange={(event) => setDraft({ ...draft, skip_informational_review: event.target.checked })}
+            />
+            <span>信息类免审（只审核漏洞类）</span>
+          </label>
+          <p className="settings-hint">
+            {draft.skip_informational_review === true
+              ? "已开启：明确标注为信息类、且引用原始证据的发现直接归档，不启动审核；漏洞类与待分类仍需审核，无证据的候选也仍会进入审核。已在审核中的信息类不会被打断。"
+              : "关闭：新提交的发现都进入审核；此前已免审的信息类保持原状。信息类通过后保留在发现页，不计入漏洞库和风险。"}
+          </p>
           {reviewEnabled && review && (
             <>
               <div className="settings-grid">
                 <div className="settings-field-wide">
-                  <ProviderPicker scope="review_model" model={review} readOnly={modelLocks("review_model")} onChange={model => changeModel("review_model", model)} />
+                  <ProviderPicker
+                    scope="review_model"
+                    model={review}
+                    readOnly={modelLocks("review_model")}
+                    onChange={(model) => changeModel("review_model", model)}
+                  />
                 </div>
                 <Field
                   label="API 地址"
@@ -412,9 +445,7 @@ export function SettingsPage() {
                     disabled={locked("review_model.base_url")}
                     value={review.base_url}
                     placeholder="https://api.example.com/v1"
-                    onChange={(event) =>
-                      changeModel("review_model", { ...review, base_url: event.target.value })
-                    }
+                    onChange={(event) => changeModel("review_model", { ...review, base_url: event.target.value })}
                   />
                 </Field>
 
@@ -423,9 +454,7 @@ export function SettingsPage() {
                   htmlFor="settings-review-api-key"
                   hint={lockedHint(
                     "review_model.api_key",
-                    review.api_key_set
-                      ? "已保存密钥，留空表示继续沿用。"
-                      : "独立审核模型的密钥，保存后不再回显。",
+                    review.api_key_set ? "已保存密钥，留空表示继续沿用。" : "独立审核模型的密钥，保存后不再回显。",
                   )}
                 >
                   <input
@@ -452,7 +481,10 @@ export function SettingsPage() {
                   >
                     <select
                       id="settings-review-api-protocol"
-                      disabled={locked("review_model.api") || !!review.provider && review.provider !== "custom" && !review.base_url}
+                      disabled={
+                        locked("review_model.api") ||
+                        (!!review.provider && review.provider !== "custom" && !review.base_url)
+                      }
                       value={review.provider && review.provider !== "custom" && !review.base_url ? "__pi" : review.api}
                       onChange={(event) =>
                         setDraft({
@@ -461,7 +493,9 @@ export function SettingsPage() {
                         })
                       }
                     >
-                      <option value="__pi" disabled>Pi 按所选模型自动配置</option>
+                      <option value="__pi" disabled>
+                        Pi 按所选模型自动配置
+                      </option>
                       {API_PROTOCOLS.map(([value, label]) => (
                         <option key={value} value={value}>
                           {label}
@@ -490,11 +524,7 @@ export function SettingsPage() {
           )}
         </Card>
 
-        <Card
-          title="执行与调度"
-          note="并发上限、心跳与本地偏好"
-          icon={<Gauge size={15} />}
-        >
+        <Card title="执行与调度" note="并发上限、心跳与本地偏好" icon={<Gauge size={15} />}>
           <div className="settings-preferences">
             <Preferences afterChange={ws.action} />
             <span className="settings-hint">
@@ -525,7 +555,10 @@ export function SettingsPage() {
             <NumberField
               id="settings-max-project-review-workers"
               label="单项目审核并发"
-              hint={lockedHint("max_project_review_workers", `审核同时运行的上限，默认 1；实际最多 ${draft.max_project_workers} 个。已有任务继续运行。`)}
+              hint={lockedHint(
+                "max_project_review_workers",
+                `审核同时运行的上限，默认 1；实际最多 ${draft.max_project_workers} 个。已有任务继续运行。`,
+              )}
               value={draft.max_project_review_workers ?? 1}
               min={1}
               max={32}
@@ -565,11 +598,24 @@ export function SettingsPage() {
           {clampNote && <p className="settings-clamp">{clampNote}</p>}
         </Card>
 
-        <Card
-          title="收尾与工具预算"
-          note="超时前预留收尾；工具预算独立生效"
-          icon={<Wrench size={15} />}
-        >
+        <Card title="流量采集" note="录制代理总开关" icon={<Network size={15} />}>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={draft.capture_enabled !== false}
+              disabled={locked("capture_enabled") || saving}
+              onChange={(event) => setDraft({ ...draft, capture_enabled: event.target.checked })}
+            />
+            <span>启用录制代理</span>
+          </label>
+          <p className="settings-hint">
+            {draft.capture_enabled !== false
+              ? "Execute 会注入 http_proxy / https_proxy 并采集 HTTP / HTTPS 流量；上游默认使用 TLS 1.2。"
+              : "已关闭：新执行的 Run 不再注入代理环境变量，工具直连目标，流量页不会新增记录。已有记录保留。"}
+          </p>
+        </Card>
+
+        <Card title="收尾与工具预算" note="超时前预留收尾；工具预算独立生效" icon={<Wrench size={15} />}>
           <div className="settings-grid">
             <NumberField
               id="settings-closeout"
@@ -609,11 +655,7 @@ export function SettingsPage() {
           </div>
         </Card>
 
-        <Card
-          title="运行日志"
-          note="按项目导出诊断日志"
-          icon={<FileText size={15} />}
-        >
+        <Card title="运行日志" note="按项目导出诊断日志" icon={<FileText size={15} />}>
           {ws.projects.length ? (
             <div className="settings-grid settings-log-grid">
               <Field label="项目" hint="诊断日志包含运行记录、请求与诊断事件，仅供内部排查。">
@@ -644,45 +686,38 @@ export function SettingsPage() {
       </div>
 
       {dirty && (
-      <div className="settings-savebar" data-dirty={dirty ? "true" : "false"}>
-        <div className="settings-savebar-state">
-          <span className="settings-savebar-count">
-            {dirty ? `${changes.length} 项未保存` : "没有未保存的修改"}
-          </span>
-          <span className="settings-savebar-list">
-            {dirty
-              ? changes
-                  .slice(0, 3)
-                  .map((field) => FIELD_LABELS[field] ?? field)
-                  .join(" · ") + (changes.length > 3 ? " 等" : "")
-              : "修改保存后立即生效。"}
-          </span>
+        <div className="settings-savebar" data-dirty={dirty ? "true" : "false"}>
+          <div className="settings-savebar-state">
+            <span className="settings-savebar-count">{dirty ? `${changes.length} 项未保存` : "没有未保存的修改"}</span>
+            <span className="settings-savebar-list">
+              {dirty
+                ? changes
+                    .slice(0, 3)
+                    .map((field) => FIELD_LABELS[field] ?? field)
+                    .join(" · ") + (changes.length > 3 ? " 等" : "")
+                : "修改保存后立即生效。"}
+            </span>
+          </div>
+          <div className="settings-savebar-actions">
+            <button
+              type="button"
+              className="button ghost"
+              disabled={!dirty || saving}
+              onClick={() => {
+                setDraft(baseline);
+                setReviewEnabled(!!baseline?.review_model);
+                setClampNote("");
+              }}
+            >
+              <RotateCcw size={14} />
+              弃改
+            </button>
+            <button type="button" className="button primary" disabled={!dirty || saving} onClick={() => void save()}>
+              <Save size={14} />
+              {saving ? "保存中…" : "保存"}
+            </button>
+          </div>
         </div>
-        <div className="settings-savebar-actions">
-          <button
-            type="button"
-            className="button ghost"
-            disabled={!dirty || saving}
-            onClick={() => {
-              setDraft(baseline);
-              setReviewEnabled(!!baseline?.review_model);
-              setClampNote("");
-            }}
-          >
-            <RotateCcw size={14} />
-            弃改
-          </button>
-          <button
-            type="button"
-            className="button primary"
-            disabled={!dirty || saving}
-            onClick={() => void save()}
-          >
-            <Save size={14} />
-            {saving ? "保存中…" : "保存"}
-          </button>
-        </div>
-      </div>
       )}
     </section>
   );

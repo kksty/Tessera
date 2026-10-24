@@ -47,6 +47,8 @@ export const configSchema = z
     closeout_seconds: z.number().int().min(1).max(300).optional(),
     tool_timeout_seconds: z.number().int().min(0).max(600).default(0),
     result_repairs: z.number().int().min(0).max(3).default(1),
+    capture_enabled: z.boolean().default(true),
+    skip_informational_review: z.boolean().default(false),
     model: modelSchema,
     review_model: modelSchema.optional(),
   })
@@ -79,6 +81,8 @@ export class RuntimeConfig {
     interval_ms: 1000,
     debounce_ms: 2000,
     task_timeout_seconds: 0,
+    capture_enabled: true,
+    skip_informational_review: false,
     model: {
       id: "",
       base_url: "",

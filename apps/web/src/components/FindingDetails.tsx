@@ -10,19 +10,20 @@ import { InlineText, RichText, splitLead } from "./RichText.js";
 import { prettyText } from "../text.js";
 import { GraphReference } from "./NodeHistory.js";
 import { FindingActions } from "./FindingActions.js";
-import { findingKind, confirmedVulnerability, classificationReviewRequired } from "../../../../packages/protocol/src/finding-policy.js";
+import {
+  findingKind,
+  confirmedVulnerability,
+  classificationReviewRequired,
+  informationalReviewExempt,
+} from "../../../../packages/protocol/src/finding-policy.js";
 
 export const severityLabelMap: Record<string, string> = severityLabels;
 const labels = severityLabels;
 
 /** 兼容旧调用：危险度标签。 */
-export const SeverityBadge = ({
-  severity,
-  label,
-}: {
-  severity?: Finding["severity"];
-  label?: string;
-}) => <UiSeverityBadge severity={severity} prefix={label} />;
+export const SeverityBadge = ({ severity, label }: { severity?: Finding["severity"]; label?: string }) => (
+  <UiSeverityBadge severity={severity} prefix={label} />
+);
 
 type Draft = {
   base: number;
@@ -49,9 +50,7 @@ const fromFinding = (f: Finding): Draft => ({
   steps: (f.reproduction?.steps || []).join("\n"),
   expected: f.reproduction?.expected || "",
   observed: f.reproduction?.observed || "",
-  identity: Object.fromEntries(
-    Object.entries(f.identity || {}).map(([key, value]) => [key, String(value)]),
-  ),
+  identity: Object.fromEntries(Object.entries(f.identity || {}).map(([key, value]) => [key, String(value)])),
 });
 
 const text = (value: unknown) => (value === null || value === undefined ? "" : String(value).trim());
@@ -102,38 +101,39 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
       const entries = Object.entries(draft.identity)
         .filter(([, value]) => value.trim())
         .map(([name, value]) => [name, value.trim()]);
-      const identity: Record<string, string | number> | null = entries.length
-        ? Object.fromEntries(entries)
-        : null;
+      const identity: Record<string, string | number> | null = entries.length ? Object.fromEntries(entries) : null;
       if (identity && (!identity.category || !identity.host || !(identity.path || identity.location)))
         throw new Error("漏洞身份需包含类别、目标和入口位置，未知可留空。");
       if (identity?.port) {
         const port = Number(identity.port);
-        if (!Number.isInteger(port) || port < 1 || port > 65535)
-          throw new Error("端口需要是 1–65535 的整数。");
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("端口需要是 1–65535 的整数。");
         identity.port = port;
       }
-      await api(path(ws.id!, `/findings/${f.id}/details`), {
-        expected_version: draft.base,
-        kind: draft.kind || null,
-        severity: draft.kind === "informational" ? null : draft.severity || null,
-        severity_reason: draft.reason.trim() || null,
-        impact: draft.impact.trim() || null,
-        remediation: draft.remediation.trim() || null,
-        identity,
-        reproduction:
-          lines(draft.conditions).length ||
-          lines(draft.steps).length ||
-          draft.expected.trim() ||
-          draft.observed.trim()
-            ? {
-                conditions: lines(draft.conditions),
-                steps: lines(draft.steps),
-                ...(draft.expected.trim() ? { expected: draft.expected.trim() } : {}),
-                ...(draft.observed.trim() ? { observed: draft.observed.trim() } : {}),
-              }
-            : null,
-      }, "PUT");
+      await api(
+        path(ws.id!, `/findings/${f.id}/details`),
+        {
+          expected_version: draft.base,
+          kind: draft.kind || null,
+          severity: draft.kind === "informational" ? null : draft.severity || null,
+          severity_reason: draft.reason.trim() || null,
+          impact: draft.impact.trim() || null,
+          remediation: draft.remediation.trim() || null,
+          identity,
+          reproduction:
+            lines(draft.conditions).length ||
+            lines(draft.steps).length ||
+            draft.expected.trim() ||
+            draft.observed.trim()
+              ? {
+                  conditions: lines(draft.conditions),
+                  steps: lines(draft.steps),
+                  ...(draft.expected.trim() ? { expected: draft.expected.trim() } : {}),
+                  ...(draft.observed.trim() ? { observed: draft.observed.trim() } : {}),
+                }
+              : null,
+        },
+        "PUT",
+      );
     });
     if (ok) {
       setEditing(false);
@@ -154,11 +154,7 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
             <span>
               <strong>发现已更新至 v{f.version}</strong> · 草稿基于 v{draft.base}，已保留全部编辑内容。
             </span>
-            <button
-              type="button"
-              className="button small"
-              onClick={() => setDraft((d) => ({ ...d, base: f.version }))}
-            >
+            <button type="button" className="button small" onClick={() => setDraft((d) => ({ ...d, base: f.version }))}>
               已核对最新版本
             </button>
           </div>
@@ -166,7 +162,7 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
         <div className="fd-editor-grid">
           <label className="field">
             <span className="field-label">发现类型</span>
-            <select aria-label="发现类型" value={draft.kind || ""} onChange={e => update("kind", e.target.value)}>
+            <select aria-label="发现类型" value={draft.kind || ""} onChange={(e) => update("kind", e.target.value)}>
               <option value="">待分类</option>
               <option value="vulnerability">漏洞类</option>
               <option value="informational">信息类</option>
@@ -174,13 +170,19 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
           </label>
           <label className="field">
             <span className="field-label">风险等级</span>
-            <select value={draft.kind === "informational" ? "" : draft.severity} disabled={draft.kind === "informational"} onChange={(e) => update("severity", e.target.value)}>
+            <select
+              value={draft.kind === "informational" ? "" : draft.severity}
+              disabled={draft.kind === "informational"}
+              onChange={(e) => update("severity", e.target.value)}
+            >
               <option value="">未定级</option>
-              {Object.entries(labels).filter(([value]) => !["informational", "ungraded"].includes(value)).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
+              {Object.entries(labels)
+                .filter(([value]) => !["informational", "ungraded"].includes(value))
+                .map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
             </select>
           </label>
           {(
@@ -260,18 +262,9 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
   const steps = (f.reproduction?.steps || []).filter(Boolean);
   const identity = f.identity;
   const identityEntries = Object.entries(identity || {}).filter(([, value]) => text(value));
-  const host = text(identity?.host)
-    ? `${identity?.host}${identity?.port ? `:${identity.port}` : ""}`
-    : "";
-  const entry = [text(identity?.method), text(identity?.path || identity?.location)]
-    .filter(Boolean)
-    .join(" ");
-  const hasStructured = !!(
-    text(f.impact) ||
-    text(f.remediation) ||
-    conditions.length ||
-    steps.length
-  );
+  const host = text(identity?.host) ? `${identity?.host}${identity?.port ? `:${identity.port}` : ""}` : "";
+  const entry = [text(identity?.method), text(identity?.path || identity?.location)].filter(Boolean).join(" ");
+  const hasStructured = !!(text(f.impact) || text(f.remediation) || conditions.length || steps.length);
   const hasEvidence = !!(text(f.evidence) || f.evidence_ids.length);
   // 信息级发现通常不适用 CVSS；旧版本留下的向量只作为历史材料。
   const currentCvss = confirmedVulnerability(f, ws.graph!);
@@ -293,14 +286,37 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
 
   return (
     <div className="finding-details">
-      {f.human_feedback && <p className={f.reviewed_version > f.human_feedback.version ? "quiet" : "banner warn"}>人工{f.human_feedback.action === "return" ? "打回" : "重测"}：{f.human_feedback.reason}
-        {f.human_feedback.step_id && <> · 重测任务 <button type="button" className="link-button" onClick={() => locateRecord(ws, f.human_feedback!.step_id!)}>{f.human_feedback.step_id}</button></>}</p>}
-      {classificationReviewRequired(f, ws.graph!) && <p className="banner warn">历史审核缺少明确分类、有效评分或影响证明，需要复核；暂不计入漏洞库。</p>}
-      {f.withdrawn_at && <p className="quiet">决策者已撤回此发现：{f.withdrawal_reason}。来源事实、证据与审核历史仍保留。</p>}
+      {f.human_feedback && (
+        <p className={f.reviewed_version > f.human_feedback.version ? "quiet" : "banner warn"}>
+          人工{f.human_feedback.action === "return" ? "打回" : "重测"}：{f.human_feedback.reason}
+          {f.human_feedback.step_id && (
+            <>
+              {" "}
+              · 重测任务{" "}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => locateRecord(ws, f.human_feedback!.step_id!)}
+              >
+                {f.human_feedback.step_id}
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {classificationReviewRequired(f, ws.graph!) && (
+        <p className="banner warn">历史审核缺少明确分类、有效评分或影响证明，需要复核；暂不计入漏洞库。</p>
+      )}
+      {f.withdrawn_at && (
+        <p className="quiet">决策者已撤回此发现：{f.withdrawal_reason}。来源事实、证据与审核历史仍保留。</p>
+      )}
       {f.merged_into && (
         <p className="quiet">
-          此发现已合并至 <button type="button" className="button small" onClick={() => locateRecord(ws, f.merged_into!)}>{f.merged_into}</button>。
-          {f.merge_reason} 原始内容与审核记录保留作历史。
+          此发现已合并至{" "}
+          <button type="button" className="button small" onClick={() => locateRecord(ws, f.merged_into!)}>
+            {f.merged_into}
+          </button>
+          。{f.merge_reason} 原始内容与审核记录保留作历史。
         </p>
       )}
       <div className="fd-dossier">
@@ -313,12 +329,14 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
 
           {(text(f.impact) || text(f.remediation)) && (
             <div className="fd-summary-grid">
-              {(findingKind(f) !== "informational" || text(f.impact)) && <section className="fd-summary-item">
-                <span className="fd-kicker">实际影响</span>
-                <p>
-                  <InlineText text={text(f.impact) || "尚未提供结构化影响。"} />
-                </p>
-              </section>}
+              {(findingKind(f) !== "informational" || text(f.impact)) && (
+                <section className="fd-summary-item">
+                  <span className="fd-kicker">实际影响</span>
+                  <p>
+                    <InlineText text={text(f.impact) || "尚未提供结构化影响。"} />
+                  </p>
+                </section>
+              )}
               <section className="fd-summary-item">
                 <span className="fd-kicker">修复建议</span>
                 <p>
@@ -412,9 +430,7 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
                   <pre>{prettyText(f.evidence)}</pre>
                 </details>
               )}
-              {f.evidence_ids.length > 0 && (
-                <div className="fd-evidence-links">{ws.linkEvidence(f.evidence_ids)}</div>
-              )}
+              {f.evidence_ids.length > 0 && <div className="fd-evidence-links">{ws.linkEvidence(f.evidence_ids)}</div>}
             </section>
           )}
         </div>
@@ -422,11 +438,21 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
         <aside className="fd-aside" aria-label="发现判定与溯源">
           <section className="fd-card fd-verdict">
             <div className="fd-verdict-head">
-              <span className="tag">{findingKind(f) === "informational" ? "信息类" : findingKind(f) === "vulnerability" ? "漏洞类" : "待分类"}</span>
-              {findingKind(f) !== "informational" && <UiSeverityBadge
-                severity={f.severity}
-                prefix={final ? "最终危险度" : "当前危险度"}
-              />}
+              <span className="tag">
+                {findingKind(f) === "informational"
+                  ? "信息类"
+                  : findingKind(f) === "vulnerability"
+                    ? "漏洞类"
+                    : "待分类"}
+              </span>
+              {informationalReviewExempt(f) && (
+                <span className="tag" title="信息类发现已按当前审核范围直接归档，未启动独立审核。">
+                  免审
+                </span>
+              )}
+              {findingKind(f) !== "informational" && (
+                <UiSeverityBadge severity={f.severity} prefix={final ? "最终危险度" : "当前危险度"} />
+              )}
               <span className="status-pill" data-tone={reviewTone(findingReviewStatus(f))}>
                 {findingReviewLabels[findingReviewStatus(f)]}
               </span>
@@ -537,7 +563,11 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
                 <div>
                   <dt>来源 Step</dt>
                   <dd>
-                    <GraphReference className="fd-link" nodeId={f.step_id} onSelect={() => locateRecord(ws, f.step_id!)} />
+                    <GraphReference
+                      className="fd-link"
+                      nodeId={f.step_id}
+                      onSelect={() => locateRecord(ws, f.step_id!)}
+                    />
                   </dd>
                 </div>
               )}
@@ -545,7 +575,11 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
                 <div>
                   <dt>修订 Step</dt>
                   <dd>
-                    <GraphReference className="fd-link" nodeId={f.revision_step_id} onSelect={() => locateRecord(ws, f.revision_step_id!)} />
+                    <GraphReference
+                      className="fd-link"
+                      nodeId={f.revision_step_id}
+                      onSelect={() => locateRecord(ws, f.revision_step_id!)}
+                    />
                   </dd>
                 </div>
               )}
@@ -567,7 +601,10 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
               </div>
               <div>
                 <dt>审核版本</dt>
-                <dd>{f.reviewed_version ? `v${f.reviewed_version}` : "尚未审核"}</dd>
+                <dd>
+                  {f.reviewed_version ? `v${f.reviewed_version}` : "尚未审核"}
+                  {informationalReviewExempt(f) && " · 免审"}
+                </dd>
               </div>
             </dl>
           </section>
@@ -575,7 +612,9 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
       </div>
 
       <footer className="fd-footer">
-        <span>{f.step_id ? `来源 ${f.step_id}` : "未关联来源 Step"} · {fmt(f.created_at)}</span>
+        <span>
+          {f.step_id ? `来源 ${f.step_id}` : "未关联来源 Step"} · {fmt(f.created_at)}
+        </span>
         <span>发现与项目完成状态相互独立</span>
       </footer>
     </div>

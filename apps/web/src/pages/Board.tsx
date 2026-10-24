@@ -7,7 +7,8 @@ import {
   Play,
   RotateCcw,
   SlidersHorizontal,
-  PanelRightClose, PanelRightOpen,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import { api, path } from "../api.js";
 import { Blackboard } from "../Blackboard.js";
@@ -17,7 +18,7 @@ import { NodeDetail } from "../components/NodeDetail.js";
 import { DeletedNodeHistory } from "../components/NodeHistory.js";
 import { CooldownControls } from "../components/CooldownControls.js";
 import { localPrefs } from "../layouts.js";
-import { changedIds, replay } from "../replay.js";
+import { changedIds, replayBoard } from "../replay.js";
 import { eventTargets } from "../graph-scope.js";
 import { fmt, locateRecord, readableError, useWorkspace } from "../workspace.js";
 
@@ -43,29 +44,52 @@ export function BoardPage() {
   const { node } = ws;
 
   return (
-    <div className={`board-layout${panelHidden ? " panel-hidden" : ""}`} style={{ "--detail-panel-width": ws.panelWidth + "px" } as React.CSSProperties}>
+    <div
+      className={`board-layout${panelHidden ? " panel-hidden" : ""}`}
+      style={{ "--detail-panel-width": ws.panelWidth + "px" } as React.CSSProperties}
+    >
       <section className="board-area">
         <div className="board-top">
           <span className="quiet">
-            {ws.graphScope ? "链路视图" : `${visible.facts.filter((f) => f.graph_id === ws.graphId).length} 条事实 · ${visible.steps.filter((s) => s.graph_id === ws.graphId).length} 项任务`}
+            {ws.graphScope
+              ? "链路视图"
+              : `${visible.facts.filter((f) => f.graph_id === ws.graphId).length} 条事实 · ${visible.steps.filter((s) => s.graph_id === ws.graphId).length} 项任务`}
           </span>
           {graph.project.status === "stopped" && <span className="quiet">已暂停 · 当前无执行中任务</span>}
           {panelHidden && <span className="board-hint">双击节点查看详情</span>}
           <span className="spacer" />
           <DeletedNodeHistory />
           <button onClick={() => setManualOpen(true)} title="手工声明任务、接管执行与提交结果">
-            <SlidersHorizontal size={14} /><span>人工干预</span>
+            <SlidersHorizontal size={14} />
+            <span>人工干预</span>
           </button>
-          <button aria-label={panelHidden ? "展开黑板详情" : "收起黑板详情"} aria-expanded={!panelHidden} onClick={() => { const next = !panelHidden; setPanelHidden(next); localStorage.setItem("tessera.boardPanelHidden", String(next)); }}>
-            {panelHidden ? <PanelRightOpen size={15} /> : <PanelRightClose size={15} />}<span>{panelHidden ? "展开详情" : "收起详情"}</span>
+          <button
+            aria-label={panelHidden ? "展开黑板详情" : "收起黑板详情"}
+            aria-expanded={!panelHidden}
+            onClick={() => {
+              const next = !panelHidden;
+              setPanelHidden(next);
+              localStorage.setItem("tessera.boardPanelHidden", String(next));
+            }}
+          >
+            {panelHidden ? <PanelRightOpen size={15} /> : <PanelRightClose size={15} />}
+            <span>{panelHidden ? "展开详情" : "收起详情"}</span>
           </button>
         </div>
-        {manualOpen && <Drawer label="人工干预" title="人工干预" onClose={() => setManualOpen(false)}>
-          <p className="manual-help">日常探索由模型推进。需要手工接管时，在黑板上选择任务或事实，再使用以下操作。</p>
-          <WorkbenchTools graph={graph} selectedFacts={ws.selectedFacts} selectedId={ws.selected}
-            replaying={ws.replayIndex !== null} afterChange={ws.action} onRemoveFact={id => ws.selectNode(id, true)} />
-          <CooldownControls graph={graph} selectedId={ws.selected} />
-        </Drawer>}
+        {manualOpen && (
+          <Drawer label="人工干预" title="人工干预" onClose={() => setManualOpen(false)}>
+            <p className="manual-help">日常探索由模型推进。需要手工接管时，在黑板上选择任务或事实，再使用以下操作。</p>
+            <WorkbenchTools
+              graph={graph}
+              selectedFacts={ws.selectedFacts}
+              selectedId={ws.selected}
+              replaying={ws.replayIndex !== null}
+              afterChange={ws.action}
+              onRemoveFact={(id) => ws.selectNode(id, true)}
+            />
+            <CooldownControls graph={graph} selectedId={ws.selected} />
+          </Drawer>
+        )}
         <Blackboard
           graph={visible}
           graphId={ws.graphId}
@@ -88,11 +112,13 @@ export function BoardPage() {
         {ws.replayIndex !== null && (
           <div className="replay-bar">
             <History size={15} />
-            <span className="replay-position">回放 {ws.replayIndex + 1}/{ws.events.length}</span>
+            <span className="replay-position">
+              回放 {ws.replayIndex + 1}/{ws.boardEvents.length}
+            </span>
             <button
               aria-label={ws.playing ? "暂停回放" : "播放回放"}
               onClick={() => {
-                if (!ws.playing && ws.replayIndex! >= ws.events.length - 1) ws.setReplayIndex(0);
+                if (!ws.playing && ws.replayIndex! >= ws.boardEvents.length - 1) ws.setReplayIndex(0);
                 ws.setPlaying(!ws.playing);
               }}
             >
@@ -107,11 +133,7 @@ export function BoardPage() {
             >
               <RotateCcw size={13} />
             </button>
-            <select
-              aria-label="回放速度"
-              value={ws.speed}
-              onChange={(e) => ws.setSpeed(Number(e.target.value))}
-            >
+            <select aria-label="回放速度" value={ws.speed} onChange={(e) => ws.setSpeed(Number(e.target.value))}>
               <option value={2200}>0.5×</option>
               <option value={1100}>1×</option>
               <option value={550}>2×</option>
@@ -120,7 +142,7 @@ export function BoardPage() {
               aria-label="回放位置"
               type="range"
               min={0}
-              max={Math.max(0, ws.events.length - 1)}
+              max={Math.max(0, ws.boardEvents.length - 1)}
               value={ws.replayIndex}
               onChange={(e) => ws.setReplayIndex(Number(e.target.value))}
             />
@@ -153,10 +175,7 @@ export function BoardPage() {
           onPointerDown={ws.resizePanel}
           onKeyDown={(e) => {
             if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-            const next = Math.max(
-              220,
-              Math.min(600, ws.panelWidth + (e.key === "ArrowLeft" ? 20 : -20)),
-            );
+            const next = Math.max(220, Math.min(600, ws.panelWidth + (e.key === "ArrowLeft" ? 20 : -20)));
             ws.setPanelWidth(next);
             localStorage.setItem("tessera.sidePanelWidth", String(next));
           }}
@@ -169,17 +188,11 @@ export function BoardPage() {
           }}
         />
         <div className="detail-tabs">
-          <button
-            className={ws.historyTab === "detail" ? "active" : ""}
-            onClick={() => ws.setHistoryTab("detail")}
-          >
+          <button className={ws.historyTab === "detail" ? "active" : ""} onClick={() => ws.setHistoryTab("detail")}>
             详情
           </button>
-          <button
-            className={ws.historyTab === "history" ? "active" : ""}
-            onClick={() => ws.setHistoryTab("history")}
-          >
-            黑板时间线 <span>{ws.events.length}</span>
+          <button className={ws.historyTab === "history" ? "active" : ""} onClick={() => ws.setHistoryTab("history")}>
+            黑板时间线 <span>{ws.boardEvents.length}</span>
           </button>
         </div>
 
@@ -196,9 +209,7 @@ export function BoardPage() {
                 <p>{graph.goals.find((g) => g.id === "goal")?.description}</p>
               </div>
               {graph.project.last_error && (
-                <div className="last-error">
-                  最近执行问题：{readableError(graph.project.last_error)}
-                </div>
+                <div className="last-error">最近执行问题：{readableError(graph.project.last_error)}</div>
               )}
             </div>
           )
@@ -209,7 +220,12 @@ export function BoardPage() {
       {inspectOpen && node && (
         <Modal
           label="节点详情"
-          title={<><span className="node-modal-kicker">节点详情</span><span className="mono">{ws.selected}</span></>}
+          title={
+            <>
+              <span className="node-modal-kicker">节点详情</span>
+              <span className="mono">{ws.selected}</span>
+            </>
+          }
           onClose={() => setInspectOpen(false)}
           className="node-detail-modal"
         >
@@ -256,7 +272,14 @@ function HintBar() {
         value={ws.hint}
         onChange={(e) => ws.setHint(e.target.value)}
       />
-      <input className="hint-priority" aria-label="新提示优先级" title="优先级：数字越大越先" type="number" value={priority} onChange={e => setPriority(Number(e.target.value))} />
+      <input
+        className="hint-priority"
+        aria-label="新提示优先级"
+        title="优先级：数字越大越先"
+        type="number"
+        value={priority}
+        onChange={(e) => setPriority(Number(e.target.value))}
+      />
       <button className="primary" disabled={ws.busy || !ws.hint.trim()}>
         添加 Hint
       </button>
@@ -279,7 +302,7 @@ function Timeline() {
         <Play size={13} />
         回放黑板历史
       </button>
-      {ws.events
+      {ws.boardEvents
         .slice()
         .reverse()
         .map((e) => (
@@ -287,9 +310,9 @@ function Timeline() {
             className="timeline-event"
             key={e.seq}
             onClick={() => {
-              const index = ws.events.indexOf(e);
+              const index = ws.boardEvents.indexOf(e);
               ws.setReplayIndex(index);
-              const snapshot = replay(ws.events, index) || graph;
+              const snapshot = replayBoard(ws.events, ws.boardEvents, index) || graph;
               const target = eventTargets(snapshot, e)[0] || null;
               // 回放一条事件只「定位到它改动的节点」；画布保持总视图，不切链路。
               ws.setSelected(target);

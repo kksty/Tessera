@@ -81,6 +81,8 @@ Decide 可在 `submit_decisions.delete_nodes` 自主批量删除 Fact、Step、F
 
 单项目审核并发默认 1，有效上限为审核配置与项目总并发的较小值；调低配置不抢占在途 Run。审核按 Finding 编号数值升序领取，跳过已审当前版本、在审、合并、撤回、来源未执行结束、资产未批准或退避条目。审核页复用后端门槛与排序并显示等待原因。Dispatcher 在后续 tick 从上次成功领取的项目之后继续分配，避免唯一空位总被列表头部项目领取。
 
+设置页的「信息类免审（只审核漏洞类）」默认关闭。开启后，明确标注 `kind=informational` 且引用原始证据的发现直接归档为免审（`review_exempt`，写一条 `source=system` 的 pass 记录用于历史与人工操作），不占用审核并发、不阻塞完成；漏洞类和待分类仍照常审核，没有证据的候选也仍进入审核。开关保存后立即生效：已排队的信息类退出队列，已在途的审核不被打断；关闭开关只影响之后提交或修订的发现，已免审记录保持原状。人工打回或要求重测的发现始终重新审核。
+
 完成使用独立的 `planning_revision` / `decided_planning_revision`。新 Fact、新 Lead、执行结果/重开、有效目标/Hint/授权变化、Finding 声明修订、负面审核、显式 `planning_issues`、事实争议及节点删除推进规划水位并使旧搜索提议失效；Lead 的落实/豁免属于结算记录，不再次推进规划。分类在 `planning-changes.ts` 集中比较实际业务变化。普通 pass 只确认当前版本并记录分类与评分，不单独唤醒 Decide；原 `observation_revision` 仍记录这次交付变化，不会自动推进模型的旧 `decided_revision`。心跳、用量、读取、书签和冷热操作不推进规划水位。Review 的 `planning_issues` 不只是提示：每条都必须由完成提议逐条处置，授权、越权、IDOR、个人信息类问题只能由操作员豁免。
 
 Decide 可在已有 Finding 待审核时提出 complete，项目保持 active 并显示「搜索结束、审核中」。提议覆盖最新实际已读规划水位、没有未结束搜索工作或在途 Decide/Review，且应审核当前版本都有结果后，最后一次普通 pass 可直接完成交付。`complete` 还必须带覆盖表：图里 Facts 记录的每个 host+path（`objects`、绝对 URL 或 `request.url`，忽略工作区文件路径）都要以 `tested`（至少一个 `evidence_ids`）、`waived`（带 `reason`）或 `na` 出现；漏项会点名 surface 并拒绝结算。`complete.review_issues` 同时逐条处置当前版本最新 Review 的问题（`review_id` + 零基 `issue_index`）：`addressed` 必须指向审核之后执行并关闭的 Step；`waived` 必须写理由，且高风险问题还要求操作员在审核页记录豁免（`POST/DELETE /api/projects/:id/reviews/:rid/issues/:index/waive`）。未处置、Step 未执行或未关闭、引用未知证据都会拒绝结算；同一批修订 Finding 不能用来抹掉当版问题。没有可提取 surface 的旧项目仍可完成，历史 pending completion 不回溯补表。完成结算会把覆盖表与 Review 问题处置写入合成的完成 Step 的 `completion` 字段；`pending_completion` 清空后网页仍能逐 surface 回看已测/豁免/不适用、理由与证据，旧项目则从当前图的事实提取 surface 并标为「未登记」。负面结果或新问题重新规划；`needs_evidence` 可以在披露缺口与停止理由后结束，不要求无限复测。暂停阻止领取；完成后人的新 Hint 或明确继续评估重新开放搜索，旧 Run 不能补交恢复行动。旧项目的缺失规划已读字段不由旧 `decided_revision` 自动补齐，旧完成提议也不升级，下一轮 Decide 必须基于新投影确认。Runner 只携带实际返回给模型的规划快照，查询刷新、删除预览和用量回执不能承认未读输入。
@@ -167,7 +169,7 @@ node /opt/tessera/dist/recover-closeout.mjs --file /workspace/runs/WORKER_ID/rec
 
 当前只新建显式代理接入的 HTTP/HTTPS 流量记录。Execute 为支持的客户端尝试提供 `http_proxy` / `https_proxy` 和项目 CA；已有代理、LD_PRELOAD 或 proxychains 配置优先，不强制透明转发。浏览器或忽略环境变量的工具需自行接入 Worker 内 `127.0.0.1:8081`；非 HTTP 协议和原始探测不在该录制范围。
 
-`TESSERA_CAPTURE_UPSTREAM` 支持 HTTP、HTTPS、SOCKS5；`TESSERA_CAPTURE_BYPASS` 允许保留原连接方式，均由 Dispatcher 全局环境传入。上游失败不直连回退、不重放请求。请求响应正文流式分块保存，页面分页预览并可下载完整内容；采集失败保留缺口，普通任务仍可能继续，活跃状态不代表全覆盖。
+`TESSERA_CAPTURE_UPSTREAM` 支持 HTTP、HTTPS、SOCKS5；`TESSERA_CAPTURE_BYPASS` 允许保留原连接方式，均由 Dispatcher 全局环境传入。上游失败不直连回退、不重放请求。录制代理默认把上游 TLS 上限设为 1.2，避免只支持 TLS 1.2 的旧站点在 TLS 1.3 ClientHello 时直接断开；`TESSERA_CAPTURE_TLS_MAX=TLS1_3` 或 `UNBOUNDED` 可放开上限，此时上游 TLS 握手失败会作为错误记录保留，并自动把后续连接降为 TLS 1.2，首次失败请求仍不重放。若降为 TLS 1.2 后握手仍失败，采集状态会带 `tls_notice`，流量页显示黄色提示，Run 不会被单独标记为失败；提示会随该主机后续成功响应清除。设置页的“流量采集”开关控制是否注入录制代理；关闭后新执行的 Run 直连且不新增流量记录，已有记录保留。请求响应正文流式分块保存，页面分页预览并可下载完整内容；采集失败保留缺口，普通任务仍可能继续，活跃状态不代表全覆盖。
 
 工具、字典、变量与代理细节统一在运行时资源 `docker/tools/reference.md`，按需读取；`environment.md` 是简短环境提示。参考资料不是 skill，不默认注入工具教程。公共代理入口、动态端口发布、项目级出口和托管 REM / Chisel 均没有对应平台接口，不能把手工安装或 shell 后台进程当作已实现能力。
 
