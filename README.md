@@ -52,6 +52,26 @@ docker compose up -d --build
 - 持久工作区、长命令会话和原键结果补交。
 - 按 surface 的完成覆盖表、执行线索（Lead）和审核问题处置。
 
+## 界面
+
+以下截图使用本地演示数据（`.test` 域名）生成，展示工作区总览、探索图、发现详情与审核记录。
+
+![Tessera 安全总览](docs/assets/screenshots/security-overview.png)
+
+**安全总览**：跨项目汇总已确认漏洞、待审核发现和待批准资产。
+
+![Tessera 探索黑板](docs/assets/screenshots/exploration-graph.png)
+
+**探索黑板**：Fact、Goal、Step、Finding 与证据以因果链相连，可随时回放。
+
+![Tessera 发现与 CVSS 评分](docs/assets/screenshots/findings.png)
+
+**发现与评分**：结论保留审核状态、原始证据和 CVSS v4.0 定级。
+
+![Tessera 审核记录](docs/assets/screenshots/review-queue.png)
+
+**审核记录**：独立上下文给出通过、需补证或驳回，并留下定级依据。
+
 ## 工作方式
 
 Tessera 把一次探索外化为一张只追加的 FGS 图：
