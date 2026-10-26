@@ -46,6 +46,12 @@
   font-size: var(--f-xs);
   line-height: 1.6;
   color: var(--ink-4);
+  /* 配置项和代码常量没有天然断点，窄屏下必须允许在任意位置换行。 */
+  overflow-wrap: anywhere;
+}
+
+.settings-hint code {
+  word-break: break-word;
 }
 
 .settings-toggle {

@@ -412,10 +412,9 @@ export function SettingsPage() {
             <span>关闭模型思考通道（Qwen / vLLM：enable_thinking=false）</span>
           </label>
           <p className="settings-hint">
-            开启后，每次模型请求都会附带
-            <code>chat_template_kwargs.enable_thinking=false</code>。长上下文下 Qwen
-            的思考内容可能被当成正文或工具名（出现
-            <code>&lt;/think&gt;</code>、<code>&lt;/parameter&gt;</code> 等标记），导致空回复或最终 JSON
+            开启后，每次模型请求都会附带 <code>chat_template_kwargs</code> 中的 <code>enable_thinking=false</code>
+            。长上下文下 Qwen 的思考内容可能被当成正文或工具名（出现 <code>&lt;/think&gt;</code>、
+            <code>&lt;/parameter&gt;</code> 等标记），导致空回复或最终 JSON
             无效；此时应关闭思考通道。不识别该参数的供应商会忽略它。
           </p>
         </Card>
