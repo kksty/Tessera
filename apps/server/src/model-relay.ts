@@ -61,6 +61,22 @@ export function registerModelRelay(app: FastifyInstance, store: Store, runtime: 
         throw new DomainError(404, "Unknown model endpoint");
       const body = req.body as Record<string, unknown> | null;
       if (!body || body.model !== cfg.id) throw new DomainError(422, "Model does not belong to this Run");
+      // Qwen on vLLM emits a reasoning channel unless the chat template is told
+      // not to. With long contexts that channel leaked into tool names and the
+      // final answer, so an operator can turn it off per model. Providers that do
+      // not know chat_template_kwargs ignore the field.
+      const upstreamBody: Record<string, unknown> =
+        cfg.disable_thinking && model.api === "openai-completions"
+          ? {
+              ...body,
+              chat_template_kwargs: {
+                ...(body.chat_template_kwargs && typeof body.chat_template_kwargs === "object"
+                  ? (body.chat_template_kwargs as Record<string, unknown>)
+                  : {}),
+                enable_thinking: false,
+              },
+            }
+          : body;
       const secrets = [cfg.api_key, runtime.value.model.api_key, runtime.value.review_model?.api_key || ""];
       const headers: Record<string, string> = { ...model.headers, "content-type": "application/json" };
       for (const name of [
@@ -91,7 +107,7 @@ export function registerModelRelay(app: FastifyInstance, store: Store, runtime: 
         const upstream = await fetch(`${model.baseUrl.replace(/\/$/, "")}/${endpoint}${query}`, {
           method: "POST",
           headers,
-          body: JSON.stringify(body),
+          body: JSON.stringify(upstreamBody),
           redirect: "error",
           signal: AbortSignal.any([cancel.signal, AbortSignal.timeout(600000)]),
         });

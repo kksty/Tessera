@@ -10,17 +10,18 @@
     2. docker compose stop（保留卷与工作区）
     3. 备份 DB + WAL 到 datas\release-backups\<stamp>
     4. docker volume create
-    5. 用本地 server 镜像以 tar 管道复制（20 万小文件不要逐文件 Copy-Item）
+    5. 宿主机 tar 打包，容器内解包（20 万小文件不要逐文件 Copy-Item）
     6. 校验 quick_check / 计数 / evidence 文件数
-    7. 用 compose.volume.yaml 启动并等待 /health
+    7. 用 compose.yaml 启动（命名卷已是默认挂载）并等待 /health
 
-  任何一步失败都会停止；源目录全程只读，回退只需不带覆盖层启动。
+  任何一步失败都会停止；源目录全程只读。命名卷不会被 compose down 删除，
+  回退代码用镜像标签，恢复数据用备份卷。
 
 .PARAMETER Source
   当前数据目录，默认 .\datas\tessera。
 
 .PARAMETER Volume
-  目标命名卷，默认 tessera-data。
+  目标命名卷。未指定时读取 .env 的 TESSERA_DATA_VOLUME，否则使用 tessera-data。
 
 .PARAMETER Image
   用于复制的本地镜像，默认 tessera-server:latest（避免额外拉取 alpine）。
@@ -34,7 +35,7 @@
 [CmdletBinding()]
 param(
   [string]$Source = ".\datas\tessera",
-  [string]$Volume = "tessera-data",
+  [string]$Volume = "",
   [string]$Image = "tessera-server:latest",
   [switch]$SkipBackup
 )
@@ -53,6 +54,15 @@ function Assert-LastExit([string]$Label) {
 
 $root = (Get-Location).Path
 $sourcePath = (Resolve-Path $Source).Path
+# The copy target must match the volume compose mounts; .env is authoritative.
+if (-not $PSBoundParameters.ContainsKey("Volume") -or -not $Volume) {
+  $Volume = "tessera-data"
+  $envFile = Join-Path $root ".env"
+  if (Test-Path $envFile) {
+    $match = [regex]::Match((Get-Content $envFile -Raw), "(?m)^\s*TESSERA_DATA_VOLUME\s*=\s*(\S*)\s*$")
+    if ($match.Success -and $match.Groups[1].Value) { $Volume = $match.Groups[1].Value }
+  }
+}
 $dbPath = Join-Path $sourcePath "tessera.db"
 $evidencePath = Join-Path $sourcePath "evidence"
 $stamp = Get-Date -Format "yyyyMMdd-HHmm"
@@ -87,6 +97,9 @@ if (-not $SkipBackup) {
   }
 }
 
+if (docker volume ls -q --filter "name=^${Volume}$") {
+  throw "命名卷 $Volume 已存在。为避免覆盖现有数据，请先备份并手动删除该卷（docker volume rm $Volume），或改用 -Volume 指定新卷名。"
+}
 Invoke-Step "创建命名卷" {
   docker volume create $Volume | Out-Host
   Assert-LastExit "docker volume create"
@@ -130,7 +143,7 @@ d.close();
 }
 
 Invoke-Step "用命名卷启动" {
-  docker compose -f compose.yaml -f compose.volume.yaml up -d | Out-Host
+  docker compose up -d | Out-Host
   Assert-LastExit "docker compose up"
 }
 
@@ -140,12 +153,13 @@ Invoke-Step "等待健康检查" {
     & curl.exe -s -m 3 http://127.0.0.1:8000/health *> $null
     if ($LASTEXITCODE -eq 0) { Write-Host "    /health ok"; return }
   }
-  throw "服务在 120 秒内未通过 /health；回退：docker compose down; docker compose up -d"
+  throw "服务在 120 秒内未通过 /health；数据仍在卷 $Volume，可用 docker compose logs 排查，或改回上一镜像标签后重启。"
 }
 
 if ($script:tarFile -and (Test-Path $script:tarFile)) { Remove-Item $script:tarFile -Force }
 
 Write-Host ""
 Write-Host "迁移完成。源目录 $sourcePath 未改动，保留 3–7 天后再删除。" -ForegroundColor Green
-Write-Host "回退：docker compose down; docker compose up -d   （不带 compose.volume.yaml）"
+Write-Host "回退：命名卷不会被 compose down 删除；代码回退改 TESSERA_IMAGE_TAG 后 docker compose up -d。"
+Write-Host "数据恢复：从 datas\release-backups 重新解包到一个新卷，再改 TESSERA_DATA_VOLUME 指向它。"
 Write-Host "复核：docker inspect tessera-tessera-server-1 --format '{{json .Mounts}}'"

@@ -151,6 +151,10 @@ try {
   const card = page.locator(`#finding-${first.id}`);
   await card.waitFor();
   await card.getByText("合成的跨账户数据可见性", { exact: true }).waitFor();
+  // 核对提示默认折叠，展开后仍能看到重复候选与操作入口。
+  const duplicates = page.locator(".duplicates-panel");
+  assert.equal(await duplicates.evaluate((el) => (el as HTMLDetailsElement).open), false, "核对提示默认收起");
+  await duplicates.locator("summary").click();
   await page.getByText("重复候选", { exact: true }).waitFor();
   await page.screenshot({ path: join(output, "findings-desktop.png"), fullPage: true });
   const download = page.waitForEvent("download");

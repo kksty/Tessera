@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, FileText, GitCompare, X } from "lucide-react";
+import { ChevronDown, Download, FileText, GitCompare, X } from "lucide-react";
 import { api, path } from "../api.js";
 import { fmt } from "../format.js";
 import { locateRecord, useWorkspace } from "../workspace.js";
@@ -43,32 +43,39 @@ export function FindingDuplicates() {
   }, [ws.id, revision]);
   if (!groups.length) return null;
   return (
-    <Card
-      title="重复与关联候选"
-      icon={<GitCompare size={14} />}
-      note={`${groups.length} 组需要核对`}
-    >
-      <p className="quiet card-lede">
-        相同身份是重复候选；同一入口的不同问题是关联候选。决策者核对根因、修复方式与独立影响后决定合并，目标新版本重新审核，原文和历史保留。未授权泄露与 CORS 不仅凭同一接口合并，须核对是否增加了实际影响。
-      </p>
-      {groups.map((group) => (
-        <div className="duplicate-row" key={group.fingerprint}>
-          <span className="quiet">{group.match === "endpoint" ? "同一入口 · 待核对关联" : "相同身份 · 待去重"}</span>
-          <div className="duplicate-ids">
-            {group.finding_ids.map((id) => (
-              <button
-                type="button"
-                key={id}
-                className="button small"
-                onClick={() => locateRecord(ws, id)}
-              >
-                {id}
-              </button>
-            ))}
+    <details className="card duplicates-panel">
+      <summary className="card-head duplicates-summary">
+        <span className="card-head-main">
+          <span className="card-icon">
+            <GitCompare size={14} />
+          </span>
+          <h2>重复与关联候选</h2>
+          <span className="card-note">{groups.length} 组需要核对</span>
+        </span>
+        <span className="duplicates-hint">
+          核对明细
+          <ChevronDown size={14} className="duplicates-chevron" />
+        </span>
+      </summary>
+      <div className="card-body">
+        <p className="quiet card-lede">
+          相同身份是重复候选；同一入口的不同问题是关联候选。决策者核对根因、修复方式与独立影响后决定合并，目标新版本重新审核，原文和历史保留。未授权泄露与
+          CORS 不仅凭同一接口合并，须核对是否增加了实际影响。
+        </p>
+        {groups.map((group) => (
+          <div className="duplicate-row" key={group.fingerprint}>
+            <span className="quiet">{group.match === "endpoint" ? "同一入口 · 待核对关联" : "相同身份 · 待去重"}</span>
+            <div className="duplicate-ids">
+              {group.finding_ids.map((id) => (
+                <button type="button" key={id} className="button small" onClick={() => locateRecord(ws, id)}>
+                  {id}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
-    </Card>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -83,7 +90,9 @@ export function FindingReports({ variant = "card" }: { variant?: "card" | "menu"
   const [openMenu, setOpenMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const request = useRef(0);
-  const incomplete = ws.graph!.findings.filter(finding => confirmedVulnerability(finding) && missingReportFields(finding).length).length;
+  const incomplete = ws.graph!.findings.filter(
+    (finding) => confirmedVulnerability(finding) && missingReportFields(finding).length,
+  ).length;
 
   useEffect(() => {
     let active = true;
@@ -160,13 +169,13 @@ export function FindingReports({ variant = "card" }: { variant?: "card" | "menu"
   const list = (
     <div className="report-list">
       {error && <p className="banner danger">{error}</p>}
-      {!!incomplete && <p className="evidence-note">当前已确认漏洞中有 {incomplete} 项字段不全，生成报告前请补齐影响描述、复现步骤和修复建议。</p>}
+      {!!incomplete && (
+        <p className="evidence-note">
+          当前已确认漏洞中有 {incomplete} 项字段不全，生成报告前请补齐影响描述、复现步骤和修复建议。
+        </p>
+      )}
       {!rows.length && !error && (
-        <EmptyState
-          compact
-          title="尚无报告快照"
-          desc="生成后会冻结风险、复现、审核与证据索引。"
-        />
+        <EmptyState compact title="尚无报告快照" desc="生成后会冻结风险、复现、审核与证据索引。" />
       )}
       {rows.map((row) => (
         <div className="report-row" key={row.id}>
@@ -183,17 +192,11 @@ export function FindingReports({ variant = "card" }: { variant?: "card" | "menu"
             <button type="button" className="button small" onClick={() => void openReport(row.id)}>
               预览
             </button>
-            <a
-              className="button small ghost"
-              href={"/api" + path(id, `/reports/${row.id}/content?format=markdown`)}
-            >
+            <a className="button small ghost" href={"/api" + path(id, `/reports/${row.id}/content?format=markdown`)}>
               <Download size={12} />
               Markdown
             </a>
-            <a
-              className="button small ghost"
-              href={"/api" + path(id, `/reports/${row.id}/content?format=zip`)}
-            >
+            <a className="button small ghost" href={"/api" + path(id, `/reports/${row.id}/content?format=zip`)}>
               <Download size={12} />
               ZIP
             </a>

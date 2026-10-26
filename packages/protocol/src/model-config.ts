@@ -20,6 +20,12 @@ export interface ModelConfig {
   /** 0 uses Pi metadata. Positive values impose a deployment-specific ceiling. */
   context_window: number;
   max_output_tokens?: number;
+  /**
+   * Ask the provider to disable its reasoning channel. vLLM/Qwen exposes this as
+   * `chat_template_kwargs.enable_thinking=false`; a proxy that ignores the field
+   * is unaffected. Off by default.
+   */
+  disable_thinking?: boolean;
 }
 
 export interface ModelMetadata {

@@ -666,6 +666,7 @@ async function runJobInternal(
       tool(
         "submit_decisions",
         "Submit decisions in one call, or in bounded parts under the same Decide run: new steps, priority updates, closes, reopens, finding_merges, finding_updates, delete_nodes, goals or complete. " +
+          "New Steps belong in steps[] with from/description/property; updates[] only addresses existing Step ids and every entry needs id. " +
           "If the settlement is large (roughly more than 8 finding_updates or an estimated 6000-token JSON), send the plan and Step settlement first with more:true, then finding_merges/finding_updates in further calls with more:true, and finish with complete or the last settlement without more. A part with more:true is applied and keeps the run open; only the final part ends it. A completion cannot carry more. " +
           "The runtime also splits an oversized single call into ordered parts automatically, but that cannot undo model output already generated; prefer deliberate parts. " +
           "Before deleting, call preview_deletions with the same batch and inspect all IDs, shared_descendants and cancelled_runs. " +
@@ -882,6 +883,11 @@ async function runJobInternal(
   let closing = !!recoverySession,
     repairing = !!recoverySession;
   let recoveryNeeded = false;
+  // Set when the gateway hands us a tool call whose name/arguments contain the
+  // provider's native chat control tokens. That is a protocol mismatch, not a
+  // model decision, so the Run fails with an actionable message instead of
+  // spending every remaining turn on "tool not found".
+  let protocolMismatch: string | undefined;
   const closeoutPrompt =
     "立即停止探索。可以读取已有记录与证据页面，并用 read_workspace 读取已有文件。用 save_evidence 保存工作区中已有的原始产物，用 submit_fact 提交带 evidence_ids 的已确认观测，然后返回最终 execute JSON。在 Step 摘要中记录未完成的问题和阻塞原因。不要调用 shell、发起目标请求或调用写文件工具。";
   const beginCloseout = (reason: string) => {
@@ -1301,6 +1307,22 @@ async function runJobInternal(
         result_excerpt: excerpt(rawResult),
         raw_trace: join(directory, "tools.ndjson"),
       });
+      // Native chat-format tokens in a tool name/argument mean the gateway's
+      // parser did not understand the provider's tool call. Surface it once and
+      // stop instead of letting the model chase "tool not found" for minutes.
+      const malformedCall = `${event.toolName} ${JSON.stringify(toolInputs.get(event.toolCallId) ?? {})}`;
+      if (
+        !protocolMismatch &&
+        /<\/(?:think|parameter|function|tool_call|tool)\b|<\|[^|]{0,40}\|>/i.test(malformedCall)
+      ) {
+        protocolMismatch = `tool "${String(event.toolName).slice(0, 80)}"`;
+        diagnose("tool_protocol_mismatch", {
+          request_id: currentRequest,
+          tool: String(event.toolName).slice(0, 200),
+          args_excerpt: excerpt(toolInputs.get(event.toolCallId) ?? {}),
+          detail: "Tool name or arguments contain the provider's native chat control tokens",
+        });
+      }
       if (
         [
           "read_graph",
@@ -1463,6 +1485,10 @@ async function runJobInternal(
       runSucceeded = true;
       return;
     }
+    if (protocolMismatch)
+      throw new Error(
+        `Model provider failure: tool-call protocol mismatch (${protocolMismatch}); the provider returned a tool call the gateway could not parse. Fix the model server's chat template/tool-call parser (for qwen enable its native tool-call parser) or switch models.`,
+      );
     if (recoveryNeeded && !leaseError) {
       recoveryNeeded = false;
       await session.prompt(
@@ -1480,7 +1506,33 @@ async function runJobInternal(
       throw new Error(
         `Model provider failure: ${redactModelError(last.errorMessage || last.stopReason, [cfg.api_key])}`,
       );
-    if (!session.getLastAssistantText()) throw new Error("Model provider failure: empty final response");
+    // A provider turn can end with no text and no tool call — observed with
+    // reasoning-only qwen completions and right after a rejected tool argument.
+    // Ask for one concrete answer before counting this as a model failure; the
+    // repair budget is the same one used for invalid final JSON.
+    const emptyRepairs = Math.max(0, Math.min(1, config.result_repairs ?? 1));
+    for (let attempt = 0; attempt < emptyRepairs && !session.getLastAssistantText() && !leaseError; attempt++) {
+      diagnose("result_repair", {
+        attempt: attempt + 1,
+        detail: "empty_final_response",
+        note: "No assistant text or tool call; asking for a concrete result before failing the Run",
+      });
+      const hint =
+        job.kind === "decide" ? "Decide 的结算工具是 submit_decisions；每个 update 都必须带 id，步骤放进 steps。" : "";
+      await session.prompt(
+        `上一条回复既没有正文也没有工具调用，不能算作任务结果。请继续这个任务：要提交结果就调用可用的写入工具，或直接返回最终 JSON；不要返回空回复。${hint}`,
+      );
+      await Promise.all(pending);
+      if (decisionsCommitted) {
+        if (captureError) throw captureError;
+        runSucceeded = true;
+        return;
+      }
+      if (leaseError) throw leaseError;
+      if (captureError) throw captureError;
+    }
+    if (!session.getLastAssistantText())
+      throw new Error(`Model provider failure: empty final response${emptyRepairs ? " (after repair attempt)" : ""}`);
     const payload = await repairFinalResult({
       job,
       config,

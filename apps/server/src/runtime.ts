@@ -25,6 +25,7 @@ export const modelSchema = z.object({
     .refine((v) => v === 0 || v >= 4096, "上下文窗口须为 0（自动）或至少 4096")
     .default(0),
   max_output_tokens: z.number().int().min(0).default(0),
+  disable_thinking: z.boolean().optional(),
 });
 export const configSchema = z
   .object({

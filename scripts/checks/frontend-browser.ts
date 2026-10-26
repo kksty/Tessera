@@ -367,6 +367,21 @@ async function checkFindingReviews(page: Page) {
   // 页面按危险度分级：页签先给出各等级计数，列表再按等级分节，信息类单独一节。
   assert.deepEqual(await gradeTabs.locator("button b").allInnerTexts(), ["6", "1", "1", "4", "1"]);
   assert.deepEqual(await page.locator(".finding-group-name").allInnerTexts(), ["高危", "中危", "信息类"]);
+  // 左右两栏共用页头以下的剩余高度：顶边和底边都要对齐，不能各自按 viewport 常量算。
+  const panes = await page.evaluate(() => {
+    const list = document.querySelector(".finding-list")!.getBoundingClientRect();
+    const panel = document.querySelector(".finding-detail-panel")!.getBoundingClientRect();
+    return {
+      listTop: list.top,
+      listBottom: list.bottom,
+      panelTop: panel.top,
+      panelBottom: panel.bottom,
+      viewportBottom: innerHeight,
+    };
+  });
+  assert.ok(Math.abs(panes.listTop - panes.panelTop) < 1, "发现列表与详情顶边应对齐");
+  assert.ok(Math.abs(panes.listBottom - panes.panelBottom) < 1, "发现列表与详情底边应对齐");
+  assert.ok(panes.listBottom <= panes.viewportBottom, "发现两栏不应超出视口底部");
   assert.deepEqual(
     await projectFilters.locator("button").allTextContents(),
     labels.map((label, i) => `${label} ${titles[i].length}`),

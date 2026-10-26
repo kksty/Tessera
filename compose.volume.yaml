@@ -1,42 +1,13 @@
-# 可选覆盖层：把平台数据（数据库 / 证据 / 凭据）从宿主机目录改为 Docker 命名卷。
+# 兼容旧命令用的空覆盖层。
 #
-# 背景：compose 的短语法挂载无法用变量在「本地目录」和「命名卷」之间切换 —— 源路径不是以
-# ./ ../ / ~ 开头时会被当作命名卷引用，必须在顶层 volumes: 声明。所以两种模式用两个文件表达，
-# compose.yaml 保持默认的本地目录挂载不变。
+# 命名卷现在是默认挂载（见 compose.yaml 的 tessera-data）。本文件不再改变任何
+# 配置，保留它只是让旧命令仍然可用：
+#   docker compose -f compose.yaml -f compose.volume.yaml up -d
 #
-# 默认（本地目录，无需本文件）：
+# 新用法：
 #   docker compose up -d
-#   → ./datas/tessera 挂到 /data，宿主机可直接查看数据库
 #
-# 命名卷模式（本文件）：
-#   docker compose -f compose.yaml -f compose.volume.yaml up -d
-#   → 卷 tessera-data 挂到 /data，宿主机零文件
-#
-# 镜像默认由本机构建，命名卷模式同样适用：
-#   docker compose -f compose.yaml -f compose.volume.yaml up -d
-#
-# 注意：本文件不会迁移已有数据。首次使用前先把现有数据灌进去，否则新卷是空的，
-# 数据库与登录凭据都会重新生成。推荐使用脚本（停服 → 备份 → tar 管道 → 校验 → 启动）：
-#   pwsh scripts/ops/migrate-data-to-volume.ps1
-# 手工等价命令（先停服；Windows 上先在本机打包，避免容器逐文件读取 bind mount）：
-#   tar.exe -cf datas\_migrate.tar -C datas\tessera .
-#   docker volume create tessera-data
-#   docker run --rm -v "${PWD}/datas:/tars:ro" -v tessera-data:/to --entrypoint sh \
-#     tessera-server:latest -c "cd /to && tar -xf /tars/_migrate.tar && rm -f /to/tessera.db-shm /to/tessera.db-wal"
-#
-# 迁移必须停服：SQLite DB 与 WAL 在写入中途复制会不一致；20 万证据文件在容器内
-# 直接读 9p 挂载约需 1 小时，宿主机打包只约 1 分钟。校验用
-# scripts/ops/verify-data-volume.mjs。
-#
-# 回退：不带 -f compose.volume.yaml 启动即可回到本地目录；命名卷不会被自动删除。
-services:
-  tessera-server:
-    volumes:
-      - tessera-data:/data
-  tessera-dispatcher:
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - tessera-data:/data
-volumes:
-  tessera-data:
-    name: ${TESSERA_DATA_VOLUME:-tessera-data}
+# 卷名由 .env 的 TESSERA_DATA_VOLUME 决定（默认 tessera-data）。它不会随
+# compose down 删除；换卷名会挂载一个空卷，需要先用
+# scripts/ops/migrate-data-to-volume.ps1 迁移数据。
+services: {}

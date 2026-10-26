@@ -27,6 +27,7 @@ export const diagnosticSchema = z
       "model_capture_error",
       "tool_start",
       "tool_end",
+      "tool_protocol_mismatch",
       "tool_excerpt",
       "tool_blocked",
       "closeout",

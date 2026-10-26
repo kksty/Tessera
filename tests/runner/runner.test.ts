@@ -911,6 +911,66 @@ test("preview does not acknowledge unseen observations and a settlement conflict
   }
 });
 
+test("an empty provider turn is repaired once before it counts as a model failure", async () => {
+  const f = await sdkFixture("decide");
+  let calls = 0;
+  f.model.post("/v1/chat/completions", async (_req: any, reply) => {
+    calls++;
+    // A reasoning-only / blank completion: role chunk, stop, no text, no tool call.
+    if (calls === 1) return streamFixture(reply, { role: "assistant" });
+    return streamFixture(reply, {
+      role: "assistant",
+      content: JSON.stringify({ steps: [{ from: ["origin"], description: "Recovered after the empty turn" }] }),
+    });
+  });
+  try {
+    await f.run();
+    assert.equal(calls, 2, "one repair request turns the empty answer into a real result");
+    assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
+    const diagnostics = readFileSync(join(f.dir, "runs", f.job.worker, "diagnostics.ndjson"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.ok(
+      diagnostics.some((event) => event.type === "result_repair" && event.data.detail === "empty_final_response"),
+      "the empty turn is recorded before the repair",
+    );
+    assert.ok(
+      f.store.get(f.graph.project.id).steps.some((step) => step.description === "Recovered after the empty turn"),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a provider-native tool-call envelope fails fast with an actionable mismatch error", async () => {
+  const f = await sdkFixture("decide");
+  let calls = 0;
+  f.model.post("/v1/chat/completions", async (_req: any, reply) => {
+    calls++;
+    if (calls === 1)
+      return streamFixture(reply, {
+        role: "assistant",
+        tool_calls: [toolCall("query </think>", { kind: "facts" })],
+      });
+    return streamFixture(reply, {
+      role: "assistant",
+      content: JSON.stringify({ steps: [{ from: ["origin"], description: "Should not be reached" }] }),
+    });
+  });
+  try {
+    await assert.rejects(f.run(), /tool-call protocol mismatch/);
+    assert.equal(calls, 2, "one corrective turn, then the actionable failure");
+    const diagnostics = readFileSync(join(f.dir, "runs", f.job.worker, "diagnostics.ndjson"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.ok(diagnostics.some((event) => event.type === "tool_protocol_mismatch"));
+  } finally {
+    await f.close();
+  }
+});
+
 test("queuing preview and deletion together cannot write before a model turn observes the impact", async () => {
   const f = await sdkFixture("decide");
   let calls = 0;

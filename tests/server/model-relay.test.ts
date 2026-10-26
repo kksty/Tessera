@@ -78,6 +78,7 @@ test("Worker configs contain only the selected Run capability; relay fixes desti
       base_url: base + "/v1",
       id: "fixture",
       api_key: "secret-main",
+      disable_thinking: true,
     },
     review_model: {
       ...runtime.value.model,
@@ -112,6 +113,9 @@ test("Worker configs contain only the selected Run capability; relay fixes desti
   assert.equal(response.statusCode, 200, response.body);
   assert.match(response.body, /data: fixture/);
   assert.equal(observed!.headers.authorization, "Bearer secret-main");
+  // The pinned Run model can turn off the provider reasoning channel; the relay
+  // injects it and never lets the worker choose upstream behavior itself.
+  assert.equal(((observed!.body as any).chat_template_kwargs ?? {}).enable_thinking, false);
   assert.equal(observed!.path, "/v1/chat/completions");
   assert.equal((await request(headers, { model: "other" })).statusCode, 422);
   assert.equal(

@@ -148,7 +148,7 @@ Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，�
 | 平台 `/data`，默认绑定 `./datas/tessera` | SQLite、归档证据、配置、登录和内部凭据 |
 | 项目 `/workspace` 命名卷 | 会话、outbox、脚本、原始工具输出与工作文件 |
 
-命名卷模式使用 `docker compose -f compose.yaml -f compose.volume.yaml up -d`，平台卷默认 `tessera-data`。两种挂载模式不自动迁移数据；备份同时覆盖平台目录和各项目工作区，SQLite 使用一致性备份或先停止写入。
+平台数据卷（默认 `tessera-data`，可由 `TESSERA_DATA_VOLUME` 改名）与各项目工作区卷都由 Docker 管理；`/data` 不再使用宿主机目录挂载。日常启动为 `docker compose up -d`，从旧目录迁移用 `scripts/ops/migrate-data-to-volume.ps1`。卷不会随 `docker compose down` 删除；备份同时覆盖平台卷和各项目工作区，SQLite 使用一致性备份或先停止写入。
 
 删除项目需操作员确认：暂停并锁定 → 等任务和文件操作退出 → 校验资源归属并删除项目容器 / 辅助容器 / 工作区卷 → 删除证据及数据库记录。失败保留删除标记，可原操作重试；共享镜像、网络、平台数据卷和其他项目不在删除范围内。
 

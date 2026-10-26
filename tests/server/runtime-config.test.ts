@@ -336,14 +336,16 @@ test("Pi-native providers work without a custom endpoint and disabling review re
   }
 });
 
-test("Compose preserves optional env as blank and retains existing shared /data mounts", () => {
+test("Compose preserves optional env as blank and mounts /data as a named volume", () => {
   const compose = parse(readFileSync("compose.yaml", "utf8"));
   const environment = compose.services["tessera-server"].environment;
   assert.equal(environment.PI_PROVIDER_API, "${PI_PROVIDER_API:-}");
   assert.equal(environment.TESSERA_MAX_WORKERS, "${TESSERA_MAX_WORKERS:-}");
   assert.equal(environment.TESSERA_MAX_PROJECT_REVIEW_WORKERS, "${TESSERA_MAX_PROJECT_REVIEW_WORKERS:-}");
   for (const service of ["tessera-server", "tessera-dispatcher"])
-    assert.ok(compose.services[service].volumes.includes("${TESSERA_DATA_DIR:-./datas/tessera}:/data"));
+    assert.ok(compose.services[service].volumes.includes("tessera-data:/data"));
+  assert.equal(compose.volumes["tessera-data"].name, "${TESSERA_DATA_VOLUME:-tessera-data}");
+  assert.equal(compose.volumes["tessera-data"].external, true);
   assert.ok(!compose.services["tessera-server"].volumes.some((mount: string) => mount.includes("docker.sock")));
 });
 

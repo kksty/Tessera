@@ -239,143 +239,148 @@ export function FindingsPage() {
   };
 
   return (
-    <section className="page page-findings">
-      <header className="page-header">
-        <div className="page-header-main">
-          <span className="eyebrow">DELIVERABLE / FINDINGS</span>
-          <h1>发现</h1>
-          <p className="page-lede">
-            项目内所有结论记录：候选、审核中、已确认与已驳回，按「未批准 /
-            已批准」分组，再按危险度分级排列；信息类没有危险度，收在单独的「信息类」页签。人工批准后该发现不再出现在待处理列表；审核通过的漏洞同时汇总到工作区漏洞库。
-          </p>
-        </div>
-        <div className="page-actions">
-          <span className="meta-pill">
-            <strong>{counts.confirmed}</strong> 已确认漏洞 · 共 {counts.total} 条发现
-          </span>
-          <span className="meta-pill">
-            当前筛选 <strong>{findings.length}</strong> 条
-          </span>
-          <FindingReports variant="menu" />
-          <a className="button" href={"/api" + path(id, "/export?format=findings")}>
-            <Download size={14} />
-            导出发现
-          </a>
-        </div>
-      </header>
+    <>
+      <section className="page page-findings">
+        <header className="page-header">
+          <div className="page-header-main">
+            <span className="eyebrow">DELIVERABLE / FINDINGS</span>
+            <h1>发现</h1>
+            <p className="page-lede">
+              项目内所有结论记录：候选、审核中、已确认与已驳回，按「未批准 /
+              已批准」分组，再按危险度分级排列；信息类没有危险度，收在单独的「信息类」页签。人工批准后该发现不再出现在待处理列表；审核通过的漏洞同时汇总到工作区漏洞库。
+            </p>
+          </div>
+          <div className="page-actions">
+            <span className="meta-pill">
+              <strong>{counts.confirmed}</strong> 已确认漏洞 · 共 {counts.total} 条发现
+            </span>
+            <span className="meta-pill">
+              当前筛选 <strong>{findings.length}</strong> 条
+            </span>
+            <FindingReports variant="menu" />
+            <a className="button" href={"/api" + path(id, "/export?format=findings")}>
+              <Download size={14} />
+              导出发现
+            </a>
+          </div>
+        </header>
 
-      <div className="toolbar findings-toolbar">
-        <Segmented
-          ariaLabel="发现批准状态"
-          value={approval}
-          onChange={(value) => {
-            setApproval(value);
-            setFilter("all");
-          }}
-          options={[
-            ["pending", `未批准 ${approvalCounts.pending}`],
-            ["approved", `已批准 ${approvalCounts.approved}`],
-          ]}
-        />
-        <span className="spacer" />
-        <Segmented
-          ariaLabel="发现审核筛选"
-          value={filter}
-          onChange={setFilter}
-          options={findingReviewOptions(scopedFindings)}
-        />
-        <select aria-label="发现保留状态" value={lifecycle} onChange={(event) => setLifecycle(event.target.value)}>
-          <option value="active">当前发现</option>
-          <option value="withdrawn">已撤回</option>
-        </select>
-      </div>
-
-      {lifecycleFindings.length > 0 && (
-        <div className="severity-tabs findings-tabs" role="group" aria-label="按严重程度分级">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={risk === tab.key ? "active" : ""}
-              data-severity={tab.severity}
-              aria-pressed={risk === tab.key}
-              title={tab.key === "all" ? "全部发现；信息类单列在最后一节，也可点「信息类」单独查看" : undefined}
-              onClick={() => ws.setFindingSeverity(tab.key)}
-            >
-              {tab.severity && <span className="severity-tab-dot" aria-hidden="true" />}
-              <span>{tab.label}</span>
-              <b>{tab.count}</b>
-            </button>
-          ))}
+        <div className="toolbar findings-toolbar">
+          <Segmented
+            ariaLabel="发现批准状态"
+            value={approval}
+            onChange={(value) => {
+              setApproval(value);
+              setFilter("all");
+            }}
+            options={[
+              ["pending", `未批准 ${approvalCounts.pending}`],
+              ["approved", `已批准 ${approvalCounts.approved}`],
+            ]}
+          />
+          <span className="spacer" />
+          <Segmented
+            ariaLabel="发现审核筛选"
+            value={filter}
+            onChange={setFilter}
+            options={findingReviewOptions(scopedFindings)}
+          />
+          <select aria-label="发现保留状态" value={lifecycle} onChange={(event) => setLifecycle(event.target.value)}>
+            <option value="active">当前发现</option>
+            <option value="withdrawn">已撤回</option>
+          </select>
         </div>
-      )}
 
-      {findings.length ? (
-        <div className="findings-split">
-          <div className="finding-list" ref={listRef}>
-            {groups.map((group) => (
-              <section className="finding-group" key={group.key}>
-                <header className="finding-group-head" data-severity={group.key}>
-                  <span className="finding-group-dot" aria-hidden="true" />
-                  <span className="finding-group-name">{gradeLabel(group.key)}</span>
-                  <span className="finding-group-count">{group.items.length}</span>
-                  <span className="finding-group-line" aria-hidden="true" />
-                </header>
-                {group.items.map(renderFinding)}
-              </section>
+        {lifecycleFindings.length > 0 && (
+          <div className="severity-tabs findings-tabs" role="group" aria-label="按严重程度分级">
+            {tabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={risk === tab.key ? "active" : ""}
+                data-severity={tab.severity}
+                aria-pressed={risk === tab.key}
+                title={tab.key === "all" ? "全部发现；信息类单列在最后一节，也可点「信息类」单独查看" : undefined}
+                onClick={() => ws.setFindingSeverity(tab.key)}
+              >
+                {tab.severity && <span className="severity-tab-dot" aria-hidden="true" />}
+                <span>{tab.label}</span>
+                <b>{tab.count}</b>
+              </button>
             ))}
           </div>
+        )}
 
-          <aside className="finding-detail-panel">
-            {selected ? (
-              <>
-                <header className="finding-detail-head">
-                  <div>
-                    <span className="eyebrow">FINDING {selected.id}</span>
-                    <h2>{selected.title}</h2>
-                  </div>
-                  <div className="finding-detail-actions">
-                    <button
-                      type="button"
-                      className="button ghost small"
-                      onClick={() =>
-                        ws.navigate("review", {
-                          anchor: reviewAnchor(graph, selected),
-                        })
-                      }
-                    >
-                      <ShieldCheck size={13} />
-                      查看审核
-                    </button>
-                    <button
-                      type="button"
-                      className="button small"
-                      onClick={() => ws.openInGraph(scopeForFinding(graph, selected.id))}
-                    >
-                      <Route size={13} />
-                      发现链路
-                    </button>
-                  </div>
-                </header>
-                <div className="finding-detail-body">
-                  <FindingDetails key={selected.id} finding={selected} allowActions />
-                </div>
-              </>
-            ) : (
-              <EmptyState compact title="选择一条发现" desc="左侧列出当前筛选下的所有结论。" />
-            )}
-          </aside>
-        </div>
-      ) : (
-        <Card>
-          <EmptyState
-            title={graph.findings.length ? "没有符合筛选条件的发现" : "尚无发现"}
-            desc="Finding 与项目是否完成相互独立：模型可以在任何一轮提交候选结论。"
-          />
-        </Card>
-      )}
+        {findings.length ? (
+          <div className="findings-split">
+            <div className="finding-list" ref={listRef}>
+              {groups.map((group) => (
+                <section className="finding-group" key={group.key}>
+                  <header className="finding-group-head" data-severity={group.key}>
+                    <span className="finding-group-dot" aria-hidden="true" />
+                    <span className="finding-group-name">{gradeLabel(group.key)}</span>
+                    <span className="finding-group-count">{group.items.length}</span>
+                    <span className="finding-group-line" aria-hidden="true" />
+                  </header>
+                  {group.items.map(renderFinding)}
+                </section>
+              ))}
+            </div>
 
-      <FindingDuplicates />
-    </section>
+            <aside className="finding-detail-panel">
+              {selected ? (
+                <>
+                  <header className="finding-detail-head">
+                    <div>
+                      <span className="eyebrow">FINDING {selected.id}</span>
+                      <h2>{selected.title}</h2>
+                    </div>
+                    <div className="finding-detail-actions">
+                      <button
+                        type="button"
+                        className="button ghost small"
+                        onClick={() =>
+                          ws.navigate("review", {
+                            anchor: reviewAnchor(graph, selected),
+                          })
+                        }
+                      >
+                        <ShieldCheck size={13} />
+                        查看审核
+                      </button>
+                      <button
+                        type="button"
+                        className="button small"
+                        onClick={() => ws.openInGraph(scopeForFinding(graph, selected.id))}
+                      >
+                        <Route size={13} />
+                        发现链路
+                      </button>
+                    </div>
+                  </header>
+                  <div className="finding-detail-body">
+                    <FindingDetails key={selected.id} finding={selected} allowActions />
+                  </div>
+                </>
+              ) : (
+                <EmptyState compact title="选择一条发现" desc="左侧列出当前筛选下的所有结论。" />
+              )}
+            </aside>
+          </div>
+        ) : (
+          <Card>
+            <EmptyState
+              title={graph.findings.length ? "没有符合筛选条件的发现" : "尚无发现"}
+              desc="Finding 与项目是否完成相互独立：模型可以在任何一轮提交候选结论。"
+            />
+          </Card>
+        )}
+      </section>
+
+      {/* 去重候选跟在两栏之后，不参与两栏的高度分配；否则它会挤压列表与详情。 */}
+      <div className="page page-findings-extra">
+        <FindingDuplicates />
+      </div>
+    </>
   );
 }

@@ -402,6 +402,22 @@ export function SettingsPage() {
               onChange={(model) => changeModel("model", model)}
             />
           </div>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={draft.model.disable_thinking === true}
+              disabled={locked("model.disable_thinking") || saving}
+              onChange={(event) => changeModel("model", { ...draft.model, disable_thinking: event.target.checked })}
+            />
+            <span>关闭模型思考通道（Qwen / vLLM：enable_thinking=false）</span>
+          </label>
+          <p className="settings-hint">
+            开启后，每次模型请求都会附带
+            <code>chat_template_kwargs.enable_thinking=false</code>。长上下文下 Qwen
+            的思考内容可能被当成正文或工具名（出现
+            <code>&lt;/think&gt;</code>、<code>&lt;/parameter&gt;</code> 等标记），导致空回复或最终 JSON
+            无效；此时应关闭思考通道。不识别该参数的供应商会忽略它。
+          </p>
         </Card>
 
         <Card title="审核模型" note="候选发现可用独立模型审核；未启用时与主模型共用" icon={<ShieldCheck size={15} />}>

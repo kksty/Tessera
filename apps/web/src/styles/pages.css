@@ -2469,14 +2469,14 @@
   display: grid;
   grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.15fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .finding-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: calc(100vh - 268px);
+  min-height: 0;
   overflow: auto;
   padding-right: 4px;
 }
@@ -2622,11 +2622,9 @@
 }
 
 .finding-detail-panel {
-  position: sticky;
-  top: 68px;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 100px);
+  min-height: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -2660,8 +2658,80 @@
 }
 
 .finding-detail-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 16px 18px 24px;
+}
+
+/* 两栏共用页头以下的剩余高度：列表与详情各自滚动，底边始终对齐。
+   以前两栏各自用 viewport 常量算 max-height，页头一变就错开。 */
+@media (min-width: 1081px) {
+  .content:has(.findings-split) {
+    padding-bottom: 28px;
+  }
+  .page-findings:has(.findings-split) {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .page-findings:has(.findings-split) > .page-header,
+  .page-findings:has(.findings-split) > .findings-toolbar,
+  .page-findings:has(.findings-split) > .findings-tabs {
+    flex: none;
+  }
+  .findings-split {
+    flex: 1 1 0;
+    /* 视口过矮时不再压缩两栏，让整页滚动，保留可用的列表与详情高度。 */
+    min-height: 320px;
+  }
+}
+
+.page-findings-extra {
+  margin-top: 16px;
+}
+
+.page-findings-extra:empty {
+  display: none;
+}
+
+/* 去重候选默认收起，只占一行摘要；展开后沿用卡片正文。 */
+.duplicates-summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
+  transition: background var(--fast);
+}
+
+.duplicates-summary::-webkit-details-marker {
+  display: none;
+}
+
+.duplicates-summary:hover {
+  background: var(--surface-2);
+}
+
+.duplicates-panel:not([open]) .duplicates-summary {
+  border-bottom: 0;
+  border-radius: calc(var(--r-lg) - 1px);
+}
+
+.duplicates-hint {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.duplicates-chevron {
+  transition: transform var(--fast);
+}
+
+.duplicates-panel[open] .duplicates-chevron {
+  transform: rotate(180deg);
 }
 
 .findings-delivery {
@@ -2698,10 +2768,7 @@
   }
   .finding-list {
     max-height: 44vh;
-  }
-  .finding-detail-panel {
-    position: static;
-    max-height: none;
+    overflow: auto;
   }
   .login-screen {
     grid-template-columns: minmax(0, 1fr);

@@ -80,7 +80,7 @@ services:
       PI_REVIEW_CONTEXT_WINDOW: ${PI_REVIEW_CONTEXT_WINDOW:-}
       PI_REVIEW_MAX_OUTPUT_TOKENS: ${PI_REVIEW_MAX_OUTPUT_TOKENS:-}
     volumes:
-      - ${TESSERA_DATA_DIR:-./datas/tessera}:/data
+      - tessera-data:/data
     networks: [tessera]
     healthcheck:
       test:
@@ -110,7 +110,7 @@ services:
       TESSERA_TOKEN_FILE: /data/internal-token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${TESSERA_DATA_DIR:-./datas/tessera}:/data
+      - tessera-data:/data
     networks: [tessera]
     depends_on:
       tessera-server:
@@ -127,6 +127,14 @@ services:
     command: ["node", "--version"]
     networks: [tessera]
     restart: "no"
+volumes:
+  # /data is always a Docker named volume. The name is stable across Compose
+  # project renames; set TESSERA_DATA_VOLUME only to attach an existing volume.
+  # external: Compose never creates or deletes it. Create it once (the migration
+  # script does) so `docker compose down -v` cannot destroy platform data.
+  tessera-data:
+    name: ${TESSERA_DATA_VOLUME:-tessera-data}
+    external: true
 networks:
   tessera:
     name: ${TESSERA_NETWORK:-tessera-network}

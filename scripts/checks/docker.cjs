@@ -2,7 +2,6 @@ const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const { resolve } = require("node:path");
-const fs = require("node:fs");
 const run = randomUUID().slice(0, 8),
   project = "tessera-qa-" + run,
   network = project + "-network",
@@ -13,7 +12,7 @@ const env = {
   TESSERA_PORT: "8788",
   TESSERA_NETWORK: network,
   TESSERA_VOLUME_PREFIX: project,
-  TESSERA_DATA_DIR: resolve("test-results/docker/" + run),
+  TESSERA_DATA_VOLUME: project + "-data",
   PI_MODEL: "",
   PI_BASE_URL: "",
   PI_API_KEY: "",
@@ -95,8 +94,9 @@ async function wait(fn, ms = 120000) {
 }
 (async () => {
   const ids = [];
-  fs.mkdirSync(env.TESSERA_DATA_DIR, { recursive: true });
   try {
+    // The platform volume is external (Compose never creates or deletes it).
+    docker(["volume", "create", env.TESSERA_DATA_VOLUME]);
     compose("up", "-d", "--no-build", "tessera-server", "tessera-dispatcher");
     await wait(async () => {
       const r = await fetch("http://127.0.0.1:8788/health");
@@ -323,7 +323,10 @@ async function wait(fn, ms = 120000) {
       } catch {}
     }
     try {
-      compose("down");
+      compose("down", "-v");
+    } catch {}
+    try {
+      docker(["volume", "rm", env.TESSERA_DATA_VOLUME]);
     } catch {}
   }
 })().catch((e) => {
