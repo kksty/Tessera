@@ -15,6 +15,7 @@ import {
   findingKind,
   classificationReviewRequired,
   informationalReviewExempt,
+  humanApproved,
 } from "../../../../packages/protocol/src/finding-policy.js";
 import { scopeForFinding } from "../graph-scope.js";
 import { Card, EmptyState, Segmented, SeverityBadge } from "../components/ui.js";
@@ -63,10 +64,26 @@ export function FindingsPage() {
     [graph.findings, lifecycle],
   );
 
+  // Operator approval is a version-bound gate: approved findings leave the pending
+  // queues and are listed under "已批准"; a revision must be approved again.
+  const [approval, setApproval] = useViewState<"pending" | "approved">(
+    `${graph.project.id}:findings:approval`,
+    "pending",
+  );
+  const approvalCounts = useMemo(() => {
+    let approved = 0;
+    for (const finding of lifecycleFindings) if (humanApproved(finding)) approved += 1;
+    return { approved, pending: lifecycleFindings.length - approved };
+  }, [lifecycleFindings]);
+  const approvalFindings = useMemo(
+    () => lifecycleFindings.filter((finding) => humanApproved(finding) === (approval === "approved")),
+    [lifecycleFindings, approval],
+  );
+
   /** 页签即分级：「全部」保留信息类，「已确认」只留审核通过且评分有效的漏洞，等级页签按当前危险度收窄。 */
   const scopedFindings = useMemo(
     () =>
-      lifecycleFindings.filter((finding) => {
+      approvalFindings.filter((finding) => {
         const informational = findingKind(finding) === "informational";
         if (risk === "informational") return informational;
         if (informational) return risk === "all";
@@ -74,14 +91,14 @@ export function FindingsPage() {
         if (risk === "confirmed") return confirmedVulnerability(finding, graph);
         return (finding.severity || "ungraded") === risk;
       }),
-    [lifecycleFindings, risk, graph],
+    [approvalFindings, risk, graph],
   );
 
   const counts = useMemo(() => {
     const bySeverity: Record<string, number> = Object.fromEntries(severityKeys.map((key) => [key, 0]));
     let confirmed = 0;
     let informational = 0;
-    for (const finding of lifecycleFindings) {
+    for (const finding of approvalFindings) {
       if (findingKind(finding) === "informational") {
         informational += 1;
         continue;
@@ -89,8 +106,8 @@ export function FindingsPage() {
       bySeverity[finding.severity || "ungraded"] += 1;
       if (confirmedVulnerability(finding, graph)) confirmed += 1;
     }
-    return { bySeverity, confirmed, informational, total: lifecycleFindings.length };
-  }, [lifecycleFindings, graph]);
+    return { bySeverity, confirmed, informational, total: approvalFindings.length };
+  }, [approvalFindings, graph]);
 
   const tabs = useMemo(() => {
     const list: { key: string; label: string; count: number; severity?: string }[] = [
@@ -150,6 +167,7 @@ export function FindingsPage() {
     appliedFocus.current = ws.focusFinding;
     ws.setFindingSeverity("all");
     setFilter("all");
+    setApproval(humanApproved(target) ? "approved" : "pending");
     setLifecycle(target.withdrawn_at ? "withdrawn" : "active");
     setSelectedId(target.id);
     const frame = requestAnimationFrame(() => {
@@ -194,6 +212,11 @@ export function FindingsPage() {
                 免审
               </span>
             )}
+            {humanApproved(finding) && (
+              <span className="tag" title="已由操作员人工批准；不进入待处理列表">
+                已批准
+              </span>
+            )}
             <span className="status-pill" data-tone={reviewTone(reviewStatus)}>
               {findingReviewLabels[reviewStatus]}
             </span>
@@ -222,7 +245,8 @@ export function FindingsPage() {
           <span className="eyebrow">DELIVERABLE / FINDINGS</span>
           <h1>发现</h1>
           <p className="page-lede">
-            项目内所有结论记录：候选、审核中、已确认与已驳回，按危险度分级排列；信息类没有危险度，收在单独的「信息类」页签。审核通过的漏洞同时汇总到工作区漏洞库。
+            项目内所有结论记录：候选、审核中、已确认与已驳回，按「未批准 /
+            已批准」分组，再按危险度分级排列；信息类没有危险度，收在单独的「信息类」页签。人工批准后该发现不再出现在待处理列表；审核通过的漏洞同时汇总到工作区漏洞库。
           </p>
         </div>
         <div className="page-actions">
@@ -242,12 +266,24 @@ export function FindingsPage() {
 
       <div className="toolbar findings-toolbar">
         <Segmented
+          ariaLabel="发现批准状态"
+          value={approval}
+          onChange={(value) => {
+            setApproval(value);
+            setFilter("all");
+          }}
+          options={[
+            ["pending", `未批准 ${approvalCounts.pending}`],
+            ["approved", `已批准 ${approvalCounts.approved}`],
+          ]}
+        />
+        <span className="spacer" />
+        <Segmented
           ariaLabel="发现审核筛选"
           value={filter}
           onChange={setFilter}
           options={findingReviewOptions(scopedFindings)}
         />
-        <span className="spacer" />
         <select aria-label="发现保留状态" value={lifecycle} onChange={(event) => setLifecycle(event.target.value)}>
           <option value="active">当前发现</option>
           <option value="withdrawn">已撤回</option>

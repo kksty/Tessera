@@ -98,7 +98,9 @@ export class RuntimeConfig {
     this.persisted = existsSync(file)
       ? z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(file, "utf8")))
       : {};
-    const specs: [string, string, boolean?][] = [
+    // `true` = numbers, "boolean" = booleans, omitted = strings. Deployments can
+    // force the informational-review switch so it cannot be re-enabled in the UI.
+    const specs: [string, string, (boolean | "boolean")?][] = [
       ["TESSERA_INTERNAL_URL", "server"],
       ["TESSERA_WORKER_IMAGE", "worker_image"],
       ["TESSERA_NETWORK", "network"],
@@ -112,6 +114,7 @@ export class RuntimeConfig {
       ["TESSERA_CLOSEOUT_SECONDS", "closeout_seconds", true],
       ["TESSERA_TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds", true],
       ["TESSERA_RESULT_REPAIRS", "result_repairs", true],
+      ["TESSERA_SKIP_INFORMATIONAL_REVIEW", "skip_informational_review", "boolean"],
       ["PI_MODEL", "model.id"],
       ["PI_BASE_URL", "model.base_url"],
       ["PI_API_KEY", "model.api_key"],
@@ -127,12 +130,23 @@ export class RuntimeConfig {
       ["PI_REVIEW_PROVIDER_API", "review_model.api"],
       ["PI_REVIEW_CONTEXT_WINDOW", "review_model.context_window", true],
     ];
-    for (const [name, path, numeric] of specs) {
+    for (const [name, path, coerce] of specs) {
       const raw = environment[name];
       if (raw === undefined || raw.trim() === "") continue;
       const [parent, field] = path.split(".");
-      const value = numeric ? Number(raw) : raw;
-      if (numeric && !Number.isFinite(value)) throw new Error(`Invalid numeric environment variable: ${name}`);
+      const value =
+        coerce === "boolean"
+          ? /^(?:1|true|yes|on)$/i.test(raw.trim())
+            ? true
+            : /^(?:0|false|no|off)$/i.test(raw.trim())
+              ? false
+              : (() => {
+                  throw new Error(`Invalid boolean environment variable: ${name}`);
+                })()
+          : coerce
+            ? Number(raw)
+            : raw;
+      if (coerce === true && !Number.isFinite(value)) throw new Error(`Invalid numeric environment variable: ${name}`);
       if (field) {
         const model = this.overrides[parent] as Record<string, unknown> | undefined;
         this.overrides[parent] = { ...model, [field]: value };
@@ -235,7 +249,17 @@ export class RuntimeConfig {
             String(previous?.base_url ?? this.defaults.model.base_url),
             String(previous?.api ?? ""),
           );
-      const changedProvider = incoming && "provider" in incoming && incoming.provider !== (previous?.provider ?? "");
+      const nativeProvider = (provider: unknown) => {
+        const value = String(provider ?? "");
+        return value !== "" && value !== "custom";
+      };
+      // Endpoint mode and custom mode share the same connection, so switching only
+      // the catalog-matching mode must not discard the stored key.
+      const changedProvider =
+        incoming &&
+        "provider" in incoming &&
+        String(incoming.provider ?? "") !== String(previous?.provider ?? "") &&
+        (nativeProvider(incoming.provider) || nativeProvider(previous?.provider));
       if ((changedEndpoint || changedProvider) && !incoming?.api_key) model.api_key = "";
       else if (incoming && incoming.api_key === "") model.api_key = previous?.api_key ?? "";
     }

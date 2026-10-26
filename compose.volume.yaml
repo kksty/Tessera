@@ -16,10 +16,17 @@
 #   docker compose -f compose.yaml -f compose.volume.yaml up -d
 #
 # 注意：本文件不会迁移已有数据。首次使用前先把现有数据灌进去，否则新卷是空的，
-# 数据库与登录凭据都会重新生成：
+# 数据库与登录凭据都会重新生成。推荐使用脚本（停服 → 备份 → tar 管道 → 校验 → 启动）：
+#   pwsh scripts/ops/migrate-data-to-volume.ps1
+# 手工等价命令（先停服；Windows 上先在本机打包，避免容器逐文件读取 bind mount）：
+#   tar.exe -cf datas\_migrate.tar -C datas\tessera .
 #   docker volume create tessera-data
-#   docker run --rm -v "$(pwd)/datas/tessera:/from:ro" -v tessera-data:/to \
-#     alpine sh -c "cp -a /from/. /to/"
+#   docker run --rm -v "${PWD}/datas:/tars:ro" -v tessera-data:/to --entrypoint sh \
+#     tessera-server:latest -c "cd /to && tar -xf /tars/_migrate.tar && rm -f /to/tessera.db-shm /to/tessera.db-wal"
+#
+# 迁移必须停服：SQLite DB 与 WAL 在写入中途复制会不一致；20 万证据文件在容器内
+# 直接读 9p 挂载约需 1 小时，宿主机打包只约 1 分钟。校验用
+# scripts/ops/verify-data-volume.mjs。
 #
 # 回退：不带 -f compose.volume.yaml 启动即可回到本地目录；命名卷不会被自动删除。
 services:

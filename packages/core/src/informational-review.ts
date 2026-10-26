@@ -60,6 +60,8 @@ export function informationalAwaitingReview(finding: Finding) {
     !finding.review_worker &&
     finding.review_status === "pending" &&
     !finding.human_feedback &&
+    // An explicit operator request outranks the platform-wide exemption.
+    !finding.review_requested &&
     finding.kind === "informational" &&
     finding.evidence_ids.length > 0
   );

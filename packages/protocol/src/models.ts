@@ -210,6 +210,19 @@ export interface Finding {
    * limited Review to vulnerability claims. Informational only; never a verdict.
    */
   review_exempt?: "informational";
+  /**
+   * Set when an operator asked for a real Review of an exempt finding. The
+   * informational exemption must not silently swallow that request on the next
+   * claim, even while the platform switch stays on.
+   */
+  review_requested?: { at: string; by: string; reason: string };
+  /**
+   * Operator approval of this exact Finding version. Approved findings leave the
+   * pending queues (Review queue, project overview, navigation badges) and are the
+   * only ones listed under the Findings page's "已批准" tab. A new version never
+   * inherits the approval.
+   */
+  human_approval?: { at: string; by: string; version: number; reason?: string };
   created_at: string;
   graph_id: string;
   asset_id?: string;
@@ -394,6 +407,13 @@ export interface Project {
   pool_revision?: number;
   /** Hot budget for entry-listed Facts/Findings. 0 disables cooling (everything stays hot). */
   hot_limit?: number;
+  /** Character budget for entry-listed Fact/Finding lines. 0 disables the character budget. */
+  hot_char_limit?: number;
+  /** Classification of the most recent Run failure, so the UI can name it. */
+  last_failure_kind?: Run["failure_kind"];
+  /** Consecutive control-plane failures; these back off instead of pausing the project. */
+  infra_failures?: number;
+  infra_retry_at?: string;
   model_retry_at?: string;
   model_failures?: number;
   job_failures?: Partial<Record<"decide" | "execute" | "review", number>>;
@@ -496,11 +516,15 @@ export interface Run {
   project_id: string;
   kind: Job["kind"];
   worker: string;
+  /** Client-generated id of the claim that created this Run; used to cancel an abandoned claim. */
+  claim_id?: string;
   graph_id: string;
   node_id: string | null;
   finding_version?: number;
   attempt: number;
   status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted" | "needs_attention";
+  /** Why the Run failed. Infrastructure failures retry without pausing the project. */
+  failure_kind?: "model" | "infrastructure" | "target" | "unknown";
   started_at: string;
   heartbeat_at: string;
   finished_at: string | null;
@@ -542,6 +566,8 @@ export interface OverviewFinding {
   informational: boolean;
   /** 当前版本已经审核过（无论结论）。 */
   reviewed: boolean;
+  /** 操作员已人工批准当前版本；批准的发现不再进入待审核/待处理列表。 */
+  approved: boolean;
   /** 审核调度状态；旧服务端可能不返回此字段。 */
   review_gate?: ReviewGate;
   created_at: string;

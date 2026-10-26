@@ -29,6 +29,8 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSyn
 import { dirname, join, resolve, sep } from "node:path";
 import { domainToASCII } from "node:url";
 import { modelIssue } from "../../protocol/src/model-errors.js";
+import { classifyFailure, infrastructureBackoff, type FailureKind } from "../../protocol/src/failure.js";
+import { TIMEOUT_DEFAULTS } from "../../protocol/src/timeouts.js";
 import type { z } from "zod";
 import type {
   Graph,
@@ -127,7 +129,7 @@ export class Store {
   skipInformationalReview = false;
   constructor(
     file: string,
-    public leaseSeconds = 120,
+    public leaseSeconds = TIMEOUT_DEFAULTS.lease_seconds,
   ) {
     this.reasonLeaseSeconds = leaseSeconds;
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
@@ -155,16 +157,38 @@ export class Store {
       CREATE TABLE IF NOT EXISTS platform_pools(
         project_id TEXT PRIMARY KEY,pool_revision INTEGER NOT NULL,seed TEXT NOT NULL,
         fingerprint TEXT NOT NULL,algorithm TEXT NOT NULL,updated_at TEXT NOT NULL);
-      INSERT OR IGNORE INTO platform_settings VALUES(1,'{"intent_timeout":120,"reason_timeout":120}');`);
+      INSERT OR IGNORE INTO platform_settings VALUES(1,'${JSON.stringify({
+        intent_timeout: leaseSeconds,
+        reason_timeout: leaseSeconds,
+      })}');`);
     this.graphs = new GraphStorage(this.db);
     this.retention = new Retention(this.db, this.evidenceRoot);
     this.execution = new ExecutionRecords(this.db);
     this.traffic = new TrafficRecords(this.db, this.evidenceRoot);
     this.search = new MemorySearch(this.db);
     this.rebuildSearch();
+    this.migrateLeaseDefaults();
     const settings = this.settings();
     this.leaseSeconds = settings.intent_timeout;
     this.reasonLeaseSeconds = settings.reason_timeout;
+  }
+  /**
+   * 120s was the hard-coded default before the heartbeat/timeout budget existed.
+   * Raising it once keeps deployments that never tuned the value from reclaiming
+   * Workers in the middle of a legitimately slow control-plane write. A value an
+   * operator actually chose is left alone.
+   */
+  private migrateLeaseDefaults() {
+    if (this.db.prepare("SELECT 1 FROM platform_meta WHERE key='lease_default_180'").get()) return;
+    const current = this.settings();
+    if (current.intent_timeout === 120 && current.reason_timeout === 120)
+      this.db.prepare("UPDATE platform_settings SET data=? WHERE id=1").run(
+        JSON.stringify({
+          intent_timeout: TIMEOUT_DEFAULTS.lease_seconds,
+          reason_timeout: TIMEOUT_DEFAULTS.lease_seconds,
+        }),
+      );
+    this.db.prepare("INSERT INTO platform_meta(key,value) VALUES('lease_default_180',?)").run(now());
   }
   maintenance() {
     if (this.transactionDepth) return;
@@ -240,8 +264,8 @@ export class Store {
     this.get(id);
     return this.execution.list(id, limit);
   }
-  private claimRun(g: Graph, job: Job): Job {
-    const claimed = this.execution.create(job);
+  private claimRun(g: Graph, job: Job, claimId?: string): Job {
+    const claimed = this.execution.create(job, claimId);
     if (job.kind === "decide") g.project.reason!.run_id = claimed.run_id;
     if (job.kind === "execute") g.steps.find((s) => s.id === job.step_id)!.run_id = claimed.run_id;
     if (job.kind === "review") g.findings.find((f) => f.id === job.finding_id)!.review_run_id = claimed.run_id;
@@ -334,117 +358,198 @@ export class Store {
   }
   /** Post-Review operator actions, including on completed projects and library entries. */
   findingAction(id: string, findingId: string, body: z.infer<typeof findingActionSchema>) {
-    return this.mutate(
-      id,
-      `finding.${body.action === "delete" ? "deleted" : body.action === "return" ? "returned" : "retest_requested"}`,
-      true,
-      (g) => {
-        const finding = g.findings.find((f) => f.id === findingId) || fail(404, "Finding not found");
-        if (finding.deleted || finding.merged_into || finding.withdrawn_at)
-          fail(409, "发现已删除、合并或撤回，请刷新后操作当前发现。");
-        if (finding.version !== body.expected_version) fail(409, "发现版本已更新，请刷新并核对最新内容后操作。");
-        if (!g.reviews.some((review) => review.finding_id === findingId))
-          fail(409, "发现经过 Review 审核后才能人工处理。");
-        if (!body.reason.trim() || !body.creator.trim()) fail(422, "请填写操作说明和操作人。");
-        const previousRetest = g.steps.find(
-          (step) =>
-            step.id === finding.human_feedback?.step_id && !step.deleted && !step.discarded && !step.concluded_at,
+    const event =
+      body.action === "delete"
+        ? "finding.deleted"
+        : body.action === "return"
+          ? "finding.returned"
+          : body.action === "review"
+            ? "finding.review_requested"
+            : "finding.retest_requested";
+    return this.mutate(id, event, body.action !== "review", (g) => {
+      const finding = g.findings.find((f) => f.id === findingId) || fail(404, "Finding not found");
+      if (finding.deleted || finding.merged_into || finding.withdrawn_at)
+        fail(409, "发现已删除、合并或撤回，请刷新后操作当前发现。");
+      if (finding.version !== body.expected_version) fail(409, "发现版本已更新，请刷新并核对最新内容后操作。");
+      if (!g.reviews.some((review) => review.finding_id === findingId))
+        fail(409, "发现经过 Review 审核后才能人工处理。");
+      if (!body.reason.trim() || !body.creator.trim()) fail(422, "请填写操作说明和操作人。");
+      if (body.action === "review") return this.requestReview(g, finding, body.creator, body.reason);
+      const previousRetest = g.steps.find(
+        (step) => step.id === finding.human_feedback?.step_id && !step.deleted && !step.discarded && !step.concluded_at,
+      );
+      if (previousRetest) {
+        if (previousRetest.worker)
+          this.endRun(
+            g,
+            previousRetest.worker,
+            "cancelled",
+            "Retest superseded by operator action",
+            previousRetest.run_id,
+          );
+        previousRetest.worker = null;
+        previousRetest.last_heartbeat_at = null;
+        previousRetest.discarded = true;
+        previousRetest.close_reason = body.reason;
+        reopenLeadsForStep(g, previousRetest.id);
+      }
+      if (body.action === "delete") {
+        const plan = planNodeDeletions(g, [{ id: findingId, reason: body.reason, cascade: "none" }]);
+        applyNodeDeletions(
+          g,
+          plan,
+          { by: body.creator, submission_id: `human_${randomUUID()}` },
+          this.endRun.bind(this),
         );
-        if (previousRetest) {
-          if (previousRetest.worker)
-            this.endRun(
-              g,
-              previousRetest.worker,
-              "cancelled",
-              "Retest superseded by operator action",
-              previousRetest.run_id,
-            );
-          previousRetest.worker = null;
-          previousRetest.last_heartbeat_at = null;
-          previousRetest.discarded = true;
-          previousRetest.close_reason = body.reason;
-          reopenLeadsForStep(g, previousRetest.id);
-        }
-        if (body.action === "delete") {
-          const plan = planNodeDeletions(g, [{ id: findingId, reason: body.reason, cascade: "none" }]);
-          applyNodeDeletions(
-            g,
-            plan,
-            { by: body.creator, submission_id: `human_${randomUUID()}` },
-            this.endRun.bind(this),
-          );
-          return finding;
-        }
-        // Invalidate in-flight planning and Review before recording the operator's new version.
-        this.restartAfterHumanScopeEdit(g, "人工要求重新处理漏洞，旧规划作废", g.project.status === "completed");
-        this.clearDecideBackoff(g);
-        archiveFinding(finding, body.creator, body.reason);
-        if (finding.review_worker)
-          this.endRun(g, finding.review_worker, "cancelled", "Finding returned by operator", finding.review_run_id);
-        const feedback: NonNullable<Finding["human_feedback"]> = {
-          action: body.action,
-          reason: body.reason.trim(),
-          by: body.creator,
-          at: now(),
-          version: finding.version + 1,
-        };
-        Object.assign(finding, {
-          version: feedback.version,
-          status: "candidate",
-          review_status: "needs_evidence",
-          reviewed_version: feedback.version,
-          severity: null,
-          severity_reason: null,
-          cvss: null,
-          severity_before_review: undefined,
-          severity_reason_before_review: undefined,
-          review_worker: null,
-          review_heartbeat: null,
-          review_run_id: undefined,
-          review_exempt: undefined,
-          retry_at: undefined,
-          human_feedback: feedback,
-          last_referenced_round: g.project.decision_round ?? 0,
-        });
-        if (body.action === "retest") {
-          for (const assetId of this.findingAssets(g, finding)) this.asset(g, assetId);
-          const from = finding.from.filter((source) => g.facts.some((fact) => fact.id === source && !fact.deleted));
-          const step = this.insertStep(
-            g,
-            {
-              from: from.length ? from : ["origin"],
-              asset_id: finding.asset_id,
-              description: `重测漏洞 ${finding.id}：${finding.title}\n人工说明：${feedback.reason}\n核对原始证据和复现条件，执行定向重测，保留新的原始证据；结果提交到 Finding ${finding.id}，说明仍可复现、已修复或证据不足。`,
-              priority: 1,
-            },
-            body.creator,
-            finding.graph_id,
-          );
-          step.retest_finding_id = finding.id;
-          feedback.step_id = step.id;
-          finding.revision_step_id = step.id;
-        }
-        g.reviews.push({
-          id: this.next(g.reviews, "r"),
-          source: "human",
-          kind: finding.kind,
-          finding_id: finding.id,
-          finding_version: finding.version,
-          verdict: "needs_evidence",
-          reason: feedback.reason,
-          evidence_ids: [...finding.evidence_ids],
-          disputed_fact_ids: [],
-          created_at: feedback.at,
-          worker: body.creator,
-          planning_issues: [
-            body.action === "return"
-              ? `人工打回：${feedback.reason}。修订或补证后重新 Review。`
-              : `人工重测 ${feedback.step_id}：${feedback.reason}。执行完成后重新 Review。`,
-          ],
-        });
         return finding;
-      },
-    );
+      }
+      // Invalidate in-flight planning and Review before recording the operator's new version.
+      this.restartAfterHumanScopeEdit(g, "人工要求重新处理漏洞，旧规划作废", g.project.status === "completed");
+      this.clearDecideBackoff(g);
+      archiveFinding(finding, body.creator, body.reason);
+      if (finding.review_worker)
+        this.endRun(g, finding.review_worker, "cancelled", "Finding returned by operator", finding.review_run_id);
+      const feedback: NonNullable<Finding["human_feedback"]> = {
+        action: body.action,
+        reason: body.reason.trim(),
+        by: body.creator,
+        at: now(),
+        version: finding.version + 1,
+      };
+      Object.assign(finding, {
+        version: feedback.version,
+        status: "candidate",
+        review_status: "needs_evidence",
+        reviewed_version: feedback.version,
+        severity: null,
+        severity_reason: null,
+        cvss: null,
+        severity_before_review: undefined,
+        severity_reason_before_review: undefined,
+        review_worker: null,
+        review_heartbeat: null,
+        review_run_id: undefined,
+        review_exempt: undefined,
+        retry_at: undefined,
+        human_feedback: feedback,
+        last_referenced_round: g.project.decision_round ?? 0,
+      });
+      if (body.action === "retest") {
+        for (const assetId of this.findingAssets(g, finding)) this.asset(g, assetId);
+        const from = finding.from.filter((source) => g.facts.some((fact) => fact.id === source && !fact.deleted));
+        const step = this.insertStep(
+          g,
+          {
+            from: from.length ? from : ["origin"],
+            asset_id: finding.asset_id,
+            description: `重测漏洞 ${finding.id}：${finding.title}\n人工说明：${feedback.reason}\n核对原始证据和复现条件，执行定向重测，保留新的原始证据；结果提交到 Finding ${finding.id}，说明仍可复现、已修复或证据不足。`,
+            priority: 1,
+          },
+          body.creator,
+          finding.graph_id,
+        );
+        step.retest_finding_id = finding.id;
+        feedback.step_id = step.id;
+        finding.revision_step_id = step.id;
+      }
+      g.reviews.push({
+        id: this.next(g.reviews, "r"),
+        source: "human",
+        kind: finding.kind,
+        finding_id: finding.id,
+        finding_version: finding.version,
+        verdict: "needs_evidence",
+        reason: feedback.reason,
+        evidence_ids: [...finding.evidence_ids],
+        disputed_fact_ids: [],
+        created_at: feedback.at,
+        worker: body.creator,
+        planning_issues: [
+          body.action === "return"
+            ? `人工打回：${feedback.reason}。修订或补证后重新 Review。`
+            : `人工重测 ${feedback.step_id}：${feedback.reason}。执行完成后重新 Review。`,
+        ],
+      });
+      return finding;
+    });
+  }
+  /**
+   * An exempt information-class Finding skips Review by policy. An operator can
+   * ask for a real verdict later; only the review state is reset and the old
+   * system Review stays in the history.
+   */
+  private requestReview(g: Graph, finding: Finding, by: string, reason: string) {
+    if (finding.review_exempt !== "informational" || finding.review_status !== "pass")
+      fail(409, "只有免审的信息类发现需要重新审核。");
+    const note = `操作员要求重新审核：${reason.trim()}`;
+    if (finding.review_worker) this.endRun(g, finding.review_worker, "cancelled", note, finding.review_run_id);
+    finding.review_exempt = undefined;
+    finding.review_requested = { at: now(), by, reason: reason.trim() };
+    finding.review_status = "pending";
+    finding.reviewed_version = 0;
+    finding.status = "candidate";
+    finding.review_worker = null;
+    finding.review_heartbeat = null;
+    finding.review_run_id = undefined;
+    finding.retry_at = undefined;
+    return finding;
+  }
+  /** Bulk re-review of findings that skipped Review under the informational rule. */
+  reviewFindings(id: string, input: { finding_ids?: string[]; all_exempt?: boolean; creator: string; reason: string }) {
+    if (!input.creator.trim() || !input.reason.trim()) fail(422, "请填写操作说明和操作人。");
+    const result = this.mutate(id, "finding.review_requested", false, (g) => {
+      const exempt = (finding: Finding) =>
+        finding.review_exempt === "informational" &&
+        finding.review_status === "pass" &&
+        !finding.deleted &&
+        !finding.merged_into &&
+        !finding.withdrawn_at;
+      const selected = input.all_exempt
+        ? g.findings.filter(exempt)
+        : (input.finding_ids ?? [])
+            .map((findingId) => g.findings.find((finding) => finding.id === findingId))
+            .filter((finding): finding is Finding => !!finding && exempt(finding));
+      if (!selected.length) fail(409, "没有可重新审核的免审发现。");
+      if (selected.length > 50) fail(422, "一次最多重新审核 50 条发现。");
+      for (const finding of selected) this.requestReview(g, finding, input.creator, input.reason);
+      return { requested: selected.map((finding) => finding.id) };
+    });
+    // A stopped or completed project cannot claim Review work: open the same
+    // review-only window the re-audit flow uses so the new queue actually runs.
+    const graph = this.get(id);
+    if (graph.project.status !== "active" && !graph.project.reaudit) this.startReaudit(id);
+    return result;
+  }
+  /**
+   * Operator approval settles this exact Finding version. It is independent of
+   * Review: approving also takes the claim out of the pending Review queue, which
+   * is the explicit human override. A revision never inherits the approval.
+   */
+  setFindingApproval(
+    id: string,
+    findingId: string,
+    body: { approved: boolean; expected_version: number; creator: string; reason?: string },
+  ) {
+    return this.mutate(id, body.approved ? "finding.approved" : "finding.unapproved", false, (g) => {
+      const finding = g.findings.find((f) => f.id === findingId) || fail(404, "Finding not found");
+      if (finding.deleted || finding.merged_into || finding.withdrawn_at)
+        fail(409, "发现已删除、合并或撤回，请刷新后操作当前发现。");
+      if (finding.version !== body.expected_version) fail(409, "发现版本已更新，请刷新并核对最新内容后操作。");
+      if (body.approved) {
+        if (finding.status === "rejected" || finding.review_status === "rejected")
+          fail(409, "审核已驳回的发现不能批准；如结论有误，请回到工作台补充证据后重新提交。");
+        const reason = body.reason?.trim();
+        finding.human_approval = {
+          at: now(),
+          by: body.creator,
+          version: finding.version,
+          ...(reason ? { reason: reason.slice(0, 2000) } : {}),
+        };
+      } else {
+        finding.human_approval = undefined;
+      }
+      return finding;
+    });
   }
   private checkHumanFeedback(g: Graph, finding: Finding, evidenceIds: string[]) {
     const feedback = finding.human_feedback;
@@ -467,13 +572,24 @@ export class Store {
     if (!evidenceIds.some((id) => fresh.has(id) && !previous.has(id)))
       fail(422, "人工重测通过审核需引用此次重测的新原始证据。");
   }
-  private endRun(g: Graph, worker: string, status: Run["status"], error?: string, runId?: string) {
+  private endRun(
+    g: Graph,
+    worker: string,
+    status: Run["status"],
+    error?: string,
+    runId?: string,
+    failureKind?: FailureKind,
+  ) {
     const run = runId ? this.execution.get(g.project.id, runId) : this.execution.worker(g.project.id, worker);
     if (!run || run.status !== "running") return;
     if (status === "succeeded") {
       g.project.model_failures = 0;
       g.project.model_retry_at = undefined;
       (g.project.job_failures ??= {})[run.kind] = 0;
+      // A successful Run means the control plane is reachable again; do not leave
+      // a permanent "retrying" banner from an earlier infrastructure failure.
+      g.project.infra_failures = 0;
+      g.project.infra_retry_at = undefined;
     }
     // 只有真正的失败或中断才升级为“需人工检查”。因任务被关闭、被取代或被撤销而
     // 结束的运行同样可能已经放出外部动作，但它们不再是待处理项：否则 Step 已经
@@ -491,7 +607,10 @@ export class Store {
       step!.retry_at = undefined;
       step!.summary = `Execution failed: ${error || "执行中断"}。${run.external_action_possible ? "外部动作可能已发生" : "容量或收尾预算未满足，需先调整输入或配置"}，自动重试已停止，请检查证据后确认。`;
     }
-    this.execution.finish(g.project.id, worker, status, error, run.id);
+    // A stopped/cancelled run is not a failure; only failed/interrupted runs get a kind.
+    const kind = status === "succeeded" || status === "cancelled" ? undefined : (failureKind ?? classifyFailure(error));
+    this.execution.finish(g.project.id, worker, status, error, run.id, kind);
+    if (kind) g.project.last_failure_kind = kind;
   }
   /**
    * Step 结束时给它的 blocked Run 结案：失败记录与证据都保留，但不再算“待人工处理”。
@@ -507,12 +626,25 @@ export class Store {
     run.resolved_by = by;
     this.execution.save(run);
   }
-  private failedJob(g: Graph, kind: Job["kind"], error: string): string {
+  private failedJob(g: Graph, kind: Job["kind"], error: string, failureKind?: FailureKind): string {
+    const classified = classifyFailure(error, failureKind);
+    g.project.last_failure_kind = classified;
+    g.project.last_error = error.slice(0, 1500);
+    // The control plane is not the task. These failures back off and retry; they
+    // must never consume the three business failures that pause a project.
+    if (classified === "infrastructure") {
+      g.project.infra_failures = (g.project.infra_failures ?? 0) + 1;
+      const retry = infrastructureBackoff(g.project.infra_failures);
+      g.project.infra_retry_at = retry;
+      if (kind === "decide") g.project.decide_retry_at = retry;
+      return retry;
+    }
+    g.project.infra_failures = 0;
+    g.project.infra_retry_at = undefined;
     const failures = (g.project.job_failures ??= {});
     failures[kind] = (failures[kind] || 0) + 1;
     const retry = new Date(Date.now() + Math.min(300000, 5000 * 2 ** Math.min(6, failures[kind]! - 1))).toISOString();
     if (kind === "decide") g.project.decide_retry_at = retry;
-    g.project.last_error = error.slice(0, 1500);
     if (!modelIssue(error) && !(kind === "execute" && executeCapacityFailure(error)) && failures[kind]! >= 3) {
       for (const run of this.execution.list(g.project.id, 1000000).filter((r) => r.status === "running"))
         this.endRun(g, run.worker, "cancelled", "Project paused after repeated execution failures", run.id);
@@ -878,7 +1010,10 @@ export class Store {
         reason: null,
         decision_round: 0,
         pool_revision: 0,
-        hot_limit: 200,
+        // New projects start from the measured entry budget; existing projects
+        // keep whatever they stored (absent means the legacy 200-node default).
+        hot_limit: 80,
+        hot_char_limit: 64_000,
         ...(volumePrefix ? { volume_prefix: volumePrefix } : {}),
       },
       revision: 1,
@@ -1440,8 +1575,9 @@ export class Store {
       severity_before_review: undefined,
       severity_reason_before_review: undefined,
       review_status: merged.status === "rejected" ? "rejected" : "pending",
-      // A new version is never born exempt; Review scope is re-evaluated below.
+      // A new version is never born exempt or approved; both are re-evaluated below.
       review_exempt: undefined,
+      human_approval: undefined,
       created_at: old?.created_at || now(),
       graph_id: old?.graph_id || graphId,
       // A submitted/revised Finding is current work; rank it from birth.
@@ -2482,33 +2618,42 @@ export class Store {
     worker: string,
     debounceMs = 1500,
     limits: { max_project_workers?: number; max_project_review_workers?: number } = {},
+    claimId?: string,
   ): Job | null {
     return this.mutate(id, "jobs.state", false, (g) => {
       // A paused project simply has no claimable work. Cleanup of expired leases
       // still runs, but this is not an authorization failure.
       if (g.project.reason && expired(g.project.reason.last_heartbeat_at, this.reasonLeaseSeconds)) {
-        this.endRun(g, g.project.reason.worker, "interrupted", "Decide lease expired", g.project.reason.run_id);
-        this.failedJob(g, "decide", "Decide lease expired");
+        this.endRun(
+          g,
+          g.project.reason.worker,
+          "interrupted",
+          "Decide lease expired",
+          g.project.reason.run_id,
+          "infrastructure",
+        );
+        this.failedJob(g, "decide", "Decide lease expired", "infrastructure");
         g.project.reason = null;
       }
       for (const s of g.steps)
         if (s.worker && !s.concluded_at && expired(s.last_heartbeat_at, this.leaseSeconds)) {
-          this.endRun(g, s.worker!, "interrupted", "Execute lease expired", s.run_id);
-          const retry = this.failedJob(g, "execute", "Execute lease expired");
+          this.endRun(g, s.worker!, "interrupted", "Execute lease expired", s.run_id, "infrastructure");
+          const retry = this.failedJob(g, "execute", "Execute lease expired", "infrastructure");
           if (!s.blocked_run_id) s.retry_at = retry;
           s.worker = null;
         }
       for (const f of g.findings)
         if (f.review_worker && expired(f.review_heartbeat, this.leaseSeconds)) {
-          this.endRun(g, f.review_worker, "interrupted", "Review lease expired", f.review_run_id);
-          f.retry_at = this.failedJob(g, "review", "Review lease expired");
+          this.endRun(g, f.review_worker, "interrupted", "Review lease expired", f.review_run_id, "infrastructure");
+          f.retry_at = this.failedJob(g, "review", "Review lease expired", "infrastructure");
           f.review_worker = null;
         }
       // Same policy as submission: an evidence-backed information class never
       // waits for a Review slot, including findings queued before the switch.
       if (this.skipInformationalReview)
         for (const f of g.findings) if (informationalAwaitingReview(f)) acceptInformational(g, f);
-      if (g.project.status !== "active" || !ready(g.project.model_retry_at)) return null;
+      if (g.project.status !== "active" || !ready(g.project.model_retry_at) || !ready(g.project.infra_retry_at))
+        return null;
       if (this.execution.worker(id, worker)?.status === "running") return null;
       const projectLimit = limits.max_project_workers ?? 4;
       const reviewLimit = Math.min(projectLimit, limits.max_project_review_workers ?? 1);
@@ -2542,12 +2687,16 @@ export class Store {
           started_at: now(),
           last_heartbeat_at: now(),
         };
-        return this.claimRun(g, {
-          kind: "decide",
-          project_id: id,
-          worker,
-          graph_id: "main",
-        });
+        return this.claimRun(
+          g,
+          {
+            kind: "decide",
+            project_id: id,
+            worker,
+            graph_id: "main",
+          },
+          claimId,
+        );
       }
       const s = reaudit
         ? undefined
@@ -2576,14 +2725,18 @@ export class Store {
         reviewing.review_worker = worker;
         reviewing.review_heartbeat = now();
         g.project.last_work_kind = "review";
-        return this.claimRun(g, {
-          kind: "review",
-          project_id: id,
-          worker,
-          graph_id: reviewing.graph_id,
-          finding_id: reviewing.id,
-          finding_version: reviewing.version,
-        });
+        return this.claimRun(
+          g,
+          {
+            kind: "review",
+            project_id: id,
+            worker,
+            graph_id: reviewing.graph_id,
+            finding_id: reviewing.id,
+            finding_version: reviewing.version,
+          },
+          claimId,
+        );
       }
       if (s) {
         for (const assetId of stepAssets(g, s)) this.asset(g, assetId);
@@ -2591,15 +2744,55 @@ export class Store {
         s.last_heartbeat_at = now();
         s.attempts++;
         g.project.last_work_kind = "execute";
-        return this.claimRun(g, {
-          kind: "execute",
-          project_id: id,
-          worker,
-          graph_id: s.graph_id,
-          step_id: s.id,
-        });
+        return this.claimRun(
+          g,
+          {
+            kind: "execute",
+            project_id: id,
+            worker,
+            graph_id: s.graph_id,
+            step_id: s.id,
+          },
+          claimId,
+        );
       }
       return null;
+    });
+  }
+  /**
+   * Idempotent cancel for a claim the dispatcher abandoned after a timeout. Only
+   * the Run created by this exact (worker, claim_id) pair is interrupted; a later
+   * claim by the same worker is untouched. This never counts as a job failure.
+   */
+  cancelClaim(id: string, worker: string, claimId: string) {
+    return this.mutate(id, "jobs.claim_abandoned", false, (g) => {
+      const run = this.execution
+        .list(id, 1000)
+        .find((candidate) => candidate.worker === worker && candidate.claim_id === claimId);
+      if (!run || run.status !== "running") return { cancelled: false };
+      const retry = new Date(Date.now() + 5_000).toISOString();
+      this.endRun(g, worker, "interrupted", "Claim response abandoned", run.id, "infrastructure");
+      if (run.kind === "decide" && g.project.reason?.run_id === run.id) {
+        g.project.reason = null;
+        g.project.decide_retry_at = retry;
+      }
+      if (run.kind === "execute") {
+        const step = g.steps.find((s) => s.id === run.node_id);
+        if (step && step.run_id === run.id) {
+          step.worker = null;
+          step.last_heartbeat_at = null;
+          if (!step.blocked_run_id) step.retry_at = retry;
+        }
+      }
+      if (run.kind === "review") {
+        const finding = g.findings.find((f) => f.id === run.node_id);
+        if (finding && finding.review_run_id === run.id) {
+          finding.review_worker = null;
+          finding.review_heartbeat = null;
+          finding.retry_at = retry;
+        }
+      }
+      return { cancelled: true, run_id: run.id };
     });
   }
   heartbeat(id: string, job: Job) {
@@ -2635,9 +2828,16 @@ export class Store {
         if (job.project_id !== id) fail(422, "Job project does not match request project");
         const owned = this.ownsJob(g, job);
         if (!owned) return { ok: true };
-        if (owned)
-          this.endRun(g, job.worker, conflict ? "interrupted" : error ? "failed" : "cancelled", error, job.run_id);
-        const retry = error ? this.failedJob(g, job.kind, error) : undefined;
+        const failureKind = error ? classifyFailure(error) : undefined;
+        this.endRun(
+          g,
+          job.worker,
+          conflict ? "interrupted" : error ? "failed" : "cancelled",
+          error,
+          job.run_id,
+          failureKind,
+        );
+        const retry = error ? this.failedJob(g, job.kind, error, failureKind) : undefined;
         if (job.kind === "decide" && g.project.reason?.worker === job.worker) {
           g.project.reason = null;
           if (conflict) g.project.decide_conflicts = (g.project.decide_conflicts ?? 0) + 1;

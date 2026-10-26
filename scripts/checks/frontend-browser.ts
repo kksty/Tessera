@@ -403,6 +403,31 @@ async function checkFindingReviews(page: Page) {
   await rows(".finding-item-title", ["合成驳回发现"]);
   await page.screenshot({ path: join(output, "findings-review-rejected.png"), fullPage: true });
 
+  // 人工批准：批准后离开「未批准」，进入「已批准」，并从待审核队列移除。
+  const approvalTabs = page.getByRole("group", { name: "发现批准状态", exact: true });
+  await approvalTabs.getByRole("button", { name: "未批准 6", exact: true }).waitFor();
+  await approvalTabs.getByRole("button", { name: "已批准 0", exact: true }).click();
+  await rows(".finding-item-title", []);
+  await approvalTabs.getByRole("button", { name: "未批准 6", exact: true }).click();
+  await page.locator('[data-finding="finding_needs_evidence"]').click();
+  await page.getByRole("button", { name: "批准", exact: true }).click();
+  await approvalTabs.getByRole("button", { name: "已批准 1", exact: true }).waitFor();
+  assert.ok(
+    store.get(id).findings.find((finding) => finding.id === "finding_needs_evidence")?.human_approval,
+    "approval is persisted",
+  );
+  await approvalTabs.getByRole("button", { name: "已批准 1", exact: true }).click();
+  await rows(".finding-item-title", ["合成待补证发现"]);
+  await page.screenshot({ path: join(output, "findings-approved.png"), fullPage: true });
+  // 撤销批准，恢复其余断言依赖的原始分组。
+  await page.getByRole("button", { name: "撤销批准", exact: true }).click();
+  await approvalTabs.getByRole("button", { name: "未批准 6", exact: true }).waitFor();
+  assert.equal(
+    store.get(id).findings.find((finding) => finding.id === "finding_needs_evidence")?.human_approval,
+    undefined,
+    "unapproval clears the flag",
+  );
+
   await goRoute(page, "vulns");
   await rows(".vuln-table .cell-title", ["合成通过发现"]);
   assert.equal(await page.getByRole("group", { name: "按审核状态筛选", exact: true }).count(), 0);

@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { guardMessage, modelIssue, redactModelError } from "../../packages/protocol/src/model-errors.js";
+import { classifyFailure, infrastructureBackoff, infrastructureIssue } from "../../packages/protocol/src/failure.js";
+import { TIMEOUT_DEFAULTS, resolveTimeouts } from "../../packages/protocol/src/timeouts.js";
 import { Store } from "../../packages/core/src/store.js";
 import { createProjectSchema } from "../../packages/protocol/src/index.js";
 
@@ -73,4 +75,42 @@ test("transient model failures back off project-wide and stop after three failur
   } finally {
     store.close();
   }
+});
+
+test("failure classification separates the control plane from the task", () => {
+  for (const [raw, kind] of [
+    ["Execute lease expired", "infrastructure"],
+    ["Decide lease expired", "infrastructure"],
+    ["Claim response abandoned", "infrastructure"],
+    ["Diagnostic server delivery failed after 8 attempts", "infrastructure"],
+    ["fetch failed", "infrastructure"],
+    ["socket hang up", "infrastructure"],
+    ["ECONNRESET", "infrastructure"],
+    ["Model provider failure: 503: overloaded", "model"],
+    ["Model provider failure: 429: rate limit exceeded", "model"],
+    ["Model provider failure: 401: invalid_api_key", "model"],
+    ["Step lease lost", "unknown"],
+    ["Empty response from model", "unknown"],
+  ] as const)
+    assert.equal(classifyFailure(raw), kind, raw);
+  // An explicit kind wins: the caller already knows the origin.
+  assert.equal(classifyFailure("fetch failed", "model"), "model");
+  assert.equal(classifyFailure(undefined), "unknown");
+  assert.equal(infrastructureIssue("Execute lease expired"), true);
+  assert.equal(infrastructureIssue("Model provider failure: timeout"), false, "a provider timeout is not ours");
+  assert.ok(Date.parse(infrastructureBackoff(1)) - Date.now() <= 5_000);
+  assert.ok(Date.parse(infrastructureBackoff(20)) - Date.now() <= 300_000);
+});
+
+test("timeout budget keeps lease above the worst-case heartbeat", () => {
+  const budget = resolveTimeouts();
+  assert.equal(budget.lease_seconds, TIMEOUT_DEFAULTS.lease_seconds);
+  assert.equal(budget.heartbeat_interval_ms, 15_000);
+  assert.equal(budget.heartbeat_timeout_ms, 45_000);
+  assert.ok(budget.heartbeat_timeout_ms * budget.heartbeat_max_failures < budget.lease_seconds * 1000);
+  assert.ok(budget.claim_ms < budget.lease_seconds * 1000);
+  assert.ok(budget.commit_ms >= 30_000, "covers the measured decisions p99.9");
+  const overridden = resolveTimeouts({ commit_ms: 45_000 });
+  assert.equal(overridden.commit_ms, 45_000);
+  assert.equal(overridden.lease_seconds, TIMEOUT_DEFAULTS.lease_seconds);
 });

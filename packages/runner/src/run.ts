@@ -22,6 +22,7 @@ import {
   deletionPreviewSchema,
 } from "../../protocol/src/index.js";
 import { memoryEntry, queryMemory, readMemoryRecord, memoryKinds } from "../../core/src/memory.js";
+import { projectionSections } from "../../core/src/projection.js";
 import { coverageSurfaces } from "../../protocol/src/coverage.js";
 import type { DecisionResponse } from "../../core/src/store.js";
 import type { DeletionPreview } from "../../core/src/node-deletion.js";
@@ -113,7 +114,9 @@ async function runJobInternal(
 ) {
   if (recoverySession && job.kind !== "execute")
     throw new Error("Read-only session recovery currently supports Execute only");
-  if (recoverySession) await client.request(client.projectPath(job, "/jobs/heartbeat"), job);
+  const timeouts = client.timeouts;
+  if (recoverySession)
+    await client.request(client.projectPath(job, "/jobs/heartbeat"), job, "POST", timeouts.heartbeat_timeout_ms);
   const timeLimited = config.task_timeout_seconds > 0;
   // An unlimited project must still bound an operator-driven read-only recovery,
   // otherwise its lease can be renewed forever without any exploration budget.
@@ -145,33 +148,46 @@ async function runJobInternal(
   await writeFile(join(directory, "view.json"), JSON.stringify({ job, view }, null, 2));
   const pending: Promise<unknown>[] = [];
   let diagnosticQueue = Promise.resolve();
-  let diagnosticTransportFailed = false;
-  const diagnosticSource = randomUUID();
+  // Delivery failures never disable the channel: the local ndjson spool is the
+  // durable copy, and the queue retries on the next event. Only this many
+  // consecutive failures mark the Run's diagnostics as degraded.
+  const DIAGNOSTIC_MAX_FAILURES = 8;
+  const DIAGNOSTIC_BATCH_CAP = 256;
+  let diagnosticSource = randomUUID();
   let diagnosticSequence = 0;
   const diagnosticBatch: Diagnostic[] = [];
   let diagnosticScheduled = false;
   let diagnosticFailures = 0;
   const scheduleDiagnostics = () => {
-    if (diagnosticScheduled || !job.run_id || diagnosticTransportFailed) return;
+    if (diagnosticScheduled || !job.run_id) return;
     diagnosticScheduled = true;
     diagnosticQueue = diagnosticQueue.then(async () => {
-      while (diagnosticBatch.length && !diagnosticTransportFailed) {
+      while (diagnosticBatch.length) {
         const events = diagnosticBatch.splice(0, 16);
         try {
-          await client.request(client.projectPath(job, "/jobs/diagnostics"), { job, events }, "POST", 1500);
+          await client.request(
+            client.projectPath(job, "/jobs/diagnostics"),
+            { job, events },
+            "POST",
+            timeouts.diagnostics_ms,
+          );
           diagnosticFailures = 0;
         } catch {
-          // A short outage used to end delivery for the rest of the Run, which is
-          // how the tail — the errors and repairs that matter most — went missing.
-          // Put the batch back and retry a bounded number of times.
-          diagnosticBatch.unshift(...events);
+          // A short control-plane outage used to end delivery for the rest of the
+          // Run, which is how the tail — the errors and repairs that matter most —
+          // went missing. Keep the spool and retry with a bounded backoff.
           diagnosticFailures++;
-          if (diagnosticFailures >= 4) {
-            diagnosticTransportFailed = true;
-            console.warn("Diagnostic server delivery failed after retries; remaining events retained locally");
+          if (diagnosticFailures >= DIAGNOSTIC_MAX_FAILURES) {
+            // Already durable in diagnostics.ndjson; dropping the in-memory copy
+            // keeps the Worker bounded while the next event restarts delivery.
+            console.warn(
+              `Diagnostic server delivery failed ${diagnosticFailures} times; ${events.length + diagnosticBatch.length} events retained locally`,
+            );
+            diagnosticBatch.length = 0;
             break;
           }
-          await new Promise((resolve) => setTimeout(resolve, 300 * diagnosticFailures));
+          diagnosticBatch.unshift(...events);
+          await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, 300 * diagnosticFailures)));
         }
       }
       diagnosticScheduled = false;
@@ -196,8 +212,10 @@ async function runJobInternal(
     } catch {
       console.warn("Diagnostic local write failed");
     }
-    if (job.run_id && !diagnosticTransportFailed) {
+    if (job.run_id) {
       diagnosticBatch.push(event);
+      if (diagnosticBatch.length > DIAGNOSTIC_BATCH_CAP)
+        diagnosticBatch.splice(0, diagnosticBatch.length - DIAGNOSTIC_BATCH_CAP);
       scheduleDiagnostics();
     }
   };
@@ -993,7 +1011,7 @@ async function runJobInternal(
     if (decisionsCommitted || heartbeatBusy || leaseError) return;
     heartbeatBusy = true;
     void client
-      .request(p("/jobs/heartbeat"), job)
+      .request(p("/jobs/heartbeat"), job, "POST", timeouts.heartbeat_timeout_ms)
       .then(() => {
         heartbeatFailures = 0;
       })
@@ -1003,7 +1021,7 @@ async function runJobInternal(
         // A 409 means the server no longer knows this lease; retrying cannot help.
         // Otherwise a restart or a short network blip must not discard a long Run.
         const leaseLost = e instanceof ApiError && e.status === 409;
-        if (!leaseLost && heartbeatFailures < 3) {
+        if (!leaseLost && heartbeatFailures < timeouts.heartbeat_max_failures) {
           diagnose("heartbeat_retry", {
             failures: heartbeatFailures,
             error: excerpt(e instanceof Error ? e.message : e),
@@ -1017,7 +1035,7 @@ async function runJobInternal(
       .finally(() => {
         heartbeatBusy = false;
       });
-  }, 2000);
+  }, timeouts.heartbeat_interval_ms);
   const closeoutTimer = timeLimited
     ? setTimeout(
         () => beginCloseout("探索时间预算已用尽，请根据已有证据完成收尾。"),
@@ -1063,8 +1081,10 @@ async function runJobInternal(
     appendFileSync(join(directory, "usage.ndjson"), JSON.stringify(payload) + "\n");
     telemetry = telemetry.then(async () => {
       try {
-        await client.request(p("/jobs/usage"), payload, "POST", 3000);
+        await client.request(p("/jobs/usage"), payload, "POST", timeouts.usage_ms);
       } catch (error) {
+        // The ndjson spool above is the durable copy; never block the model request
+        // chain on an accounting write.
         console.warn(
           `Usage retained locally: ${redactModelError(error instanceof Error ? error.message : "transport failure", [cfg.api_key])}`,
         );
@@ -1358,6 +1378,8 @@ async function runJobInternal(
     const prompt = promptFor(job, view, graph) + finalInstruction;
     // Usage and compaction are observable, but the application never gates a run on estimated tokens.
     const measurePrompt = (text: string) => {
+      const projection = recoverySession ? 0 : JSON.stringify(view).length;
+      const sections = projectionSections(view as Record<string, unknown>);
       diagnose("capacity_plan", {
         ...capacity.snapshot(),
         max_output: model.maxTokens,
@@ -1365,7 +1387,13 @@ async function runJobInternal(
         provider: model.provider,
         api: model.api,
         entry_mode: recoverySession ? "recovery" : "task",
-        projection_characters: recoverySession ? 0 : JSON.stringify(view).length,
+        projection_characters: projection,
+        // Measured sections: the entry budget is tuned from these, not from guesses.
+        projection_sections: {
+          ...sections,
+          hot: (view as Record<string, any>).cold?.hot ?? null,
+          other: Math.max(0, projection - Object.values(sections).reduce((sum, value) => sum + value, 0)),
+        },
         task_prompt_characters: text.length,
         task_prompt_utf8_bytes: Buffer.byteLength(text),
         context_source: modelMetadata.context_source,
@@ -1543,7 +1571,7 @@ async function runJobInternal(
       request_id: currentRequest,
       generation: capacity.generation,
     });
-    await flushTelemetry(3000);
+    await flushTelemetry(timeouts.usage_ms);
     if (job.kind === "decide") {
       // The final-JSON fallback uses the same plan/settle contract as the tool, so
       // versions, assets and idempotency are enforced and a plan survives conflicts.
@@ -1624,7 +1652,7 @@ async function runJobInternal(
       error: excerpt(error instanceof Error ? error.message : error),
       trace_chars: traces.chars,
       omitted_traces: traces.omitted,
-      diagnostic_delivery_failed: diagnosticTransportFailed,
+      diagnostic_delivery_failed: diagnosticFailures > 0,
     });
     throw error;
   } finally {
@@ -1655,7 +1683,7 @@ async function runJobInternal(
         outcome: "returned",
         trace_chars: traces.chars,
         omitted_traces: traces.omitted,
-        diagnostic_delivery_failed: diagnosticTransportFailed,
+        diagnostic_delivery_failed: diagnosticFailures > 0,
         note: "See server Run snapshot for final commit/conflict status; returned does not imply semantic fidelity",
       });
     clearInterval(heartbeat);
@@ -1664,13 +1692,13 @@ async function runJobInternal(
     clearTimeout(recoveryTimer);
     process.removeListener("SIGTERM", terminate);
     process.removeListener("SIGINT", terminate);
-    await flushTelemetry(1000);
+    await flushTelemetry(Math.min(5000, timeouts.usage_ms));
     let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         diagnosticQueue,
         new Promise((resolve) => {
-          diagnosticTimer = setTimeout(resolve, 1500);
+          diagnosticTimer = setTimeout(resolve, Math.min(5000, timeouts.diagnostics_ms));
         }),
       ]);
     } finally {

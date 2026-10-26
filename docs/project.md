@@ -81,7 +81,9 @@ Decide 可在 `submit_decisions.delete_nodes` 自主批量删除 Fact、Step、F
 
 单项目审核并发默认 1，有效上限为审核配置与项目总并发的较小值；调低配置不抢占在途 Run。审核按 Finding 编号数值升序领取，跳过已审当前版本、在审、合并、撤回、来源未执行结束、资产未批准或退避条目。审核页复用后端门槛与排序并显示等待原因。Dispatcher 在后续 tick 从上次成功领取的项目之后继续分配，避免唯一空位总被列表头部项目领取。
 
-设置页的「信息类免审（只审核漏洞类）」默认关闭。开启后，明确标注 `kind=informational` 且引用原始证据的发现直接归档为免审（`review_exempt`，写一条 `source=system` 的 pass 记录用于历史与人工操作），不占用审核并发、不阻塞完成；漏洞类和待分类仍照常审核，没有证据的候选也仍进入审核。开关保存后立即生效：已排队的信息类退出队列，已在途的审核不被打断；关闭开关只影响之后提交或修订的发现，已免审记录保持原状。人工打回或要求重测的发现始终重新审核。
+设置页的「信息类免审（只审核漏洞类）」默认关闭。开启后，明确标注 `kind=informational` 且引用原始证据的发现直接归档为免审（`review_exempt`，写一条 `source=system` 的 pass 记录用于历史与人工操作），不占用审核并发、不阻塞完成；漏洞类和待分类仍照常审核，没有证据的候选也仍进入审核。开关保存后立即生效：已排队的信息类退出队列，已在途的审核不被打断；关闭开关只影响之后提交或修订的发现，已免审记录保持原状。人工打回或要求重测的发现始终重新审核。本部署保留操作员的原设置（开启），不对既有免审记录发起重审。
+
+操作员可对任意当前版本发现执行“人工批准”（`POST /api/projects/:id/findings/:fid/approval`）。批准按版本绑定，写入 `human_approval = { at, by, version, reason? }`；修订产生新版本后必须重新批准。批准独立于审核：它不改变审核结论、评分或报告口径，但会让该发现退出所有待处理队列（待审核计数、审核队列、项目/安全总览的待办、跨项目待审接口），并归入发现页的「已批准」页签；撤销批准后若仍未完成审核，会重新出现在待处理队列。发现页默认显示「未批准」，可切换「已批准」。审核已驳回的发现不能批准。
 
 完成使用独立的 `planning_revision` / `decided_planning_revision`。新 Fact、新 Lead、执行结果/重开、有效目标/Hint/授权变化、Finding 声明修订、负面审核、显式 `planning_issues`、事实争议及节点删除推进规划水位并使旧搜索提议失效；Lead 的落实/豁免属于结算记录，不再次推进规划。分类在 `planning-changes.ts` 集中比较实际业务变化。普通 pass 只确认当前版本并记录分类与评分，不单独唤醒 Decide；原 `observation_revision` 仍记录这次交付变化，不会自动推进模型的旧 `decided_revision`。心跳、用量、读取、书签和冷热操作不推进规划水位。Review 的 `planning_issues` 不只是提示：每条都必须由完成提议逐条处置，授权、越权、IDOR、个人信息类问题只能由操作员豁免。
 
@@ -89,13 +91,13 @@ Decide 可在已有 Finding 待审核时提出 complete，项目保持 active �
 
 ## 上下文、检索与提交
 
-Decide 看到全部未关闭 Step 的精确索引、执行/产出引用、Step 的 `property`、open leads、未确认 Hints 与 `coverage_surfaces`（已观测 host+path 及来源 Fact/证据），以及热 Fact/Finding。超过 200 条未关闭工作时，`steps` 仅预览前 200 条，`open_step_index` 保留全部 ID/版本/状态及关联，`steps_preview` 给出 `query_graph kind=steps,status=open` 分页入口；完整问题继续按 ID 和哈希分页读取。Execute 直接获得完整问题、根目标、关联子目标、当前 Hint、直接 Fact 全文、关联 Finding 的声明字段（impact/reproduction/remediation，标注 `claim:true`，超出预算标 `claims_omitted` 或 `truncated_fields`）、当前 Step 上一次执行/中断摘要、生产 Step 的摘要/关闭理由及当前资产；更深历史按需查询。Review 从 Finding、来源 Fact 与原始证据清单出发。Execute/Review 的直接 Fact 带 `provenance`，生产 Step 的完整问题与输入 ID 另列于 `source_steps`，不会把 Step 的当前 Run 冒充为旧 Fact 的生产 Run。
+Decide 看到全部未关闭 Step 的精确索引、执行/产出引用、Step 的 `property`、open leads、未确认 Hints 与 `coverage_surfaces`（已观测 host+path 及来源 Fact），以及热 Fact/Finding。超过 200 条未关闭工作时，`steps` 仅预览前 200 条，`open_step_index` 保留全部 ID/版本/状态及关联，`steps_preview` 给出 `query_graph kind=steps,status=open` 分页入口；完整问题继续按 ID 和哈希分页读取。Execute 直接获得完整问题、根目标、关联子目标、当前 Hint、直接 Fact 全文、关联 Finding 的声明字段（impact/reproduction/remediation，标注 `claim:true`，超出预算标 `claims_omitted` 或 `truncated_fields`）、当前 Step 上一次执行/中断摘要、生产 Step 的摘要/关闭理由及当前资产；更深历史按需查询。Review 从 Finding、来源 Fact 与原始证据清单出发。Execute/Review 的直接 Fact 带 `provenance`，生产 Step 的完整问题与输入 ID 另列于 `source_steps`，不会把 Step 的当前 Run 冒充为旧 Fact 的生产 Run。
 
 因果关系由 `graph-relations.ts` 共用解析：Fact 上游是生产 Step 和直接 Evidence；Step 上游是输入 Fact，下游是产出 Fact 和关联 Finding；Finding 上游包括来源 Fact、直接 Evidence 和生产/修订 Step；Review 边保留被审核的 Finding 版本。`query_graph` 的 `related_to` / `relation=sources|outputs` 在 1–3 层内双向遍历，返回有类型的 `relations`、生产来源及歧义标记。去环时不把查询种子作为结果返回；保留稳定排序和快照游标，较深链从返回的边界节点继续查询。`read_graph` 原文 JSON 不因兼容来源推断而被改写。
 
 黑板、来源详情与报告复用同一生产关系，支持历史跨图来路。新报告快照含完整上游 Fact、生产 Step 的问题/输入、类型关系及上游原始证据；网页、Markdown 和归档来自冻结材料。读取、回热和冷却不使报告过期，源事实争议与实质材料变化会使旧快照过期。旧快照没有 `trace` 时仍可读取；新增溯源材料可能使旧结构的快照显示过期，不改写其内容。项目概览与任务页按同一记录展示 Step 的 `property`/`method_hint`、探索线索（`surface`/`why`/`suggested_property`/豁免理由）和逐 surface 完成覆盖表；完成后覆盖表来自完成 Step 的 `completion` 记录，旧项目回退为观测 surface 并标「未登记」。
 
-热预算默认 200 个 Fact/Finding，`hot_limit=0` 关闭冷却；未关闭 Step、其 Finding、当前任务的直接输入/产出 Fact、当前审核问题的直接来源及人工 pinned 记录不被预算移走。`review_issues` 给出审核问题及其 `review_id`、零基 `issue_index`、风险等级与人工豁免状态、来源 Fact 全文（超长标 `truncated`）、证据 ID，长理由标明截断并给出原 Review 的读取入口；`unresolved_review_issues` 是完成前必须逐条处置的清单。冷池提供精确计数与轮换预览，读取或被引用更新活跃轮次，列表搜索不回热。已关闭 Step 和 Evidence 是可检索历史，不算冷节点。
+热预算由两个预算同时决定：节点数 `hot_limit`（新项目默认 80，未设置过该项的旧项目仍按 200）与字符数 `hot_char_limit`（默认 64,000，0 关闭字符预算）。`hot_limit=0` 仍表示关闭冷却。未被预算移走的只有当前焦点 Step 的直接输入、待审 Review 的来源 Fact、focused Finding 的来源与人工 pinned 记录；其他未关闭 Step 的输入仍在 `open_step_index` 中，按需 `read_graph`。必显集合自身超预算时仍展示，只标 `over_budget`。`review_issues` 给出审核问题及其 `review_id`、零基 `issue_index`、风险等级与人工豁免状态、来源 Fact 全文（超长标 `truncated`）、证据 ID，长理由标明截断并给出原 Review 的读取入口；`unresolved_review_issues` 是完成前必须逐条处置的清单。冷池不设上限，提供精确计数与轮换预览，读取或被引用更新活跃轮次，列表搜索不回热。已关闭 Step 和 Evidence 是可检索历史，不算冷节点。`capacity_plan.projection_sections` 输出各段字符，用于先测量再收紧默认值。
 
 FTS 索引覆盖节点文本及文本证据正文；中文支持 trigram，短词用 LIKE，二进制只索引元数据。索引可重建。检索游标绑定快照与过滤条件，原文分页用哈希识别修订。
 
@@ -137,9 +139,9 @@ Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，�
 
 默认任务与工具期限均为 0（无限）；有限任务期限最少 30 秒，收尾期限必须更短。全局 / 单项目并发默认均为 4，单项目审核并发 `max_project_review_workers` 默认 1（设置页可修改，部署覆盖为 `TESSERA_MAX_PROJECT_REVIEW_WORKERS`），调度间隔 1000ms，Decide 变化合并窗口 2000ms。主模型和审核模型可分别配置，审核未启用时共用主模型。
 
-模型设置优先选择 Pi 供应商（包括 `zai` / `zai-coding-cn`、`deepseek`、`minimax` / `minimax-cn`），填写 API Key 并选择模型。原生供应商可留空地址，由 Pi 选择默认端点与协议；地址覆盖和自定义端点仍可用。主模型与审核模型分别保存凭据；切换供应商或地址清除旧连接密钥，关闭独立审核会移除其保存配置。`PI_PROVIDER` / `PI_MAX_OUTPUT_TOKENS` 及对应 `PI_REVIEW_*` 环境变量支持同一配置。
+设置页的模型接入只保留两种方式：**按 API 地址识别**（`provider` 留空，按完整 API 基础地址与协议匹配 Pi 目录）和**自定义 / 中转 API**（`custom`，显式禁用目录匹配）。两种方式都必须填写 API 地址；官方端点可识别目录容量，中转端点容量取自接口声明或手动填写。既有 Pi 原生供应商配置（`provider` 为 `zai` / `deepseek` / `minimax` 等）仍在设置页标明并继续按原方式解析，`PI_PROVIDER` / `PI_MAX_OUTPUT_TOKENS` 及对应 `PI_REVIEW_*` 环境变量也继续支持原生供应商；原生供应商可留空地址，由 Pi 选择默认端点与协议。主模型与审核模型分别保存凭据；切换原生供应商、API 地址或协议会清除旧连接密钥，仅在两种接入方式之间切换不会清除，关闭独立审核会移除其保存配置。
 
-“获取模型”从 Pi 目录读取原生供应商模型，或向自定义端点查询 `/models`；“检测 API”经 Pi 发起一次容量探测，并返回与 Runner 相同的有效 provider / API / 地址 / 容量 / 压缩设置。探测不再是 16 tokens 的连通性小请求：它按声明的窗口构造填充上下文（上限 32768 tokens，预留 4096 tokens 安全余量，下限 512），再带当前输出上限发出请求，因此请求规模与真实 Run 同量级，超时 180 秒。容量不足的部署往往仍回 HTTP 200、只是流内没有 `finish_reason`，探测因此以“未得到完整响应”失败，并给出实际发出的上下文与 `max_tokens` 及部署上报的提示词 tokens。探测覆盖容量与协议，工具调用能力仍需在真实任务中验证。密钥从对应主 / 审核配置按连接匹配复用，返回结果不含密钥。
+“获取模型”向已填写的 API 地址查询 `/models`；既有 Pi 原生供应商配置在地址留空时仍从 Pi 目录读取模型。接口返回的 `max_model_len` / `context_length` 与 `max_tokens` 会填入上下文窗口和输出上限（自定义 / 中转模式同样适用），可手动修改或设为 0 回退默认值。“检测 API”经 Pi 发起一次容量探测，并返回与 Runner 相同的有效 provider / API / 地址 / 容量 / 压缩设置。探测不再是 16 tokens 的连通性小请求：它按声明的窗口构造填充上下文（上限 32768 tokens，预留 4096 tokens 安全余量，下限 512），再带当前输出上限发出请求，因此请求规模与真实 Run 同量级，超时 180 秒。容量不足的部署往往仍回 HTTP 200、只是流内没有 `finish_reason`，探测因此以“未得到完整响应”失败，并给出实际发出的上下文与 `max_tokens` 及部署上报的提示词 tokens。探测覆盖容量与协议，工具调用能力仍需在真实任务中验证。密钥从对应主 / 审核配置按连接匹配复用，返回结果不含密钥。
 
 | 存储 | 内容 |
 | --- | --- |

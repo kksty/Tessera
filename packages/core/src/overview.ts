@@ -14,24 +14,30 @@ import type {
 import type { Store } from "./store.js";
 import { activeGraph } from "../../protocol/src/node-lifecycle.js";
 import { pendingReviews, reviewGate } from "../../protocol/src/review-scheduling.js";
-import { confirmedFinding, confirmedVulnerability, confirmedInformational, informationalFinding,
-  currentCvssScore, findingKind, classificationReviewRequired } from "../../protocol/src/finding-policy.js";
-export { confirmedFinding, confirmedVulnerability, confirmedInformational, informationalFinding,
-  currentCvssScore } from "../../protocol/src/finding-policy.js";
+import {
+  confirmedFinding,
+  confirmedVulnerability,
+  confirmedInformational,
+  informationalFinding,
+  currentCvssScore,
+  findingKind,
+  classificationReviewRequired,
+  humanApproved,
+} from "../../protocol/src/finding-policy.js";
+export {
+  confirmedFinding,
+  confirmedVulnerability,
+  confirmedInformational,
+  informationalFinding,
+  currentCvssScore,
+} from "../../protocol/src/finding-policy.js";
 
 /**
  * 跨项目总览：把每个项目的图读一次，在 JS 里汇总。
  * 只读取计数与索引字段，不调用 projection，也不逐项目 store.get() 重复解析。
  */
 
-const buckets: SeverityBucket[] = [
-  "critical",
-  "high",
-  "medium",
-  "low",
-  "informational",
-  "ungraded",
-];
+const buckets: SeverityBucket[] = ["critical", "high", "medium", "low", "informational", "ungraded"];
 
 const emptySeverity = (): SeverityCounts => ({
   critical: 0,
@@ -51,12 +57,10 @@ const severityRank: Record<SeverityBucket, number> = {
   ungraded: 0,
 };
 
-const bucketOf = (finding: Finding): SeverityBucket =>
-  (finding.severity || "ungraded") as SeverityBucket;
+const bucketOf = (finding: Finding): SeverityBucket => (finding.severity || "ungraded") as SeverityBucket;
 
 export const reviewedFinding = (finding: Finding) =>
-  finding.reviewed_version === finding.version &&
-  finding.review_status !== "pending";
+  finding.reviewed_version === finding.version && finding.review_status !== "pending";
 
 const trendDays = 14;
 
@@ -66,9 +70,7 @@ const dayOf = (iso: string | undefined | null) =>
 const emptyTrend = (now = new Date()): OverviewTrendPoint[] => {
   const points: OverviewTrendPoint[] = [];
   for (let offset = trendDays - 1; offset >= 0; offset--) {
-    const date = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - offset),
-    );
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - offset));
     points.push({ day: date.toISOString().slice(0, 10), created: 0, reviewed: 0 });
   }
   return points;
@@ -118,6 +120,7 @@ const compactFinding = (
   confirmed: confirmedVulnerability(finding, graph),
   informational: informationalFinding(finding),
   reviewed: reviewedFinding(finding) && !classificationReviewRequired(finding, graph),
+  approved: humanApproved(finding),
   review_gate: reviewGate(graph, finding),
   created_at: finding.created_at,
   cvss_score: currentCvssScore(finding, graph),
@@ -129,23 +132,23 @@ const compactFinding = (
 const descending = (left: string, right: string) => (left < right ? 1 : left > right ? -1 : 0);
 
 export function securityOverview(store: Store): SecurityOverview {
-  const rows = store.db
-    .prepare("SELECT id,data FROM platform_projects ORDER BY rowid DESC")
-    .all() as { id: string; data: string }[];
+  const rows = store.db.prepare("SELECT id,data FROM platform_projects ORDER BY rowid DESC").all() as {
+    id: string;
+    data: string;
+  }[];
   const activity = new Map(
     (
       store.db
-        .prepare(
-          "SELECT project_id AS id, MAX(created_at) AS last FROM platform_event_history GROUP BY project_id",
-        )
+        .prepare("SELECT project_id AS id, MAX(created_at) AS last FROM platform_event_history GROUP BY project_id")
         .all() as { id: string; last: string }[]
     ).map((row) => [row.id, row.last]),
   );
   const traffic = new Map(
     (
-      store.db
-        .prepare("SELECT project_id AS id, count AS total FROM project_traffic_totals")
-        .all() as { id: string; total: number }[]
+      store.db.prepare("SELECT project_id AS id, count AS total FROM project_traffic_totals").all() as {
+        id: string;
+        total: number;
+      }[]
     ).map((row) => [row.id, Number(row.total)]),
   );
 
@@ -178,7 +181,7 @@ export function securityOverview(store: Store): SecurityOverview {
     const graph = activeGraph(store.get(row.id));
     if (graph.format_version !== 1) continue;
     const project = graph.project;
-    const findings = (graph.findings ?? []).filter(f => !f.merged_into && !f.withdrawn_at);
+    const findings = (graph.findings ?? []).filter((f) => !f.merged_into && !f.withdrawn_at);
     const assets = graph.assets ?? [];
     const assetNames = new Map(assets.map((asset) => [asset.id, asset.hostname]));
 
@@ -226,8 +229,7 @@ export function securityOverview(store: Store): SecurityOverview {
       if (point && confirmedVulnerability(finding, graph)) point.created++;
       const compact = compactFinding(finding, project, assetNames, graph);
       recent.push(compact);
-      if (compact.confirmed && (compact.severity === "critical" || compact.severity === "high"))
-        priority.push(compact);
+      if (compact.confirmed && (compact.severity === "critical" || compact.severity === "high")) priority.push(compact);
     }
 
     totals.projects++;
@@ -291,15 +293,13 @@ export function securityOverview(store: Store): SecurityOverview {
   }
 
   const byRisk = (left: OverviewFinding, right: OverviewFinding) =>
-    severityRank[right.severity] - severityRank[left.severity] ||
-    descending(left.created_at, right.created_at);
+    severityRank[right.severity] - severityRank[left.severity] || descending(left.created_at, right.created_at);
   recent.sort((left, right) => descending(left.created_at, right.created_at));
   priority.sort(byRisk);
 
   projects.sort(
     (left, right) =>
-      descending(left.last_activity_at, right.last_activity_at) ||
-      left.title.localeCompare(right.title, "zh-CN"),
+      descending(left.last_activity_at, right.last_activity_at) || left.title.localeCompare(right.title, "zh-CN"),
   );
 
   return {
@@ -315,9 +315,10 @@ export function securityOverview(store: Store): SecurityOverview {
 }
 
 export function allOverviewFindings(store: Store): OverviewFinding[] {
-  const rows = store.db
-    .prepare("SELECT id,data FROM platform_projects ORDER BY rowid DESC")
-    .all() as { id: string; data: string }[];
+  const rows = store.db.prepare("SELECT id,data FROM platform_projects ORDER BY rowid DESC").all() as {
+    id: string;
+    data: string;
+  }[];
   const findings: OverviewFinding[] = [];
   for (const row of rows) {
     if (JSON.parse(row.data).format_version !== 1) continue;
@@ -325,11 +326,11 @@ export function allOverviewFindings(store: Store): OverviewFinding[] {
     if (graph.format_version !== 1) continue;
     const assets = new Map((graph.assets ?? []).map((asset) => [asset.id, asset.hostname]));
     for (const finding of graph.findings ?? [])
-      if (!finding.merged_into && !finding.withdrawn_at) findings.push(compactFinding(finding, graph.project, assets, graph));
+      if (!finding.merged_into && !finding.withdrawn_at)
+        findings.push(compactFinding(finding, graph.project, assets, graph));
   }
   return findings.sort(
     (left, right) =>
-      severityRank[right.severity] - severityRank[left.severity] ||
-      descending(left.created_at, right.created_at),
+      severityRank[right.severity] - severityRank[left.severity] || descending(left.created_at, right.created_at),
   );
 }

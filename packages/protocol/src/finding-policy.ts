@@ -41,6 +41,18 @@ export const informationalFinding = (finding: Finding) => findingKind(finding) =
 export const informationalReviewExempt = (finding: Finding) =>
   finding.review_exempt === "informational" && informationalFinding(finding);
 
+/**
+ * Operator approval is version-bound: a revision must be approved again. It is
+ * independent of Review, so approving a claim also takes it out of the pending
+ * Review queue (an explicit human override).
+ */
+export const humanApproved = (finding: Finding) =>
+  !!finding.human_approval &&
+  finding.human_approval.version === finding.version &&
+  !finding.deleted &&
+  !finding.merged_into &&
+  !finding.withdrawn_at;
+
 /** One pure contract for server totals, exports, reports and browser filters. */
 export function confirmedFinding(finding: Finding, graph?: Pick<Graph, "evidence">): boolean {
   if (

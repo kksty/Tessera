@@ -7,6 +7,8 @@ import { locateRecord, useWorkspace } from "../workspace.js";
 import { Badge, Card, EmptyState } from "./ui.js";
 
 const kinds = { decide: "决策", execute: "探索", review: "审核" } as const;
+/** Why a Run ended: the operator needs to tell a control-plane blip from a task failure. */
+const failureKinds = { model: "模型", infrastructure: "基础设施", target: "目标", unknown: "未知" } as const;
 
 /** 运行记录由任务页统一轮询：列表、条数与「需关注」计数共用同一个数据源。 */
 export function RunHistory({
@@ -85,6 +87,12 @@ export function RunHistory({
                 </span>
               ) : (
                 <Badge value={run.status} />
+              )}
+              {run.failure_kind && (
+                <span className="status-pill" data-tone={run.failure_kind === "infrastructure" ? "neutral" : "danger"}>
+                  <i aria-hidden="true" />
+                  {failureKinds[run.failure_kind]}故障
+                </span>
               )}
               <span className="spacer" />
               <time

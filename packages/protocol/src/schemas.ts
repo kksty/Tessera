@@ -118,10 +118,28 @@ export const findingSchema = z
   .strict();
 export const findingActionSchema = z
   .object({
-    action: z.enum(["delete", "return", "retest"]),
+    action: z.enum(["delete", "return", "retest", "review"]),
     expected_version: z.number().int().positive(),
     creator: text,
     reason: text,
+  })
+  .strict();
+/** Bulk re-review of exempt informational findings; at most 50 per request. */
+export const reviewRequestSchema = z
+  .object({
+    finding_ids: z.array(text).max(50).optional(),
+    all_exempt: z.boolean().default(false),
+    creator: text,
+    reason: text,
+  })
+  .strict();
+/** Operator approval of one Finding version; approval leaves every pending queue. */
+export const findingApprovalSchema = z
+  .object({
+    approved: z.boolean(),
+    expected_version: z.number().int().positive(),
+    creator: text,
+    reason: z.string().max(2000).optional(),
   })
   .strict();
 /**

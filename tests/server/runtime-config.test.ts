@@ -86,6 +86,24 @@ test("review scope defaults to all findings, persists the switch, and reaches th
   }
 });
 
+test("the deployment can force the informational-review switch and lock it in the UI", () => {
+  const f = fixture();
+  try {
+    const off = new RuntimeConfig(f.file, { TESSERA_SKIP_INFORMATIONAL_REVIEW: "false" });
+    assert.equal(off.value.skip_informational_review, false);
+    assert.ok(off.readOnlyFields.includes("skip_informational_review"));
+    assert.throws(() => off.updatePublic({ skip_informational_review: true }), /部署配置管理/);
+    const on = new RuntimeConfig(f.file, { TESSERA_SKIP_INFORMATIONAL_REVIEW: "1" });
+    assert.equal(on.value.skip_informational_review, true);
+    assert.throws(
+      () => new RuntimeConfig(f.file, { TESSERA_SKIP_INFORMATIONAL_REVIEW: "maybe" }),
+      /Invalid boolean environment variable/,
+    );
+  } finally {
+    f.close();
+  }
+});
+
 test("explicit env wins per field over existing configuration, while blank env falls back and zero remains explicit", () => {
   const f = fixture();
   try {
@@ -246,6 +264,23 @@ test("changing persisted endpoints does not reuse old credentials, while blank k
     config.updatePublic({ model: { base_url: "https://one.test/v1/", api_key: "" } });
     assert.equal(config.value.model.api_key, "original-key");
     config.updatePublic({ model: { base_url: "https://two.test/v1" } });
+    assert.equal(config.value.model.api_key, "");
+  } finally {
+    f.close();
+  }
+});
+
+test("switching between endpoint and custom modes keeps the stored credential for the same endpoint", () => {
+  const f = fixture();
+  try {
+    const config = new RuntimeConfig(f.file, {});
+    config.updatePublic({ model: { base_url: "https://relay.test/v1", api_key: "relay-key" } });
+    config.updatePublic({ model: { provider: "custom" } });
+    assert.equal(config.value.model.api_key, "relay-key");
+    assert.equal(config.value.model.provider, "custom");
+    config.updatePublic({ model: { provider: "" } });
+    assert.equal(config.value.model.api_key, "relay-key");
+    config.updatePublic({ model: { provider: "deepseek" } });
     assert.equal(config.value.model.api_key, "");
   } finally {
     f.close();

@@ -12,6 +12,8 @@ import {
   executeSchema,
   findingSchema,
   findingActionSchema,
+  findingApprovalSchema,
+  reviewRequestSchema,
   reviewSchema,
   assetBatchSchema,
   evidenceSchema,
@@ -218,7 +220,8 @@ export function buildApp(
       });
       api.get("/reviews", (req) => {
         operatorCheck(req);
-        return store.allFindings().filter((f) => !f.reviewed && f.review_gate !== "excluded");
+        // A human-approved finding is settled: it must not reappear as pending work.
+        return store.allFindings().filter((f) => !f.reviewed && !f.approved && f.review_gate !== "excluded");
       });
       const requireModel = () => {
         try {
@@ -482,6 +485,7 @@ export function buildApp(
         const b = z
           .object({
             hot_limit: z.number().int().min(0).max(1000).optional(),
+            hot_char_limit: z.number().int().min(0).max(1_000_000).optional(),
             node_id: text.optional(),
             override: z.enum(["auto", "pinned", "cooled"]).optional(),
           })
@@ -602,6 +606,16 @@ export function buildApp(
       api.post<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/actions", (req) => {
         operatorCheck(req);
         return store.findingAction(req.params.id, req.params.fid, findingActionSchema.parse(req.body));
+      });
+      // Bulk re-review of informational findings that were passed without Review.
+      api.post<{ Params: { id: string } }>("/projects/:id/findings/review", (req) => {
+        operatorCheck(req);
+        return store.reviewFindings(req.params.id, reviewRequestSchema.parse(req.body));
+      });
+      // Operator approval: settles this version and removes it from pending queues.
+      api.post<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/approval", (req) => {
+        operatorCheck(req);
+        return store.setFindingApproval(req.params.id, req.params.fid, findingApprovalSchema.parse(req.body));
       });
       api.get<{ Params: { id: string }; Querystring: { limit?: string } }>("/projects/:id/runs", (req) => {
         operatorCheck(req);
@@ -1093,8 +1107,10 @@ export function buildApp(
         return store.setSettings(
           z
             .object({
-              intent_timeout: z.number().int().min(5),
-              reason_timeout: z.number().int().min(5),
+              // A lease below 30s cannot cover one slow control-plane write plus
+              // a heartbeat retry; letting the UI set it that low pauses projects.
+              intent_timeout: z.number().int().min(30),
+              reason_timeout: z.number().int().min(30),
             })
             .parse(req.body),
         );
@@ -1108,14 +1124,21 @@ export function buildApp(
           .object({
             worker: text,
             debounce_ms: z.number().int().min(0).default(1500),
+            claim_id: text.max(128).optional(),
           })
           .parse(req.body);
         requireModel();
-        const job = store.claim(req.params.id, b.worker, b.debounce_ms, runtime.value);
+        const job = store.claim(req.params.id, b.worker, b.debounce_ms, runtime.value, b.claim_id);
         if (!job) return job;
         const config = structuredClone(runtime.value);
         pinRunModel(store, job, job.kind === "review" ? config.review_model || config.model : config.model);
         return { ...job, worker_config: await workerConfig(job, config, workerToken) };
+      });
+      // Idempotent cancel for a claim the dispatcher abandoned after a timeout.
+      api.post<{ Params: { id: string; claim: string } }>("/projects/:id/jobs/claim/:claim/cancel", (req) => {
+        workerCheck(req, req.params.id);
+        const b = z.object({ worker: text }).parse(req.body);
+        return store.cancelClaim(req.params.id, b.worker, req.params.claim);
       });
       api.post<{ Params: { id: string } }>("/projects/:id/jobs/heartbeat", (req) => {
         workerCheck(req, req.params.id);

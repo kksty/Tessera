@@ -39,7 +39,7 @@ const blankReviewModel = (): RuntimeModel => ({
 
 /** 未保存项的中文名称；未覆盖的键回退成路径本身。 */
 const FIELD_LABELS: Record<string, string> = {
-  "model.provider": "供应商",
+  "model.provider": "接入方式",
   "model.max_output_tokens": "输出上限",
   "model.base_url": "API 地址",
   "model.api_key": "API Key",
@@ -51,7 +51,7 @@ const FIELD_LABELS: Record<string, string> = {
   "review_model.api": "审核模型接口协议",
   "review_model.id": "审核模型",
   "review_model.context_window": "审核模型上下文窗口",
-  "review_model.provider": "审核模型供应商",
+  "review_model.provider": "审核模型接入方式",
   "review_model.max_output_tokens": "审核模型输出上限",
   max_workers: "总并发",
   max_project_workers: "单项目并发",
@@ -192,14 +192,19 @@ export function SettingsPage() {
   const changeModel = (scope: "model" | "review_model", next: ModelConfig) => {
     if (!draft) return;
     const previous = draft[scope];
-    const changed = previous?.provider !== next.provider || previous?.base_url !== next.base_url;
+    // 按地址识别与自定义只改变目录匹配方式，端点没变时保留已保存的密钥。
+    const native = (provider?: string) => !!provider && provider !== "custom";
+    const reconnected =
+      previous?.base_url !== next.base_url ||
+      previous?.api !== next.api ||
+      (previous?.provider !== next.provider && (native(previous?.provider) || native(next.provider)));
     setDraft({
       ...draft,
       [scope]: {
         ...previous,
         ...next,
-        api_key: changed && previous?.api_key === next.api_key && !locked(`${scope}.api_key`) ? "" : next.api_key,
-        api_key_set: changed ? false : previous?.api_key_set,
+        api_key: reconnected && previous?.api_key === next.api_key && !locked(`${scope}.api_key`) ? "" : next.api_key,
+        api_key_set: reconnected ? false : previous?.api_key_set,
       },
     });
   };
@@ -277,6 +282,9 @@ export function SettingsPage() {
   const closeoutDisabled = locked("closeout_seconds") || draft.task_timeout_seconds === 0;
   const closeoutMax =
     draft.task_timeout_seconds === 0 ? 300 : Math.min(300, Math.max(1, draft.task_timeout_seconds - 1));
+  // 仅既有 Pi 原生供应商配置会省略地址；新配置必须填写 API 地址。
+  const mainPiAuto = !!draft.model.provider && draft.model.provider !== "custom" && !draft.model.base_url;
+  const reviewPiAuto = !!review?.provider && review.provider !== "custom" && !review.base_url;
 
   return (
     <section className="page page-settings">
@@ -310,7 +318,12 @@ export function SettingsPage() {
             <Field
               label="API 地址"
               htmlFor="settings-base-url"
-              hint={lockedHint("model.base_url", "选择供应商后可留空，使用 Pi 默认地址；也可填写中转地址。")}
+              hint={lockedHint(
+                "model.base_url",
+                mainPiAuto
+                  ? "当前沿用 Pi 原生供应商的默认地址；改选接入方式后需填写 API 地址。"
+                  : "必填。官方端点可按地址识别目录容量；中转地址请选择「自定义 / 中转 API」。",
+              )}
             >
               <input
                 id="settings-base-url"
@@ -356,20 +369,15 @@ export function SettingsPage() {
               >
                 <select
                   id="settings-api-protocol"
-                  disabled={
-                    locked("model.api") ||
-                    (!!draft.model.provider && draft.model.provider !== "custom" && !draft.model.base_url)
-                  }
-                  value={
-                    draft.model.provider && draft.model.provider !== "custom" && !draft.model.base_url
-                      ? "__pi"
-                      : draft.model.api
-                  }
+                  disabled={locked("model.api") || mainPiAuto}
+                  value={mainPiAuto ? "__pi" : draft.model.api}
                   onChange={(event) => setDraft({ ...draft, model: { ...draft.model, api: event.target.value } })}
                 >
-                  <option value="__pi" disabled>
-                    Pi 按所选模型自动配置
-                  </option>
+                  {mainPiAuto && (
+                    <option value="__pi" disabled>
+                      Pi 按所选模型自动配置
+                    </option>
+                  )}
                   {API_PROTOCOLS.map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
@@ -381,7 +389,8 @@ export function SettingsPage() {
 
             <div className="settings-grid-note">
               <p className="settings-hint">
-                更换供应商或 API 地址后需要重新填写密钥。Pi 负责协议、请求重试、输出控制与会话压缩。
+                更换 API 地址、协议或 Pi 原生供应商后需要重新填写密钥；仅在「按 API 地址识别」与「自定义 / 中转
+                API」之间切换不会清除密钥。Pi 负责协议、请求重试、输出控制与会话压缩。
               </p>
             </div>
           </div>
@@ -418,8 +427,8 @@ export function SettingsPage() {
           </label>
           <p className="settings-hint">
             {draft.skip_informational_review === true
-              ? "已开启：明确标注为信息类、且引用原始证据的发现直接归档，不启动审核；漏洞类与待分类仍需审核，无证据的候选也仍会进入审核。已在审核中的信息类不会被打断。"
-              : "关闭：新提交的发现都进入审核；此前已免审的信息类保持原状。信息类通过后保留在发现页，不计入漏洞库和风险。"}
+              ? "已开启：明确标注为信息类、且引用原始证据的发现直接归档，不启动审核；漏洞类与待分类仍需审核，无证据的候选也仍会进入审核。已在审核中的信息类不会被打断。开启会让独立审核对信息类失效，请确认这是有意的审核范围收窄。"
+              : "关闭：新提交的发现都进入审核；此前已免审的信息类保持原状，需要重审的请在发现页逐条点“重新审核”（或批量重审），历史审核记录不会删除。信息类通过后保留在发现页，不计入漏洞库和风险。"}
           </p>
           {reviewEnabled && review && (
             <>
@@ -435,7 +444,12 @@ export function SettingsPage() {
                 <Field
                   label="API 地址"
                   htmlFor="settings-review-base-url"
-                  hint={lockedHint("review_model.base_url", "选择供应商后可留空，使用 Pi 默认地址。")}
+                  hint={lockedHint(
+                    "review_model.base_url",
+                    reviewPiAuto
+                      ? "当前沿用 Pi 原生供应商的默认地址；改选接入方式后需填写 API 地址。"
+                      : "必填。官方端点可按地址识别目录容量；中转地址请选择「自定义 / 中转 API」。",
+                  )}
                 >
                   <input
                     id="settings-review-base-url"
@@ -481,11 +495,8 @@ export function SettingsPage() {
                   >
                     <select
                       id="settings-review-api-protocol"
-                      disabled={
-                        locked("review_model.api") ||
-                        (!!review.provider && review.provider !== "custom" && !review.base_url)
-                      }
-                      value={review.provider && review.provider !== "custom" && !review.base_url ? "__pi" : review.api}
+                      disabled={locked("review_model.api") || reviewPiAuto}
+                      value={reviewPiAuto ? "__pi" : review.api}
                       onChange={(event) =>
                         setDraft({
                           ...draft,
@@ -493,9 +504,11 @@ export function SettingsPage() {
                         })
                       }
                     >
-                      <option value="__pi" disabled>
-                        Pi 按所选模型自动配置
-                      </option>
+                      {reviewPiAuto && (
+                        <option value="__pi" disabled>
+                          Pi 按所选模型自动配置
+                        </option>
+                      )}
                       {API_PROTOCOLS.map(([value, label]) => (
                         <option key={value} value={value}>
                           {label}
@@ -507,7 +520,7 @@ export function SettingsPage() {
 
                 <div className="settings-grid-note">
                   <p className="settings-hint">
-                    审核模型须有模型 ID，并选择供应商或填写 API 地址；密钥独立保存。取消勾选并保存，将恢复与主模型共用。
+                    审核模型须有模型 ID 和 API 地址；密钥独立保存。取消勾选并保存，将恢复与主模型共用。
                   </p>
                 </div>
               </div>

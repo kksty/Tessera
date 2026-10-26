@@ -40,11 +40,90 @@ Shell 和看门狗使用显式环境白名单，只传递路径、语言、代�
 
 备份保留代数和异地存放由部署方确定；未完成隔离恢复演练前不要删除旧代次。应用内删除项目不会删除外部备份或模型服务已经保存的数据。
 
+## 数据目录与命名卷
+
+默认部署把宿主机目录 `./datas/tessera` 绑定到容器的 `/data`。Docker Desktop 在 Windows 上通过 9p/grpc-fuse 暴露绑定目录，SQLite 的写放大可达 15–90 倍：实测全图读取 92–160 ms（卷内 6–8 ms），20 MB 提交 6.8 s（卷内 77 ms），长尾直接把 `POST /jobs/claim` 推到 40–56 s。**生产部署应使用命名卷**，并用 `compose.volume.yaml` 覆盖层启用：
+
+```powershell
+docker compose -f compose.yaml -f compose.volume.yaml up -d
+```
+
+覆盖层不迁移已有数据。迁移是一次停机操作（约 15–30 分钟，取决于证据文件数），使用脚本完成停服 → 备份 → tar 管道复制 → 校验 → 启动 → 健康检查：
+
+```powershell
+pwsh scripts/ops/migrate-data-to-volume.ps1                 # 源目录、卷名、镜像均可参数化
+node scripts/ops/verify-data-volume.mjs datas/tessera/tessera.db datas/tessera/evidence
+```
+
+要点：
+
+- 必须停服：DB 与 WAL 在写入中途复制会不一致；脚本先 `docker compose stop`，再单独停止 `tessera-worker-*`。
+- 20 万级小文件不要在容器里直接从 bind mount 逐文件读取：实测约 4k 文件/分钟（近 1 小时）。脚本改为宿主机 `tar` 打包（约 1 分钟，单文件 ~1 GB），容器只做一次顺序读取并解包到卷（约 30 秒）。`tar` 保留 `600 root` 权限。
+- 解包后删除源库残留的 `tessera.db-shm` / `tessera.db-wal`（旧进程共享内存，SQLite 会重建）。
+- 校验 `PRAGMA quick_check`、项目/Run/证据计数与 evidence 文件数；`/health` 返回 ok 后才算完成。
+- 源目录全程只读，保留 3–7 天。回退只需不带覆盖层启动：`docker compose down; docker compose up -d`。命名卷不会被自动删除。
+- 迁移后重新确认 `docker inspect tessera-tessera-server-1 --format '{{json .Mounts}}'` 指向命名卷，并观察 1 小时 `/api/control-plane/timing` 的 claim p99 与事务 max。
+
+## 超时预算与失败分类
+
+所有控制面调用的超时集中在 `packages/protocol/src/timeouts.ts`，原则是 **lease > heartbeat 最坏情况 > 服务端 p99.9**，且 commit/usage/diagnostics 不阻塞 Run：
+
+| 项 | 默认值 | 说明 |
+| --- | ---: | --- |
+| lease（Decide/Execute/Review） | 180 s | 死 Worker 最多约 150 s 回收（heartbeat 15 s × 3 + 超时） |
+| heartbeat | 15 s 间隔 / 45 s 超时 | 连续 3 次失败才放弃 Run |
+| claim / release | 90 s / 30 s | 覆盖控制面长尾，仍小于 lease |
+| commit | 30 s，3 次，退避 0.5/1 s | 覆盖 decisions p99 24.5 s |
+| usage / diagnostics | 30 s / 15 s | 先写本地 ndjson，后台串行上传；失败继续重试，不永久关闭 |
+| 模型中继 | 600 s | `TESSERA_MODEL_TIMEOUT_MS` 可调 |
+
+`TESSERA_LEASE_SECONDS` 只作为首次初始化 `platform_settings` 的默认值；设置页的 `intent_timeout/reason_timeout` 优先，且不允许低于 30 s。旧库中仍是历史默认值 120/120 时，启动会一次性提升到 180/180（`platform_meta.lease_default_180` 记录该迁移）。
+
+Dispatcher 为每次 claim 生成 `claim_id`。claim 超时或异常时它 fire-and-forget 调用 `POST /api/projects/:id/jobs/claim/:claim_id/cancel`：服务端只中断与该 `worker + claim_id` 匹配且在运行中的 Run，设置 5 s 短退避，不增加 `job_failures`、不产生 `needs_attention`。这样慢 claim 不会留下孤儿租约。
+
+Run 结束时写入 `failure_kind`：
+
+| 类别 | 匹配 | 处理 |
+| --- | --- | --- |
+| `model` | 现有模型错误识别 | 计入 `model_failures`，按原规则退避并在连续 3 次后暂停 |
+| `infrastructure` | lease expired、claim abandoned、诊断投递失败、连接 reset/refused、超时（且不是模型错误） | 计入 `infra_failures`，5 s→300 s 退避，**不增加 job_failures、不暂停项目**，到期自动重试 |
+| `unknown` | 其他 | 保留 3 次业务失败暂停规则 |
+
+项目上同时记录 `last_failure_kind`、`infra_failures`、`infra_retry_at`；项目页对基础设施故障显示“控制面故障，第 N 次退避重试”，运行记录显示模型/基础设施/目标徽标。execute 已放出外部动作时仍升级为 `needs_attention`（安全属性不变），但不再因此停止整个项目。
+
 ## 控制面和阶段指标
 
 Server 默认输出结构化错误日志、鉴权失败和超过 500 ms 的慢请求，包含请求 ID、方法、路由模板、状态和耗时，不记录请求体、查询参数、Cookie 或鉴权头。`TESSERA_LOG_LEVEL` 默认 `info`。操作员可读取 `/api/control-plane/timing` 的请求、事务、事件循环和 `stages`；阶段按 Decide、Execute、Review 分组，包含状态分布、成功率、已知 token 和平均已结束耗时。未知用量保持未知，取消和中断单独列出。
 
 2026-10-20 本地只读核对的历史 Review 为 20 次成功、14 次失败、2 次中断、3 次取消；其中错误记录出现 6 次 422、3 次 502、2 次租约错误。不同时间和分母会得到不同成功率，不能把原报告的 49% 当成固定参数。新增本地语义修复与模拟测试不证明真实供应商的成功率、效果或成本已经改善；需要后续真实运行的阶段统计验证。
+
+## 审核范围与信息类免审
+
+`skip_informational_review` 默认 `false`（`configSchema` 与新建部署一致）。本部署保留操作员原有选择：`datas/tessera/runtime.json` 中为 `true`，即明确标注为信息类且引用原始证据的发现直接归档、不启动 Review。开启后独立审核对信息类失效，这是审核范围的收窄，不应在未确认时改动。部署可用 `TESSERA_SKIP_INFORMATIONAL_REVIEW=true|false` 强制该值，设置页随后显示该项只读。
+
+此前免审的发现不会被自动重审；本部署也**不做**重审。若以后需要重新审核，仍可用显式接口（会保留旧 system Review 与证据）：
+
+- `POST /api/projects/:id/findings/:fid/actions`，`action: "review"`：校验 `expected_version`，清除 `review_exempt`，把 `review_status` 置回 `pending`、`reviewed_version=0`、`status=candidate`；重复调用会因已不免审返回 409。
+- `POST /api/projects/:id/findings/review`，`{ finding_ids?: string[], all_exempt?: boolean, creator, reason }`：一次最多 50 条；`all_exempt` 选择当前所有免审条目；项目处于 `stopped`/`completed` 时会自动开启只处理审核的 reaudit 窗口。
+
+## 人工批准发现
+
+“批准”是独立于 Review 的人工结案动作，用于把操作员认可的发现从所有待处理队列中拿掉：
+
+- `POST /api/projects/:id/findings/:fid/approval`，`{ approved: boolean, expected_version, creator, reason? }`。批准写入 `finding.human_approval = { at, by, version, reason? }`；撤销批准清除该字段。
+- 批准按版本绑定：任何修订都会产生新版本，必须重新批准。审核已驳回的发现不能批准。
+- 批准后：`pendingReviews()` 不再返回该发现，因此侧边栏“待审核”计数、审核队列、项目概览与安全总览的待处理项、`GET /api/reviews` 都不再包含它；发现页把它归入「已批准」页签。
+- 批准不会取消已在运行的 Review；它只阻止新的领取并隐藏待处理提示。批准不改变审核结论、评分、报告材料或漏洞库口径。
+- 发现页默认显示「未批准」，可切换到「已批准」；列表与详情页的“人工处理”卡片都可一键批准/撤销。
+
+## 入口预算（冷热）
+
+入口只列热 Facts/Findings，冷池不设上限（`query_graph status=cold` 浏览、`read_graph` 回热）。两个预算同时生效：节点数 `hot_limit` 与字符数 `hot_char_limit`（默认 64,000，0 关闭字符预算）。新项目默认 80 个节点；从未设置过 `hot_limit` 的旧项目继续按 200 读取，与修复前一致。
+
+- 必显集合收敛为：当前焦点 Step 的 `from`/`fact_ids`、待审 Review 的来源 Fact、focused Finding 的来源、`pinned` 节点。**其他 open Step 的输入不再强制热**，其 ID 仍在 `open_step_index` 中，按需 `read_graph`。这是把 Decide 入口从 12 万字符降下来的关键。
+- 必显集合自身超预算时不隐藏（不能藏起 open work），但 `cold.hot.over_budget=true` 并在 hint 中建议关闭或合并 Step。
+- 观测：`capacity_plan` 新增 `projection_sections`（facts/steps/findings/finding_groups/leads/review_issues/hints/coverage_surfaces/cold/instructions/other 各段字符）与 `projection_sections.hot`；`cold.hint` 带 `hot {nodes, chars, limit, char_limit, mandatory, over_budget}`。先按实测分段调整默认值，不要一次性把预算降到 40。
+- `hot_limit=0` 的语义仍是“关闭冷却”（全部热），不是“0 个热节点”。
 
 ## 工程检查和容量边界
 

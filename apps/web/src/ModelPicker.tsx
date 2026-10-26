@@ -16,8 +16,11 @@ type Props = {
 };
 
 export function ProviderPicker({ model, onChange, readOnly = {}, scope = "model" }: Props) {
+  // 原生 Pi 供应商不再出现在选项中，但既有配置继续按原方式解析。
+  const legacy = !!model.provider && model.provider !== "custom";
   const [providers, setProviders] = useState<ModelProvider[]>([]);
   useEffect(() => {
+    if (!legacy) return;
     let active = true;
     void api<ModelProvider[]>("/runtime/providers")
       .then((rows) => {
@@ -27,41 +30,38 @@ export function ProviderPicker({ model, onChange, readOnly = {}, scope = "model"
     return () => {
       active = false;
     };
-  }, []);
+  }, [legacy]);
+  const legacyProvider = legacy ? providers.find((p) => p.id === model.provider) : undefined;
+  const legacyName = legacyProvider?.name || model.provider || "";
   return (
     <label>
-      供应商
+      接入方式
       <select
-        aria-label={scope === "model" ? "主模型供应商" : "审核模型供应商"}
+        aria-label={scope === "model" ? "主模型接入方式" : "审核模型接入方式"}
         disabled={readOnly.provider || readOnly.base_url || readOnly.api}
         value={model.provider || ""}
         onChange={(event) => {
-          const provider = providers.find((p) => p.id === event.target.value);
           onChange({
             ...model,
             provider: event.target.value,
-            base_url: "",
-            api: provider?.api || "openai-completions",
-            id: readOnly.id ? model.id : "",
-            api_key: readOnly.api_key ? model.api_key : "",
-            context_window: readOnly.context_window ? model.context_window : 0,
-            max_output_tokens: readOnly.max_output_tokens ? model.max_output_tokens : 0,
+            // 离开原生供应商时沿用其端点，迁移为按 API 地址连接。
+            base_url: legacy ? model.base_url || legacyProvider?.base_url || "" : model.base_url,
+            api: legacy && !model.base_url ? legacyProvider?.api || model.api : model.api,
           });
         }}
       >
-        <option value="">按 API 地址识别（兼容已有配置）</option>
+        <option value="">按 API 地址识别</option>
         <option value="custom">自定义 / 中转 API</option>
-        {model.provider && model.provider !== "custom" && !providers.some((p) => p.id === model.provider) && (
-          <option value={model.provider}>{model.provider}</option>
-        )}
-        {providers.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
+        {legacy && (
+          <option value={model.provider} disabled>
+            原生供应商：{legacyName}（保留现有配置）
           </option>
-        ))}
+        )}
       </select>
       <span className="settings-hint">
-        官方 API 可按地址识别；自定义 / 中转 API 不会仅凭同名模型套用官方容量。主模型与审核模型可独立选择。
+        {legacy
+          ? `当前仍使用 Pi 原生供应商「${legacyName}」。改选以上任一方式后将按 API 地址连接，需要填写地址并重新填写密钥。`
+          : "按 API 地址识别：地址、协议与模型 ID 匹配 Pi 目录时采用目录容量，未知地址使用默认容量。自定义 / 中转 API：不套用官方目录容量，容量取自接口声明或手动填写。两种方式都需填写 API 地址。"}
       </span>
     </label>
   );
@@ -85,7 +85,7 @@ type Check = {
 const SOURCE_LABELS: Record<string, string> = {
   pi: "Pi 目录",
   api: "API 声明",
-  configured: "已配置上限",
+  configured: "已配置上限（手动或接口声明）",
   default: "默认值（未识别）",
 };
 const sourceLabel = (source: string) => SOURCE_LABELS[source] || source;
@@ -290,6 +290,7 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
             {models.map((m) => (
               <option key={`${m.provider}/${m.id}`} value={m.id}>
                 {m.name}
+                {m.context_source === "api" ? `（接口声明上下文 ${m.context_window.toLocaleString()}）` : ""}
               </option>
             ))}
             <option value="__custom">自定义模型名称…</option>
@@ -326,7 +327,8 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
             onChange={(event) => onChange({ ...model, context_window: Number(event.target.value) })}
           />
           <span className="settings-hint">
-            0 自动：匹配 Pi 目录时使用目录容量，未匹配时默认 128,000。实际生效值见下方。
+            0 自动：匹配 Pi 目录时使用目录容量，自定义端点未匹配时默认 128,000。「获取模型」会把接口声明的 max_model_len
+            / context_length 填入此处。
           </span>
         </label>
         <label>
@@ -340,7 +342,8 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
             onChange={(event) => onChange({ ...model, max_output_tokens: Number(event.target.value) })}
           />
           <span className="settings-hint">
-            0 自动：使用 Pi 目录输出上限，未匹配时默认 16,384。每次请求还会根据剩余上下文缩减输出预算。
+            0 自动：使用 Pi 目录输出上限，自定义端点未匹配时默认 16,384。「获取模型」会把接口声明的 max_tokens
+            填入此处。每次请求还会根据剩余上下文缩减输出预算。
           </span>
         </label>
       </div>
@@ -354,7 +357,9 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
           <p>
             {metadata.catalog_match
               ? `目录已匹配：${metadata.catalog_match.provider} / ${metadata.catalog_match.id}（${metadata.catalog_match.via === "provider" ? "按所选供应商和模型 ID" : "按 API 地址、协议和模型 ID"}）`
-              : "目录未匹配：此部署的容量无法从 Pi 目录确定。"}
+              : metadata.context_source === "default" && metadata.output_source === "default"
+                ? "目录未匹配：未识别部署容量，下方使用默认值。"
+                : "目录未匹配：已配置的容量来自手动填写或「获取模型」时的接口声明。"}
           </p>
           <dl>
             <div>

@@ -756,6 +756,18 @@ test("Pi follows a causal premise without keyword search and reads original cond
     assert.equal(metrics.projection_characters, JSON.stringify(view).length);
     assert.ok(metrics.task_prompt_characters > metrics.projection_characters);
     assert.ok(metrics.task_prompt_utf8_bytes > metrics.task_prompt_characters);
+    // The entry budget is tuned from measured sections, not from guesses.
+    assert.ok(metrics.projection_sections, "capacity_plan carries per-section characters");
+    assert.equal(typeof metrics.projection_sections.facts, "number");
+    assert.equal(typeof metrics.projection_sections.instructions, "number");
+    assert.ok(metrics.projection_sections.other >= 0);
+    // Execute/Review entries have no cold pool; a Decide entry reports the budget.
+    if (view.cold) {
+      assert.equal(metrics.projection_sections.hot.nodes, view.cold.hot.nodes);
+      assert.equal(metrics.projection_sections.hot.chars, view.cold.hot.chars);
+    } else {
+      assert.equal(metrics.projection_sections.hot, null);
+    }
   } finally {
     await f.close();
   }

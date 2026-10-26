@@ -51,6 +51,14 @@ services:
       TESSERA_CLOSEOUT_SECONDS: ${TESSERA_CLOSEOUT_SECONDS:-}
       TESSERA_TOOL_TIMEOUT_SECONDS: ${TESSERA_TOOL_TIMEOUT_SECONDS:-}
       TESSERA_RESULT_REPAIRS: ${TESSERA_RESULT_REPAIRS:-}
+      # 部署侧强制关闭信息类免审（true/false）；设置后该项在 UI 只读。
+      TESSERA_SKIP_INFORMATIONAL_REVIEW: ${TESSERA_SKIP_INFORMATIONAL_REVIEW:-}
+      # 控制面/模型超时预算；默认值见 packages/protocol/src/timeouts.ts。
+      TESSERA_LEASE_SECONDS: ${TESSERA_LEASE_SECONDS:-}
+      TESSERA_COMMIT_TIMEOUT_MS: ${TESSERA_COMMIT_TIMEOUT_MS:-}
+      TESSERA_USAGE_TIMEOUT_MS: ${TESSERA_USAGE_TIMEOUT_MS:-}
+      TESSERA_DIAGNOSTICS_TIMEOUT_MS: ${TESSERA_DIAGNOSTICS_TIMEOUT_MS:-}
+      TESSERA_MODEL_TIMEOUT_MS: ${TESSERA_MODEL_TIMEOUT_MS:-}
       TESSERA_WORKER_TOKEN: ${TESSERA_WORKER_TOKEN:-}
       TESSERA_TOKEN_FILE: /data/internal-token
       # 单账号登录门：留空则首次启动自动生成，并只在容器日志里打印一次。
@@ -86,6 +94,9 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    # A SIGTERM asks the server to close Fastify and checkpoint SQLite; the
+    # default 10s grace can kill it mid-checkpoint during a large write burst.
+    stop_grace_period: 30s
   tessera-dispatcher:
     image: *app-image
     build: *app-build
@@ -107,6 +118,8 @@ services:
       worker-image:
         condition: service_completed_successfully
     restart: unless-stopped
+    # Let running tasks finish their abort/release path instead of being killed.
+    stop_grace_period: 30s
   # 一次性构建并校验 Worker 镜像；实际项目 Worker 由 Dispatcher 动态创建。
   worker-image:
     image: *worker-image

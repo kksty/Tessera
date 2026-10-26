@@ -20,8 +20,9 @@ import { stepAssets } from "../../../../packages/protocol/src/asset-scope.js";
 import { searchState } from "../../../../packages/protocol/src/planning.js";
 import { pendingReviews } from "../../../../packages/protocol/src/review-scheduling.js";
 import { api, path } from "../api.js";
+import { coldNodes, coldState } from "../coldness.js";
 import { completionSnapshot } from "../completion-view.js";
-import { duration, fmt, severityOrder } from "../format.js";
+import { duration, fmt, fmtTime, severityOrder } from "../format.js";
 import {
   confirmedInformational,
   confirmedVulnerability,
@@ -41,6 +42,13 @@ export function ProjectOverviewPage() {
   const ws = useWorkspace();
   const graph = ws.graph!;
   const project = graph.project;
+  // A control-plane outage is not a task failure: it backs off and retries while
+  // the project stays active. Surfacing it as "任务失败" would invite a manual stop.
+  const infra =
+    project.last_failure_kind === "infrastructure" && (project.infra_failures ?? 0) > 0
+      ? { count: project.infra_failures!, at: project.infra_retry_at }
+      : undefined;
+  const entry = coldState(graph);
   const [closing, setClosing] = useState<(typeof graph.steps)[number] | null>(null);
   const [scopeDraft, setScopeDraft] = useState<{ goal: string; origin: string } | null>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
@@ -189,6 +197,16 @@ export function ProjectOverviewPage() {
           <CalendarDays size={13} aria-hidden="true" />
           创建于 {fmt(project.created_at)}
         </span>
+        <span className="meta-pill" title="入口预算：热 Facts/Findings 数量 / 上限 · 冷记录 · 入口字符">
+          <GitBranch size={13} aria-hidden="true" />
+          {entry.disabled
+            ? "冷热已关闭"
+            : `热 ${entry.hot.nodes}/${entry.limit} · 冷 ${coldNodes(graph).length}${
+                entry.char_limit
+                  ? ` · ${Math.round(entry.hot.chars / 1000)}k/${Math.round(entry.char_limit / 1000)}k 字符`
+                  : ""
+              }`}
+        </span>
         <button
           type="button"
           className="button subtle"
@@ -204,7 +222,21 @@ export function ProjectOverviewPage() {
         </button>
       </div>
 
-      {project.last_error && !errorDismissed && (
+      {infra && (
+        <div className="banner warn">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span className="banner-text" title={errorText}>
+            控制面故障，第 {infra.count} 次退避重试{infra.at ? `（下次 ${fmtTime(infra.at)}）` : ""}
+            ：项目保持运行，不会因该故障暂停；恢复后自动继续，未提交的观测仍保留。
+            {errorText ? `最近错误：${errorSummary}` : ""}
+          </span>
+          <button type="button" className="button ghost small" onClick={() => ws.navigate("tasks")}>
+            查看运行
+          </button>
+        </div>
+      )}
+
+      {project.last_error && !errorDismissed && !infra && (
         <div className="banner warn">
           <AlertTriangle size={15} aria-hidden="true" />
           <span className="banner-text" title={errorText}>

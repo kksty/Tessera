@@ -48,10 +48,14 @@ try {
   for (const id of ["zai", "deepseek", "minimax"]) {
     const cfg = { id: "", provider: id, base_url: "", api_key: "", api: "openai-completions", context_window: 0 };
     const native = (await modelCatalog(cfg))[0];
+    await main.locator("#settings-api-protocol").selectOption(native.api);
     const loaded = page.waitForResponse(
-      (r) => r.url().endsWith("/api/runtime/catalog") && r.request().postDataJSON().provider === id,
+      (r) =>
+        r.url().endsWith("/api/runtime/catalog") &&
+        r.request().postDataJSON().base_url === native.base_url &&
+        r.request().postDataJSON().api === native.api,
     );
-    await main.getByRole("combobox", { name: "主模型供应商" }).selectOption(id);
+    await main.locator("#settings-base-url").fill(native.base_url);
     await loaded;
     await main.getByRole("combobox", { name: "选择模型" }).selectOption(native.id);
     const details = main.getByLabel("Pi 模型配置");
@@ -61,11 +65,12 @@ try {
     await details.getByText(/目录已匹配/).waitFor();
     await details.getByText(/不等于部署真实上限/).waitFor();
     assert.equal(await main.getByLabel(/^上下文窗口/).inputValue(), "0");
-    assert.equal(await main.locator("#settings-api-protocol").inputValue(), "__pi");
-    assert.equal(await main.locator("#settings-api-protocol").isDisabled(), true);
+    assert.equal(await main.locator("#settings-api-protocol").inputValue(), native.api);
+    assert.equal(await main.locator("#settings-api-protocol").isDisabled(), false);
   }
   const loaded = page.waitForResponse((r) => r.url().endsWith("/api/runtime/models"));
-  await main.getByRole("combobox", { name: "主模型供应商" }).selectOption("custom");
+  await main.getByRole("combobox", { name: "主模型接入方式" }).selectOption("custom");
+  await main.locator("#settings-api-protocol").selectOption("openai-completions");
   await main.locator("#settings-base-url").fill(provider.listeningOrigin + "/v1/chat/completions");
   await main.locator("#settings-api-key").fill("fixture-key");
   await main.getByRole("combobox", { name: "选择模型" }).selectOption("__custom");
@@ -114,21 +119,27 @@ try {
     await page.locator(".settings-savebar").waitFor({ state: "detached" });
   };
   await save();
+  assert.equal(runtime.value.model.provider, "custom");
   assert.equal(runtime.value.model.base_url, provider.listeningOrigin + "/v1");
   assert.equal(runtime.value.model.api_key, "fixture-key");
-  await review.getByRole("checkbox").check();
+  await review.getByRole("checkbox", { name: "使用独立审核模型" }).check();
   const native = (await modelCatalog({ ...runtime.value.model, provider: "minimax-cn", base_url: "" }))[0];
+  await review.locator("#settings-review-api-protocol").selectOption(native.api);
   const reviewLoaded = page.waitForResponse(
-    (r) => r.url().endsWith("/api/runtime/catalog") && r.request().postDataJSON().provider === "minimax-cn",
+    (r) =>
+      r.url().endsWith("/api/runtime/catalog") &&
+      r.request().postDataJSON().base_url === native.base_url &&
+      r.request().postDataJSON().api === native.api,
   );
-  await review.getByRole("combobox", { name: "审核模型供应商" }).selectOption("minimax-cn");
+  await review.locator("#settings-review-base-url").fill(native.base_url);
   await reviewLoaded;
   await review.getByRole("combobox", { name: "选择模型" }).selectOption(native.id);
   await review.locator("#settings-review-api-key").fill("review-key");
   await save();
-  assert.equal(runtime.value.review_model?.provider, "minimax-cn");
+  assert.equal(runtime.value.review_model?.provider, "");
+  assert.equal(runtime.value.review_model?.base_url, native.base_url);
   assert.equal(runtime.value.model.api_key, "fixture-key");
-  await review.getByRole("checkbox").uncheck();
+  await review.getByRole("checkbox", { name: "使用独立审核模型" }).uncheck();
   await save();
   assert.equal(runtime.value.review_model, undefined);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -140,7 +151,7 @@ try {
   await main.locator(".model-picker").screenshot({ path: "test-results/models-effective-config-mobile.png" });
   assert.deepEqual(errors, []);
   console.log(
-    "Pi model settings browser checks passed: native catalogs, exact metadata, local API probe, endpoint normalization, independent review/save/disable and mobile layout.",
+    "Pi model settings browser checks passed: endpoint catalog matching, exact metadata, custom endpoint probe, endpoint normalization, independent review/save/disable and mobile layout.",
   );
 } catch (error) {
   console.error((await page.locator("body").innerText()).slice(-4500));

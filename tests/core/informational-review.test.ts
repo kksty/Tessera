@@ -224,3 +224,73 @@ test("Decide classifying a revision as informational skips Review under the swit
     f.store.close();
   }
 });
+
+test("an operator can re-review an exempt informational finding without losing history", () => {
+  const f = fixture();
+  try {
+    f.store.setSkipInformationalReview(true);
+    const finding = f.submit("informational");
+    const before = f.store.get(f.id);
+    assert.equal(before.reviews.length, 1);
+    const requested = f.store.findingAction(f.id, finding.id, {
+      action: "review",
+      expected_version: finding.version,
+      creator: "operator",
+      reason: "Need an independent verdict on the exposed URL",
+    });
+    assert.equal(requested.review_status, "pending");
+    assert.equal(requested.review_exempt, undefined);
+    assert.equal(requested.reviewed_version, 0);
+    assert.equal(requested.status, "candidate");
+    // The old system Review is kept, but it no longer satisfies the current version.
+    const graph = f.store.get(f.id);
+    assert.equal(graph.reviews.length, 1);
+    assert.equal(graph.reviews[0].source, "system");
+    assert.equal(pendingReviews(graph).length, 1);
+    assert.equal(f.store.claim(f.id, "reviewer", deferDecideMs)?.kind, "review");
+    // A second request is rejected: the finding is no longer exempt.
+    assert.throws(
+      () =>
+        f.store.findingAction(f.id, finding.id, {
+          action: "review",
+          expected_version: requested.version,
+          creator: "operator",
+          reason: "again",
+        }),
+      /免审/,
+    );
+  } finally {
+    f.store.close();
+  }
+});
+
+test("bulk re-review queues every exempt finding and opens a review window for a stopped project", () => {
+  const f = fixture();
+  try {
+    f.store.setSkipInformationalReview(true);
+    const first = f.submit("informational");
+    const second = f.submit("informational", { title: "Second informational claim" });
+    // A vulnerability claim needs a real Review and must not be touched by the bulk action.
+    const vulnerability = f.submit("vulnerability");
+    f.store.status(f.id, "stopped");
+    const result = f.store.reviewFindings(f.id, {
+      all_exempt: true,
+      creator: "operator",
+      reason: "Re-audit of the previous exemption",
+    });
+    assert.deepEqual(result.requested.sort(), [first.id, second.id].sort());
+    const graph = f.store.get(f.id);
+    for (const id of [first.id, second.id])
+      assert.equal(graph.findings.find((item) => item.id === id)!.review_status, "pending");
+    assert.notEqual(graph.findings.find((item) => item.id === vulnerability.id)!.review_status, "pass");
+    assert.ok(graph.project.reaudit, "a stopped project opens a review-only window");
+    assert.equal(graph.project.status, "active");
+    assert.equal(pendingReviews(graph).length >= 3, true);
+    assert.throws(
+      () => f.store.reviewFindings(f.id, { finding_ids: [first.id], creator: "operator", reason: "x" }),
+      /没有可重新审核/,
+    );
+  } finally {
+    f.store.close();
+  }
+});

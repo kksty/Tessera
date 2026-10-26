@@ -26,31 +26,8 @@ const EXECUTE_SOURCE_TEXT_LIMIT = 600;
 const REVIEW_SOURCE_FACT_LIMIT = 3;
 const REVIEW_SOURCE_TEXT_LIMIT = 2000;
 
-/** Sentence end: CJK punctuation, or ASCII punctuation followed by whitespace/end. */
-const SENTENCE_END_GLOBAL = /[。！？!?；;\n]|[.!?](?=\s|$)/g;
-
-/** First sentence within the limit, preferring a sentence boundary over a hard cut. */
-export function firstSentence(text: string, limit = SUMMARY_BODY_LIMIT): string {
-  const source = text.replace(/\s+/g, " ").trim();
-  if (source.length <= limit) return source;
-  const window = source.slice(0, limit);
-  let boundary = -1;
-  for (const match of window.matchAll(SENTENCE_END_GLOBAL)) boundary = Math.max(boundary, match.index ?? -1);
-  if (boundary > 0) return window.slice(0, boundary + 1).trim();
-  return window.trimEnd() + "…";
-}
-
-/** A migration may infer a conclusion from the body; the projection marks it as inferred. */
-export function conclusionFrom(description: string, limit = 120): string {
-  const source = description.replace(/\s+/g, " ").trim();
-  const window = source.slice(0, limit);
-  SENTENCE_END_GLOBAL.lastIndex = 0;
-  for (const match of window.matchAll(SENTENCE_END_GLOBAL)) {
-    const end = match.index ?? -1;
-    if (end >= 0) return window.slice(0, end + 1).trim();
-  }
-  return window.trim();
-}
+export { firstSentence, conclusionFrom } from "./entry-lines.js";
+import { firstSentence, conclusionFrom } from "./entry-lines.js";
 
 function bounded(text: string, limit: number): { text: string; truncated: boolean } {
   const source = text.trim();
@@ -104,42 +81,9 @@ function findingClaim(finding: Finding): { claim: Record<string, unknown>; chara
   return { claim, characters: JSON.stringify(claim).length };
 }
 
-export type StepState = "pending" | "running" | "blocked" | "executed" | "concluded" | "discarded";
-
-export function stepState(step: Step): StepState {
-  if (step.discarded) return "discarded";
-  if (step.concluded_at) return "concluded";
-  if (step.executed_at) return "executed";
-  if (step.blocked_run_id) return "blocked";
-  if (step.worker) return "running";
-  return "pending";
-}
-
-/** The entry's "unclosed" count equals the scheduler's "not finished" set minus discarded. */
-export const unclosedStep = (step: Step) => !step.deleted && !step.concluded_at && !step.discarded;
-
-export function findingState(finding: Finding): string {
-  if (finding.withdrawn_at) return "withdrawn";
-  if (finding.merged_into) return `merged→${finding.merged_into}`;
-  if (finding.review_status === "pending") return "pending";
-  if (finding.status === "confirmed") return "confirmed";
-  return finding.review_status;
-}
-
-export function factLine(fact: Fact): string {
-  const objects = fact.objects?.length ? ` [${fact.objects.join(", ")}]` : "";
-  const inferred = fact.conclusion_inferred || !fact.conclusion ? "（推断）" : "";
-  const status = fact.status ?? "observed";
-  const conclusion = fact.conclusion ?? conclusionFrom(fact.description);
-  const body = firstSentence(fact.description);
-  const request = fact.request ? ` 请求：${fact.request.method.toUpperCase()} ${fact.request.url}` : "";
-  const sources = fact.parameter_sources?.length
-    ? ` 参数来源：${fact.parameter_sources.map((s) => `${s.parameter}←${s.source}`).join("；")}`
-    : status === "not_observed"
-      ? " ⚠ 缺参数溯源"
-      : "";
-  return `${fact.id}${objects} ${status} ${inferred}${conclusion} — ${body}${request}${sources}`;
-}
+export { stepState, unclosedStep, findingState, factLine } from "./entry-lines.js";
+export type { StepState } from "./entry-lines.js";
+import { stepState, unclosedStep, findingState, factLine } from "./entry-lines.js";
 
 export function stepLine(step: Step, priority = step.priority): string {
   const objects = step.asset_id ? ` [${step.asset_id}]` : "";
@@ -153,12 +97,8 @@ export function stepLine(step: Step, priority = step.priority): string {
   return `${step.id}${objects} ${stepState(step)} p${priority} v${step.version ?? 1}${from}${outputs} — ${firstSentence(step.description)}${property}${method}${summary}${reason}${reopen}`;
 }
 
-export function findingLine(finding: Finding): string {
-  const objects = finding.asset_id ? ` [${finding.asset_id}]` : "";
-  const severity = finding.severity ? ` ${finding.severity}` : "";
-  const cvss = finding.cvss ? ` cvss ${finding.cvss.score.toFixed(1)}` : "";
-  return `${finding.id}${objects} v${finding.version} ${findingState(finding)} kind=${findingKind(finding) ?? "null"}${classificationReviewRequired(finding) ? " needs_classification_review" : ""}${severity}${cvss} — ${firstSentence(finding.title, 120)}：${firstSentence(finding.description)}`;
-}
+export { findingLine } from "./entry-lines.js";
+import { findingLine } from "./entry-lines.js";
 
 export function goalLine(goal: Goal): string {
   return `${goal.id} ${goal.state} — ${firstSentence(goal.description)}`;
@@ -195,146 +135,36 @@ export function assetLine(asset: Asset): string {
   return `${asset.id} ${asset.approval}${asset.seed ? " seed" : ""} — ${asset.hostname}`;
 }
 
-/** Default hot budget for entry-listed Facts/Findings. 0 disables cooling. */
-export const HOT_LIMIT_DEFAULT = 200;
-
-export type ColdKind = "facts" | "findings";
-export interface ColdNode {
-  kind: ColdKind;
-  record: Record<string, any>;
-}
-export interface ColdView {
-  disabled: boolean;
-  limit: number;
-  cold: Set<string>;
-}
-
+export {
+  HOT_LIMIT_DEFAULT,
+  HOT_LIMIT_RECOMMENDED,
+  HOT_CHAR_LIMIT_DEFAULT,
+  COLD_SAMPLE_LIMIT,
+  coldView,
+  isCold,
+  coldNodes,
+  coldNodeLine,
+  coldSummary,
+} from "./entry-lines.js";
+export type { ColdKind, ColdNode, HotStats, ColdView, ColdSummary } from "./entry-lines.js";
+import { coldView, coldNodes, coldSummary } from "./entry-lines.js";
 /**
- * Hot/cold is a working-set decision, not a time threshold: the entry keeps the
- * most recently used Facts/Findings up to `hot_limit`. Open work and pinned nodes
- * are always hot. Only Facts/Findings ever cool: closed Steps and Evidence are
- * not entry material and not cold nodes either, so they never consume the hot
- * budget or `cold.count`; `query_graph`/the evidence page still exposes them.
- *
- * Never-used nodes rank last. If they fall outside the budget they are still shown
- * in the cold preview as `未引用` and remain reachable by query/read; that is the
- * deliberate v1 trade-off for bounding the entry.
+ * Per-section character counts for the entry, so the budget can be measured
+ * before it is tightened. `other` is filled by the caller from the total.
  */
-export function coldView(graph: Graph): ColdView {
-  graph = activeGraph(graph);
-  const limit = Math.max(0, graph.project.hot_limit ?? HOT_LIMIT_DEFAULT);
-  const cold = new Set<string>();
-  if (!limit) return { disabled: true, limit: 0, cold };
-  const openSteps = new Set((graph.steps ?? []).filter(unclosedStep).map((step) => step.id));
-  const reviewFindings = graph.findings.filter((f) => {
-    const latest = graph.reviews.filter((r) => r.finding_id === f.id && r.finding_version === f.version).at(-1);
-    return (
-      !f.merged_into &&
-      !f.withdrawn_at &&
-      (classificationReviewRequired(f, graph) ||
-        (latest && (latest.verdict !== "pass" || !!latest.planning_issues?.length)))
-    );
-  });
-  const directFacts = new Set([
-    ...graph.steps.filter((step) => openSteps.has(step.id)).flatMap((step) => [...step.from, ...step.fact_ids]),
-    ...reviewFindings.flatMap((f) => f.from),
-  ]);
-  const candidates: { id: string; last: number; created: string }[] = [];
-  const consider = (record: Record<string, any>, last: number) => {
-    if (record.cooldown_override === "pinned") return;
-    if (record.cooldown_override === "cooled") {
-      cold.add(String(record.id));
-      return;
-    }
-    candidates.push({ id: String(record.id), last, created: String(record.created_at ?? "") });
-  };
-  for (const fact of graph.facts ?? []) {
-    if (fact.id === "origin" || fact.kind === "navigation" || directFacts.has(fact.id)) continue;
-    consider(fact, Math.max(fact.last_referenced_round ?? -1, fact.last_read_round ?? -1));
-  }
-  for (const finding of graph.findings ?? []) {
-    // A Finding is the deliverable of its Step: while that Step is open, the Finding
-    // is part of the open work and must not disappear from the entry with it.
-    const stepId = finding.step_id ?? finding.revision_step_id;
-    if ((stepId && openSteps.has(stepId)) || reviewFindings.some((f) => f.id === finding.id)) continue;
-    consider(finding, Math.max(finding.last_referenced_round ?? -1, finding.last_read_round ?? -1));
-  }
-  // Closed Steps and Evidence are not cold nodes: they are history, not entry
-  // material, and are reached through query_graph/evidence pages instead.
-  // Most recently used first; creation order is the deterministic tiebreaker.
-  candidates.sort((a, b) => b.last - a.last || a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
-  for (let index = limit; index < candidates.length; index++) cold.add(candidates[index].id);
-  return { disabled: false, limit, cold };
-}
-
-/** Compatibility helper for single-node checks; prefer coldView() when checking many. */
-export function isCold(graph: Graph, node: { id: string; cooldown_override?: string }, open = false): boolean {
-  if (open) return false;
-  return coldView(graph).cold.has(node.id);
-}
-
-/** The cold pool, defined once so the entry count, the preview and peek cannot drift apart. */
-export function coldNodes(graph: Graph): ColdNode[] {
-  graph = activeGraph(graph);
-  const { cold } = coldView(graph);
-  const nodes: ColdNode[] = [];
-  for (const fact of graph.facts ?? [])
-    if (fact.id !== "origin" && fact.kind !== "navigation" && cold.has(fact.id))
-      nodes.push({ kind: "facts", record: fact });
-  for (const finding of graph.findings ?? [])
-    if (cold.has(finding.id)) nodes.push({ kind: "findings", record: finding });
-  return nodes;
-}
-
-/**
- * One line per previewed cold node: id + what it says + when it was last used.
- * The line must be enough to decide whether a read is worth it, without pulling
- * the whole cold pool back into the entry.
- */
-export function coldNodeLine({ kind, record }: ColdNode): string {
-  const last = Math.max(record.last_referenced_round ?? -1, record.last_read_round ?? -1);
-  const round = last >= 0 ? `r${last}` : "未引用";
-  const conclusion =
-    typeof record.conclusion === "string" && record.conclusion.trim()
-      ? record.conclusion
-      : conclusionFrom(String(record.description ?? ""));
-  const text =
-    kind === "facts"
-      ? `${record.conclusion_inferred ? "（推断）" : ""}${conclusion}`
-      : `${firstSentence(String(record.title ?? ""), 100)}：${firstSentence(String(record.description ?? ""), 160)}`;
-  return `${record.id} ${round} — ${text}`;
-}
-
-/** How many cold lines the entry may carry. The count stays exact; the preview rotates. */
-export const COLD_SAMPLE_LIMIT = 8;
-
-export interface ColdSummary {
-  count: number;
-  sample: string[];
-  hint: string;
-}
-
-export function coldSummary(graph: Graph, nodes: ColdNode[] = coldNodes(graph)): ColdSummary {
-  const limit = Math.max(0, graph.project.hot_limit ?? HOT_LIMIT_DEFAULT);
-  if (!limit) return { count: 0, sample: [], hint: "冷却已关闭（hot_limit=0）" };
-  // Decision material first.
-  const kindRank: Record<ColdKind, number> = { facts: 0, findings: 1 };
-  const ordered = [...nodes].sort(
-    (a, b) => kindRank[a.kind] - kindRank[b.kind] || String(a.record.id).localeCompare(String(b.record.id)),
-  );
-  // Advance the window one screen per decision round: every cold node becomes visible
-  // within ceil(count/limit) rounds, and a fixed ordering cannot create a permanent tail.
-  const start = ordered.length ? ((graph.project.decision_round ?? 0) * COLD_SAMPLE_LIMIT) % ordered.length : 0;
-  const sample = ordered.length
-    ? [...ordered.slice(start), ...ordered.slice(0, start)].slice(0, COLD_SAMPLE_LIMIT).map(coldNodeLine)
-    : [];
+export function projectionSections(entry: Record<string, unknown>): Record<string, number> {
+  const size = (value: unknown) => (value === undefined ? 0 : JSON.stringify(value).length);
   return {
-    count: ordered.length,
-    sample,
-    hint:
-      `热节点上限 ${limit} 个 Fact/Finding；冷记录 ${ordered.length} 条（只含 Fact/Finding，默认即超出热预算的那些）；sample 每轮轮换最多 ${COLD_SAMPLE_LIMIT} 条` +
-      "（rN=最后被引用/读取的轮次，未引用=从未被引用或读取），完整冷池用 query_graph 无过滤浏览或按 id/关键词检索，" +
-      "read_graph 读到即回热；已关闭 Step 与 Evidence 不算冷（数量见 evidence.total），用 query_graph kind=evidence 或证据页检索",
+    facts: size(entry.facts),
+    steps: size(entry.steps) + size(entry.open_step_index) + size(entry.steps_preview),
+    findings: size(entry.findings),
+    finding_groups: size(entry.finding_related) + size(entry.finding_duplicates),
+    leads: size(entry.leads),
+    review_issues: size(entry.review_issues),
+    hints: size(entry.hints),
+    coverage_surfaces: size(entry.coverage_surfaces),
+    cold: size(entry.cold),
+    instructions: size(entry.instructions),
   };
 }
 
@@ -644,9 +474,13 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
     for (const finding of findings)
       if (finding.step_id === step.id || finding.revision_step_id === step.id)
         for (const id of finding.evidence_ids) referenced.add(id);
-  const coldPool = coldNodes(graph);
-  const coldIds = new Set(coldPool.map(({ record }) => String(record.id)));
-  const cold = coldSummary(graph, coldPool);
+  // Focused work is mandatory: the current Step's inputs and the focused Finding
+  // stay hot. Other open Steps' inputs are deliberately NOT forced hot; their ids
+  // live in open_step_index and read_graph brings them back on demand.
+  const view = coldView(graph, [focusId]);
+  const coldPool = coldNodes(graph, [focusId], view);
+  const coldIds = view.cold;
+  const cold = coldSummary(graph, coldPool, view);
   return {
     // The first line is a fact, not a cap: the decider must see progress towards closure.
     unclosed: open.length,
@@ -759,12 +593,13 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
       .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.id.localeCompare(b.id))
       .map((h) => h.id),
     // Completion must account for every host+path the graph already observed,
-    // so the checklist is complete rather than silently truncated.
+    // so the checklist is complete rather than silently truncated. Only the
+    // surface and its source Facts enter the entry: 198 surfaces with up to five
+    // evidence ids each cost ~37k characters, while the evidence ids are one
+    // read_graph/query_graph away and are supplied by the model in `complete`.
     coverage_surfaces: coverageSurfaces(graph).map((item) => ({
       surface: item.surface,
       facts: item.fact_ids,
-      evidence_ids: item.evidence_ids.slice(0, 5),
-      parameters: item.parameters,
     })),
     // A cooled asset stays approved but leaves the listing: the Decider said it is irrelevant,
     // so it must stop costing context every round. read_graph still returns it in full.
