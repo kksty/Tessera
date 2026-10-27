@@ -34,9 +34,9 @@ jobs:
           node-version: 24
       - run: corepack enable && corepack prepare pnpm@11.25.0 --activate
       - run: pnpm install --frozen-lockfile
-      - run: docker build --build-arg DEBIAN_MIRROR=http://deb.debian.org --build-arg COREPACK_NPM_REGISTRY=https://registry.npmjs.org -t tessera-server:ci .
+      - run: docker build --target server --build-arg DEBIAN_MIRROR=http://deb.debian.org --build-arg COREPACK_NPM_REGISTRY=https://registry.npmjs.org -t tessera-server:ci .
       # http.kali.org redirects to a geo mirror that is not always reachable from GitHub runners.
-      - run: docker build --build-arg DEBIAN_MIRROR=http://deb.debian.org --build-arg KALI_MIRROR=http://kali.download/kali --build-arg COREPACK_NPM_REGISTRY=https://registry.npmjs.org -f docker/worker.Dockerfile -t tessera-runtime:ci .
+      - run: docker build --target runtime --build-arg DEBIAN_MIRROR=http://deb.debian.org --build-arg KALI_MIRROR=http://kali.download/kali --build-arg COREPACK_NPM_REGISTRY=https://registry.npmjs.org -t tessera-runtime:ci .
       - run: pnpm test:docker
         env:
           TESSERA_APP_IMAGE: tessera-server:ci

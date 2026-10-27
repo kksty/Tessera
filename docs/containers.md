@@ -4,10 +4,12 @@
 
 ## 两个镜像
 
-| 镜像                    | 用途                                             | 构建文件                                          |
-| ----------------------- | ------------------------------------------------ | ------------------------------------------------- |
-| `tessera-server:<tag>`  | Server 与 Dispatcher（同一镜像，不同命令）       | 根目录 `Dockerfile`                               |
-| `tessera-runtime:<tag>` | Dispatcher 动态创建的项目 Worker，含 Kali 工具链 | `docker/worker.Dockerfile`，默认 `runtime` target |
+| 镜像                    | 用途                                             | 构建 target                            |
+| ----------------------- | ------------------------------------------------ | -------------------------------------- |
+| `tessera-server:<tag>`  | Server 与 Dispatcher（同一镜像，不同命令）       | 根目录 `Dockerfile` 的 `server`        |
+| `tessera-runtime:<tag>` | Dispatcher 动态创建的项目 Worker，含 Kali 工具链 | 根目录 `Dockerfile` 的 `runtime`/`full` |
+
+两个镜像共用 `Dockerfile` 里同一个 Node 构建 stage；`server` 是最后一个 stage，因此直接执行 `docker build .` 仍然构建服务端镜像。Worker 的 `runtime` / `full` 是显式 target，不会被默认构建。
 
 `worker-image` 是一次性服务：构建并校验 Worker 镜像后执行 `node --version` 退出。实际项目 Worker 由 Dispatcher 按 `TESSERA_WORKER_IMAGE` 创建，不是常驻服务。
 
@@ -19,12 +21,23 @@
 docker compose build
 ```
 
+不经过 Compose 时，显式指定 target：
+
+```sh
+docker build --target server  -t tessera-server:latest  .
+docker build --target runtime -t tessera-runtime:latest .
+```
+
 首次构建包含 Node 依赖和 Kali 工具链，耗时明显长于后续构建；之后复用 Docker 层缓存。构建参数通过 `.env` 覆盖，`.env.example` 中有完整列表：
 
 ```sh
 DEBIAN_MIRROR=https://mirrors.ustc.edu.cn
 KALI_MIRROR=http://mirrors.ustc.edu.cn/kali
 COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+# 容器网络无法访问 github.com 时，为 chainreactors 的 release 资源加代理前缀
+CHAINREACTORS_PROXY=https://ghproxy.net
+# 容器网络无法访问 pypi.org 时，为 dirsearch 兼容 wheel 指定 PyPI 镜像
+PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/web/simple
 ```
 
 `TESSERA_WORKER_TARGET=full` 会构建包含 `kali-linux-headless`、netexec、enum4linux-ng、bloodyad、coercer、pwncat、chisel、naabu、gitleaks、adb 等可选工具的 Worker，体积更大：

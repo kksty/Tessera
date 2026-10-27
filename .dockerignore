@@ -1,4 +1,5 @@
 .git
+.github
 node_modules
 dist
 .tessera
@@ -7,6 +8,8 @@ datas
 dispatch.yaml
 test-results
 explore-shots
+compose.yaml
+compose.volume.yaml
 docs
 README
 tessera

@@ -10,6 +10,15 @@ import urllib.request
 from pathlib import Path
 
 
+# Optional GitHub-release prefix for networks where github.com is unreachable
+# from the container. The pinned SHA-256 below is still checked after download.
+PROXY = os.environ.get("CHAINREACTORS_PROXY", "").strip().rstrip("/")
+
+
+def source(url: str) -> str:
+    return f"{PROXY}/{url}" if PROXY else url
+
+
 def download(asset):
     # Official release assets support byte ranges. Bound both concurrency and memory;
     # the complete pinned hash is still checked before installing any executable.
@@ -18,7 +27,7 @@ def download(asset):
 
     def part(index):
         start, end = size * index // count, size * (index + 1) // count - 1
-        request = urllib.request.Request(asset["url"], headers={
+        request = urllib.request.Request(source(asset["url"]), headers={
             "User-Agent": "tessera-worker-build", "Range": f"bytes={start}-{end}",
         })
         with urllib.request.urlopen(request, timeout=120) as response:
