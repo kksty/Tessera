@@ -15,6 +15,111 @@
   padding: 2px;
 }
 
+/* ---------- 分区导航 ---------- */
+.settings-nav {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: -6px 0 var(--s4);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-faint);
+  background: var(--bg);
+}
+
+/* .content 有 28px 上内边距，吸顶时用同色条补上这段缝隙，避免卡片从导航上方露出来。 */
+.settings-nav::before {
+  content: "";
+  position: absolute;
+  top: -28px;
+  right: 0;
+  left: 0;
+  height: 28px;
+  background: var(--bg);
+  pointer-events: none;
+}
+
+.settings-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--f-sm);
+  white-space: nowrap;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+
+.settings-nav button:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.settings-nav button[aria-current="true"] {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.settings-nav-flag {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 跳转后让卡片标题避开吸顶的分区导航。 */
+.page-settings .card {
+  scroll-margin-top: 80px;
+}
+
+/* ---------- 折叠说明 ---------- */
+.settings-disclosure {
+  margin: 0 0 var(--s4);
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.settings-disclosure summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-3);
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-disclosure summary svg {
+  transition: transform var(--fast);
+}
+
+.settings-disclosure[open] summary svg {
+  transform: rotate(90deg);
+}
+
+.settings-disclosure summary:hover {
+  color: var(--ink);
+}
+
+.settings-disclosure-body,
+.settings-disclosure > .settings-hint {
+  margin: 6px 0 0;
+  line-height: 1.6;
+}
+
 /* ---------- 字段网格 ---------- */
 .settings-grid {
   display: grid;
@@ -271,6 +376,22 @@
   border-color: var(--accent-line);
 }
 
+.settings-savebar[data-invalid="true"] {
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+}
+
+.settings-savebar[data-invalid="true"] .settings-savebar-count {
+  color: var(--danger);
+}
+
+.settings-savebar-shortcut {
+  margin-right: 2px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
 .settings-savebar-state {
   display: flex;
   align-items: baseline;
@@ -315,6 +436,10 @@
     width: 100%;
     justify-content: flex-end;
   }
+
+  .settings-savebar-shortcut {
+    display: none;
+  }
 }
 
 @media (max-width: 760px) {
@@ -323,6 +448,20 @@
     flex-wrap: wrap;
     align-items: flex-start;
     gap: var(--s4);
+  }
+}
+
+@media (max-width: 1080px) {
+  /* 与 .content 在窄屏的 20px 上内边距保持一致。 */
+  .settings-nav::before {
+    top: -20px;
+    height: 20px;
+  }
+}
+
+@media (max-width: 640px) {
+  .page-settings .card {
+    scroll-margin-top: 100px;
   }
 }
 

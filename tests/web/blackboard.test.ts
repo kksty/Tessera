@@ -12,7 +12,7 @@ import { discoveryElements, graphElements } from "../../apps/web/src/Blackboard.
 import { applyLayout } from "../../apps/web/src/layouts.js";
 import { chainElements, scopeSeeds, scopeSize } from "../../apps/web/src/graph-scope.js";
 import { blackboardEvents, blackboardIndexAt, replay, replayBoard } from "../../apps/web/src/replay.js";
-import { projectActivity } from "../../apps/web/src/project-activity.js";
+import { projectActivity, kindLabel } from "../../apps/web/src/project-activity.js";
 
 test("黑板时间线只保留会改变画面的事件，用量与证据归档不产生新的时刻", () => {
   const store = new Store(":memory:");
@@ -21,7 +21,6 @@ test("黑板时间线只保留会改变画面的事件，用量与证据归档�
       createProjectSchema.parse({ title: "Board timeline", origin: "https://example.test", goal: "Assess" }),
     ).project.id;
     const step = store.manualStep(id, { from: ["origin"], description: "Check login", creator: "human", claim: true });
-    store.fact(id, step.id, { worker: "human", description: "Login accepts admin/admin", evidence_ids: [] });
     store.hint(id, "Also try the password reset flow");
     store.mutate(id, "usage.recorded", false, (g) => {
       g.usage.push({
@@ -44,6 +43,12 @@ test("黑板时间线只保留会改变画面的事件，用量与证据归档�
         sha256: "0".repeat(64),
         created_at: new Date().toISOString(),
       });
+    });
+    // Evidence enters the active graph only when a claim cites it.
+    store.fact(id, step.id, {
+      worker: "human",
+      description: "Login accepts admin/admin",
+      evidence_ids: ["e001"],
     });
     // 归档之后还有一次图变化：回放这一时刻应带上期间的全部事件细节。
     store.hint(id, "Check the admin console");
@@ -114,6 +119,38 @@ test("删除前后的事件回放保留各时点图，当前时间线只标记�
     const activity = projectActivity(events, store.get(id), true);
     assert.equal(activity.filter((row) => row.title.startsWith("工作图已删除")).length, 1);
     assert.ok(!JSON.stringify(activity).includes("REMOVED_REPLAY_BODY"));
+  } finally {
+    store.close();
+  }
+});
+
+test("项目时间线的每一步都用中文描述，不把 decide.planned 这类事件类型直接显示出来", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Chinese timeline", origin: "https://example.test", goal: "Assess" }),
+    ).project.id;
+    const job = store.claim(id, "planner", 0)!,
+      read = store.get(id);
+    store.submitDecisions(
+      id,
+      submitDecisionsSchema.parse({
+        worker: job.worker,
+        submission_id: "plan",
+        revision: read.revision,
+        observation_revision: read.observation_revision,
+        planning_revision: read.planning_revision,
+        steps: [{ from: ["origin"], description: "校验登录入口" }],
+      }),
+      job.run_id,
+    );
+    const rows = projectActivity(store.events(id), store.get(id), true);
+    assert.ok(rows.some((row) => row.kind === "decide.planned"));
+    // 默认视图与「全部事件」共用同一条中文标题；未知类型也回落到中文兜底。
+    assert.equal(kindLabel("decide.planned"), "提交探索计划");
+    assert.equal(kindLabel("some.future.kind"), "其他事件");
+    for (const row of rows)
+      assert.doesNotMatch(row.title, /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/i, `事件类型应显示中文：${row.title}`);
   } finally {
     store.close();
   }

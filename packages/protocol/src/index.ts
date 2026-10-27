@@ -1,4 +1,5 @@
 export * from "./schemas.js";
+export * from "./domains.js";
 export type * from "./models.js";
 export * from "./coverage.js";
 export * from "./graph-relations.js";

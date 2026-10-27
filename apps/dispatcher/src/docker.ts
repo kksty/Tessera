@@ -165,8 +165,8 @@ export class DockerBackend implements JobBackend {
         HostConfig: {
           NetworkMode: config.network,
           Mounts: [{ Type: "volume", Source: volume, Target: "/workspace" }],
-          // 渗透工具需要原始套接字与网络配置能力：nmap 的 SYN / OS 探测、arp-scan、
-          // tcpdump，以及其它带文件能力的二进制。显式声明，不依赖守护进程默认权能集。
+          // 渗透工具需要原始套接字与网络配置能力：tcpdump、arp-scan，
+          // 以及其它需要原始套接字的工具。显式声明，不依赖守护进程默认权能集。
           CapAdd: ["NET_RAW", "NET_ADMIN"],
         },
         User: "root",
@@ -235,6 +235,10 @@ export class DockerBackend implements JobBackend {
         `TESSERA_CAPTURE_UPSTREAM=${process.env.TESSERA_CAPTURE_UPSTREAM || ""}`,
         `TESSERA_CAPTURE_BYPASS=${process.env.TESSERA_CAPTURE_BYPASS || ""}`,
         `TESSERA_CAPTURE_TLS_MAX=${process.env.TESSERA_CAPTURE_TLS_MAX || ""}`,
+        // 目录刷新是每个 Runner 进程一次的网络检查；部署显式离线时沿用同一开关，
+        // 否则队列会为每次 Run 多等最多 8 秒的目录超时。Pi 只判断变量是否定义，
+        // 因此 `PI_OFFLINE=`（空值）也必须原样透传。
+        ...(process.env.PI_OFFLINE === undefined ? [] : [`PI_OFFLINE=${process.env.PI_OFFLINE}`]),
       ],
       AttachStdout: true,
       AttachStderr: true,

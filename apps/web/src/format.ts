@@ -1,9 +1,7 @@
 /** 统一的展示格式化与状态文案，避免各页面各写一套。 */
 
 export const fmt = (value: string | number | null | undefined) =>
-  value === null || value === undefined
-    ? "—"
-    : new Date(value).toLocaleString("zh-CN", { hour12: false });
+  value === null || value === undefined ? "—" : new Date(value).toLocaleString("zh-CN", { hour12: false });
 
 export const fmtDate = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) : "—";
@@ -51,8 +49,7 @@ export function duration(ms: number) {
   return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`;
 }
 
-export const pct = (part: number, total: number) =>
-  total ? Math.round((part / total) * 100) : 0;
+export const pct = (part: number, total: number) => (total ? Math.round((part / total) * 100) : 0);
 
 export const statusLabels: Record<string, string> = {
   active: "运行中",
@@ -68,6 +65,7 @@ export const statusLabels: Record<string, string> = {
   approved: "已批准",
   cooled: "冷处理",
   observation: "观测",
+  observed: "已观测",
   disputed: "有争议",
   satisfied: "已满足",
   withdrawn: "已撤销",
@@ -94,21 +92,12 @@ export const severityLabels: Record<string, string> = {
   ungraded: "未定级",
 };
 
-export const severityOrder = [
-  "critical",
-  "high",
-  "medium",
-  "low",
-  "informational",
-  "ungraded",
-] as const;
+export const severityOrder = ["critical", "high", "medium", "low", "informational", "ungraded"] as const;
 
 export type SeverityKey = (typeof severityOrder)[number];
 
 /** 项目状态 → 语义色。 */
-export const statusTone = (
-  status: string,
-): "accent" | "success" | "warn" | "danger" | "neutral" => {
+export const statusTone = (status: string): "accent" | "success" | "warn" | "danger" | "neutral" => {
   switch (status) {
     case "active":
       return "accent";
@@ -125,9 +114,7 @@ export const statusTone = (
   }
 };
 
-export const reviewTone = (
-  status: string,
-): "accent" | "success" | "warn" | "danger" | "neutral" => {
+export const reviewTone = (status: string): "accent" | "success" | "warn" | "danger" | "neutral" => {
   switch (status) {
     case "pass":
       return "success";
@@ -150,6 +137,4 @@ export const verdictLabel: Record<string, string> = {
 
 /** 数字紧凑显示：1.2k / 12.4k。 */
 export const compactNumber = (value: number) =>
-  value >= 10000
-    ? `${(value / 1000).toFixed(1)}k`
-    : value.toLocaleString("zh-CN");
+  value >= 10000 ? `${(value / 1000).toFixed(1)}k` : value.toLocaleString("zh-CN");

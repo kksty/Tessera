@@ -1,4 +1,0 @@
-#!/bin/sh
-# Preserve Nmap routing, privileges and user proxychains settings; no capture injection.
-export NMAP_PRIVILEGED=1
-exec setpriv --reuid tessera-scan --regid tessera-scan --clear-groups --inh-caps +net_raw,+net_admin,+dac_override --ambient-caps +net_raw,+net_admin,+dac_override /usr/lib/nmap/nmap "$@"

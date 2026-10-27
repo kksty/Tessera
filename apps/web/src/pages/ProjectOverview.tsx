@@ -33,6 +33,7 @@ import {
 import { SeverityBar } from "../components/charts.js";
 import { CoverageTable } from "../components/CoverageTable.js";
 import { LeadList } from "../components/LeadList.js";
+import { ToolLeaderboard } from "../components/ToolLeaderboard.js";
 import { Card, EmptyState, Kpi, Modal, SeverityBadge, StatusPill } from "../components/ui.js";
 import { ProjectHeader } from "../components/Shell.js";
 import { StepDecision } from "../components/StepDecision.js";
@@ -524,6 +525,8 @@ export function ProjectOverviewPage() {
           </div>
         </Card>
       </div>
+
+      <ToolLeaderboard graph={graph} />
 
       <div className="split-grid">
         <Card

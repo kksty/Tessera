@@ -15,7 +15,7 @@ import {
 import { RuntimeConfig } from "../../apps/server/src/runtime.js";
 import { Store } from "../../packages/core/src/store.js";
 import { buildApp } from "../helpers/server.js";
-import type { ModelConfig } from "../../packages/protocol/src/model-config.js";
+import { sameModelDeployment, type ModelConfig } from "../../packages/protocol/src/model-config.js";
 
 const config = (patch: Partial<ModelConfig> = {}): ModelConfig => ({
   id: "fixture",
@@ -24,6 +24,22 @@ const config = (patch: Partial<ModelConfig> = {}): ModelConfig => ({
   api_key: "test",
   context_window: 0,
   ...patch,
+});
+
+test("an empty native-provider endpoint still counts as the same configured deployment", () => {
+  // Legacy Pi-native configs have no base URL. The key reused by /runtime/model-check
+  // must still match them, otherwise a stored credential is silently dropped.
+  assert.equal(sameModelDeployment("", "", "openai-completions"), true);
+  assert.equal(sameModelDeployment("", "https://api.deepseek.com", "openai-completions"), false);
+  assert.equal(
+    sameModelDeployment("https://api.deepseek.com/v1", "https://api.deepseek.com", "openai-completions"),
+    true,
+  );
+  assert.equal(
+    sameModelDeployment("https://api.deepseek.com", "https://api.deepseek.com/v1", "openai-completions"),
+    true,
+  );
+  assert.equal(sameModelDeployment("https://api.other.test", "https://api.deepseek.com", "openai-completions"), false);
 });
 
 test("Pi providers and model catalog retain provider identity, native protocol, limits and compatibility", async () => {
@@ -38,7 +54,7 @@ test("Pi providers and model catalog retain provider identity, native protocol, 
       assert.equal(row.provider, known.provider);
       assert.equal(row.api, known.api);
       assert.equal(row.context_window, known.contextWindow);
-      assert.equal(row.max_output_tokens, Math.min(known.maxTokens, known.contextWindow - 4096));
+      assert.equal(row.max_output_tokens, known.maxTokens);
       assert.equal(row.reasoning, known.reasoning);
       const registered = await configuredModel(config({ provider: id, id: row.id, base_url: "" }));
       assert.deepEqual(registered.model.compat, known.compat);
@@ -57,12 +73,54 @@ test("custom gateways cannot inherit an unrelated same-ID model or protocol", as
   assert.equal(custom.model.compat, undefined);
   assert.deepEqual(custom.model.input, ["text"]);
   assert.equal(custom.model.contextWindow, 16000);
-  assert.equal(custom.model.maxTokens, 11904);
+  // Pi's models.json default output limit, not a Tessera-side window subtraction.
+  assert.equal(custom.model.maxTokens, 16384);
   const settings = modelSettings(custom.model).getCompactionSettings(custom.model);
-  assert.equal(settings.reserveTokens, 4000);
-  assert.ok(settings.keepRecentTokens + settings.reserveTokens < custom.model.contextWindow);
+  // Tessera 不再按窗口比例改写压缩预算；完全沿用 Pi 的默认策略。
+  assert.deepEqual(settings, { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 });
+  const metadata = await modelMetadata(config({ id: native.id, context_window: 32000 }));
+  assert.deepEqual(metadata.compaction, {
+    enabled: true,
+    reserveTokens: 16384,
+    keepRecentTokens: 20000,
+    threshold: 32000 - 16384,
+  });
   assert.deepEqual(await modelCatalog(config()), []);
   assert.equal((await modelMetadata(config({ id: native.id }))).context_source, "default");
+});
+
+test("Pi applies its custom-model defaults without a Tessera-side output clamp", async () => {
+  const tiny = await modelMetadata(config({ context_window: 4096 }));
+  assert.equal(tiny.context_window, 4096);
+  // Pi's models.json default for an unspecified output limit is 16,384. Pi clamps
+  // the actual request against the remaining window; Tessera must not rewrite it.
+  assert.equal(tiny.max_output_tokens, 16384);
+  // Pi still owns compaction: a window below its 16K reserve yields a non-positive
+  // threshold and compacts immediately; the settings page warns about this instead
+  // of silently scaling Pi's budget.
+  assert.equal(tiny.compaction.reserveTokens, 16384);
+  assert.equal(tiny.compaction.threshold, 4096 - 16384);
+  const normal = await modelMetadata(config({ context_window: 8192 }));
+  assert.equal(normal.max_output_tokens, 16384);
+});
+
+test("local custom deployments use Pi compaction defaults unchanged", async () => {
+  const local = await modelMetadata(
+    config({
+      id: "qwen3.8-27b",
+      base_url: "http://192.168.0.10:8006/v1",
+      context_window: 200000,
+      max_output_tokens: 20000,
+    }),
+  );
+  assert.equal(local.provider, "tessera");
+  assert.equal(local.context_source, "configured");
+  assert.deepEqual(local.compaction, {
+    enabled: true,
+    reserveTokens: 16384,
+    keepRecentTokens: 20000,
+    threshold: 200000 - 16384,
+  });
 });
 
 test("endpoint inference is exact and manual ceilings are respected consistently", async () => {
@@ -78,9 +136,34 @@ test("endpoint inference is exact and manual ceilings are respected consistently
   assert.equal(ceiling.context_source, "configured");
   const mismatch = await modelMetadata(config({ id: native.id, base_url: native.base_url + "/other" }));
   assert.equal(mismatch.provider, "tessera");
+  // 官方 OpenAI 兼容端点允许基础地址后追加可选的 /v1（DeepSeek 即如此）：仍按目录识别。
+  const withV1 = await modelMetadata(config({ id: native.id, base_url: native.base_url + "/v1" }));
+  assert.equal(withV1.provider, "deepseek");
+  assert.equal(withV1.context_source, "pi");
+  assert.equal(withV1.base_url, native.base_url + "/v1");
+  // 目录侧带 /v1、配置侧不带 /v1 是同一个端点的另一种写法（方向也要对称）。
+  const hosted = (await modelCatalog(config({ provider: "baseten", base_url: "" })))[0];
+  const withoutV1 = await modelMetadata(
+    config({
+      id: hosted.id,
+      provider: "",
+      api: hosted.api,
+      base_url: hosted.base_url.replace(/\/v1$/, ""),
+    }),
+  );
+  assert.equal(withoutV1.provider, "baseten");
+  assert.equal(withoutV1.context_source, "pi");
   const explicit = await modelMetadata(config({ provider: "custom", id: native.id, base_url: native.base_url }));
   assert.equal(explicit.provider, "tessera");
   const mini = (await modelCatalog(config({ provider: "minimax", base_url: "" })))[0];
+  // A protocol override is composed from a models.json definition: an unset window
+  // is Pi's default, not the catalog value, so the metadata must not claim "pi".
+  const overridden = await modelMetadata(
+    config({ provider: "minimax", id: mini.id, api: "openai-completions", base_url: mini.base_url }),
+  );
+  assert.equal(overridden.context_window, 128000);
+  assert.equal(overridden.context_source, "default");
+  assert.equal(overridden.catalog_match?.context_window, mini.context_window);
   for (const suffix of ["/v1", "/v1/messages", "/v1/messages/"]) {
     const normalized = await modelMetadata(
       config({ provider: "minimax", id: mini.id, api: "anthropic-messages", base_url: mini.base_url + suffix }),
@@ -249,6 +332,18 @@ test("capacity probe stays inside a small declared window instead of failing it"
     assert.equal(capacity.context_probe_tokens, 512);
     assert.ok(capacity.max_tokens > 0 && capacity.max_tokens <= 4096);
     assert.ok(JSON.stringify(sent).length < 8000, "small windows get a small probe");
+    // A 200K declaration is only probed to the 32K cost ceiling; say so instead of implying full coverage.
+    const large = config({
+      base_url: provider.listeningOrigin + "/v1",
+      context_window: 200000,
+      max_output_tokens: 20000,
+    });
+    const largeResponse = await app.inject({ method: "POST", url: "/api/runtime/model-check", payload: large });
+    assert.equal(largeResponse.statusCode, 200, largeResponse.body);
+    const largeCapacity = largeResponse.json().capacity;
+    assert.equal(largeCapacity.context_probe_tokens, 32768);
+    assert.equal(largeCapacity.context_probe_limit, 32768);
+    assert.equal(largeCapacity.context_probe_capped, true);
   } finally {
     await app.close();
     await provider.close();

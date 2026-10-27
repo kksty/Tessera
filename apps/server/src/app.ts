@@ -5,6 +5,8 @@ import { resolve, dirname, join } from "node:path";
 import { z, ZodError } from "zod";
 import { stringify } from "yaml";
 import { Store, DomainError } from "../../../packages/core/src/store.js";
+import { domainStats } from "../../../packages/core/src/domain-stats.js";
+import { stepCosts } from "../../../packages/core/src/step-costs.js";
 import { memoryEntry, readMemoryRecord } from "../../../packages/core/src/memory.js";
 import {
   createProjectSchema,
@@ -28,8 +30,10 @@ import {
   confirmedVulnerability,
   findingKind,
   classificationReviewRequired,
+  testDomainSchema,
 } from "../../../packages/protocol/src/index.js";
 import type { Graph, Job, Run } from "../../../packages/protocol/src/index.js";
+import type { ToolUsageReport } from "../../../packages/protocol/src/tool-usage.js";
 import { modelIssue, redactModelError } from "../../../packages/protocol/src/model-errors.js";
 import { RuntimeConfig } from "./runtime.js";
 import { registerRuntimeRoutes } from "./runtime-routes.js";
@@ -537,6 +541,21 @@ export function buildApp(
           req.params.step,
         );
       });
+      api.get<{ Params: { id: string; step: string }; Querystring: { limit?: string; run_id?: string } }>(
+        "/projects/:id/fgs/steps/:step/traffic",
+        (req) => {
+          workerCheck(req, req.params.id);
+          const step = store.get(req.params.id).steps.find((item) => item.id === req.params.step);
+          if (!step) throw new DomainError(404, "Step not found");
+          const query = z
+            .object({
+              limit: z.coerce.number().int().min(1).max(500).default(200),
+              run_id: text.optional(),
+            })
+            .parse(req.query);
+          return store.traffic.listForStep(req.params.id, step.id, query.run_id || step.run_id, query.limit);
+        },
+      );
       api.put<{ Params: { id: string; step: string } }>("/projects/:id/fgs/steps/:step", (req) => {
         operatorCheck(req);
         return store.updateStep(
@@ -550,6 +569,21 @@ export function buildApp(
               // 人工改写任务描述：下一次 Decide 入口读到的就是新文本。
               description: text.optional(),
               expected_version: z.number().int().positive().optional(),
+            })
+            .strict()
+            .parse(req.body),
+        );
+      });
+      api.put<{ Params: { id: string; step: string } }>("/projects/:id/fgs/steps/:step/classification", (req) => {
+        operatorCheck(req);
+        // 人工补测试域：只是分组标签，不需要版本号，也不会让 Decide 重新规划。
+        return store.classifyStep(
+          req.params.id,
+          req.params.step,
+          z
+            .object({
+              test_domain: testDomainSchema.nullable().optional(),
+              focus: z.string().trim().max(20).optional(),
             })
             .strict()
             .parse(req.body),
@@ -591,6 +625,11 @@ export function buildApp(
         operatorCheck(req);
         return store.duplicateFindings(req.params.id);
       });
+      // Exact captured HTTP flows for a Finding, used by the Finding dossier.
+      api.get<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/traffic", (req) => {
+        operatorCheck(req);
+        return store.findingTraffic(req.params.id, req.params.fid);
+      });
       api.put<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/details", (req) => {
         operatorCheck(req);
         const { expected_version, ...payload } = z
@@ -616,6 +655,15 @@ export function buildApp(
       api.post<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/approval", (req) => {
         operatorCheck(req);
         return store.setFindingApproval(req.params.id, req.params.fid, findingApprovalSchema.parse(req.body));
+      });
+      // Operator undo for a Finding hidden by Decide deletion; Facts/Steps stay in history.
+      api.post<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/restore", (req) => {
+        operatorCheck(req);
+        const body = z
+          .object({ creator: z.string().trim().min(1).max(200).default("human") })
+          .strict()
+          .parse(req.body ?? {});
+        return store.restoreFinding(req.params.id, req.params.fid, body.creator);
       });
       api.get<{ Params: { id: string }; Querystring: { limit?: string } }>("/projects/:id/runs", (req) => {
         operatorCheck(req);
@@ -730,6 +778,25 @@ export function buildApp(
         store.get(req.params.id);
         return store.traffic.setStatus(req.params.id, trafficStatusSchema.parse(req.body));
       });
+      // Explicit one-shot replay: sends the stored or operator-edited request and
+      // returns the actual response without archiving it. Operator-only; never
+      // triggered by a model.
+      api.post<{ Params: { id: string; flow: string } }>("/projects/:id/traffic/:flow/resend", async (req) => {
+        operatorCheck(req);
+        const edited =
+          req.body == null
+            ? undefined
+            : z
+                .object({
+                  request: z
+                    .string()
+                    .max(9 * 1024 * 1024)
+                    .optional(),
+                })
+                .strict()
+                .parse(req.body).request;
+        return store.resendTraffic(req.params.id, req.params.flow, edited);
+      });
       api.get<{ Params: { id: string; flow: string } }>("/projects/:id/traffic/:flow", (req) => {
         operatorCheck(req);
         store.get(req.params.id);
@@ -815,6 +882,49 @@ export function buildApp(
                 "Summaries cover all stored events through highwater, including events before after. Missing tails, chunks, unknown usage and truncation stay unknown; accepted submissions do not prove semantic accuracy.",
               note: "Diagnostic excerpts, not original evidence. Events are best-effort; missing events do not prove no action. Raw traces remain in /workspace/runs/<worker>/. Run rows are current snapshots.",
             }) + "\n";
+            // 运行日志里带一条测试域覆盖快照：导出文件本身就能回答「各域做了多少、多少没分类」。
+            const coverage = domainStats(store.get(project));
+            yield JSON.stringify({
+              type: "domain_coverage",
+              schema: "tessera.domain-coverage.v1",
+              project_id: project,
+              generated_at: new Date().toISOString(),
+              tasks: {
+                total: coverage.total,
+                classified: coverage.classified,
+                unclassified: coverage.unclassified,
+                discarded: coverage.discarded,
+              },
+              other_ratio: Number(coverage.otherRatio.toFixed(4)),
+              core_domains: {
+                used: coverage.used,
+                total: coverage.coreTotal,
+                coverage_ratio: Number(coverage.coverage.toFixed(4)),
+              },
+              cross_domain_tasks: coverage.crossDomain,
+              domains: coverage.domains.map((domain) => ({
+                domain: domain.key,
+                steps: domain.steps,
+                facts: domain.facts,
+                findings: domain.findings,
+                task_share: Number(domain.share.toFixed(4)),
+              })),
+              note: "Current active graph; deleted and discarded Steps are excluded. Facts and Findings inherit their producing Step's test_domain; a missing test_domain counts as other.",
+            }) + "\n";
+            // 每 Step 的执行成本：导出文件自身就能排出最长的 Step，不需要另做 join。
+            const stepRuns = store.db
+              .prepare("SELECT data FROM platform_runs WHERE project_id=? ORDER BY rowid")
+              .all(project)
+              .map((row) => JSON.parse(String(row.data)) as Run);
+            const costs = stepCosts(store.get(project), stepRuns, diagnostics.runCosts(project, through));
+            yield JSON.stringify({
+              type: "step_costs",
+              schema: "tessera.step-costs.v1",
+              project_id: project,
+              generated_at: new Date().toISOString(),
+              ...costs,
+              note: "Execute Runs are grouped by Step and sorted by compaction count, then input tokens. Compaction counts come from diagnostic events; Runs without events fall back to the Pi session generation. Missing usage is counted in unknown_usage_runs, never as zero. Context failures are classified from the Run error; wall time only counts finished Runs.",
+            }) + "\n";
             let cursor = after;
             while (cursor < through) {
               const rows = diagnostics.page(project, cursor, through);
@@ -860,6 +970,30 @@ export function buildApp(
           return reply.type("application/gzip").send(source.pipe(compressed));
         },
       );
+      // 项目概览的工具调用排行：只聚合计数，不把整份诊断导出给浏览器。
+      api.get<{ Params: { id: string } }>("/projects/:id/tool-usage", (req): ToolUsageReport => {
+        operatorCheck(req);
+        store.get(req.params.id);
+        const through = diagnostics.highwater(req.params.id);
+        const tools = diagnostics.toolUsage(req.params.id, through);
+        const totals = tools.reduce(
+          (sum, tool) => ({
+            tools: sum.tools + 1,
+            calls: sum.calls + tool.calls,
+            ended: sum.ended + tool.ended,
+            errors: sum.errors + tool.errors,
+            timed: sum.timed + tool.timed,
+            elapsed_ms: sum.elapsed_ms + tool.elapsed_ms,
+          }),
+          { tools: 0, calls: 0, ended: 0, errors: 0, timed: 0, elapsed_ms: 0 },
+        );
+        return {
+          through,
+          tools,
+          totals,
+          note: "Calls count tool_start events. Errors and elapsed time come from tool_end events for the same tool; calls without an observed end stay unknown. Missing diagnostics are not backfilled.",
+        };
+      });
       api.post<{ Params: { id: string; run: string } }>("/projects/:id/runs/:run/retry", (req) => {
         operatorCheck(req);
         z.object({ confirmed: z.literal(true) })

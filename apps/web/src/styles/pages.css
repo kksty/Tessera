@@ -1930,6 +1930,161 @@
   margin-bottom: 16px;
 }
 
+/* 工具排行：一条排名一行，条形按当前筛选的最大调用数归一。 */
+.tool-leaderboard {
+  margin-bottom: 16px;
+}
+
+.tool-leaderboard-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 10px;
+}
+
+.tool-leaderboard-totals {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.tool-leaderboard-totals b {
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-leaderboard-totals [data-tone="danger"] b {
+  color: var(--danger);
+}
+
+.tool-rank {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line-faint);
+}
+
+.tool-rank-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.tool-rank-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 2px;
+}
+
+.tool-rank-no {
+  padding-top: 1px;
+  text-align: right;
+  font-size: var(--f-xs);
+  line-height: 1.5;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-rank-row[data-rank="1"] .tool-rank-no,
+.tool-rank-row[data-rank="2"] .tool-rank-no,
+.tool-rank-row[data-rank="3"] .tool-rank-no {
+  color: var(--ink-2);
+}
+
+.tool-rank-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tool-rank-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tool-rank-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  color: var(--ink);
+}
+
+.tool-rank-count {
+  margin-left: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--f-sm);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-rank-track {
+  display: block;
+  height: 5px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.tool-rank-track > i {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: var(--ink-4);
+}
+
+.tool-rank-row[data-rank="1"] .tool-rank-track > i {
+  background: var(--accent);
+}
+
+.tool-rank-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  min-height: 16px;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
+.tool-rank-error {
+  color: var(--danger);
+}
+
+.tool-leaderboard-note {
+  margin: 10px 0 0;
+  font-size: var(--f-xs);
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+
+.tool-leaderboard-quiet {
+  margin: 4px 0;
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+}
+
+.tool-leaderboard-fallback {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: var(--f-sm);
+  color: var(--danger);
+}
+
 .risk-tiles {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

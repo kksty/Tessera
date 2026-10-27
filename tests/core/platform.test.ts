@@ -413,7 +413,7 @@ test("source validation names the id kind so the model can self-correct", () => 
   try {
     const evidence = f.store.addEvidence(f.id, {
       title: "bash tool result",
-      content: "nmap output",
+      content: "gogo output",
       encoding: "utf8",
       mime_type: "text/plain",
     });

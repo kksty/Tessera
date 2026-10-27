@@ -42,6 +42,27 @@ export type TrafficSummary = Omit<TrafficRecord, "request" | "response"> & {
   response_size: number;
   truncated: boolean;
 };
+export interface FindingTraffic {
+  /** linked: ids recorded on the Finding; suggested: matched by Step/Run and entry surface. */
+  source: "linked" | "suggested" | "none";
+  records: TrafficSummary[];
+}
+
+/** A one-shot resend result. It is returned to the browser and never archived as traffic. */
+export interface TrafficResendResult {
+  method: string;
+  url: string;
+  request_head: string;
+  status: number | null;
+  protocol: string;
+  response_head: string | null;
+  body_base64: string;
+  body_size: number;
+  truncated: boolean;
+  duration_ms: number;
+  error?: string;
+}
+
 export const trafficStatusSchema = z
   .object({
     state: z.enum(["starting", "active", "degraded", "unavailable", "stopped"]),

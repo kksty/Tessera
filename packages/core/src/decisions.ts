@@ -21,7 +21,20 @@ import { reviewIssueConflicts } from "./review-issues.js";
 import { acceptInformational, informationalAwaitingReview } from "./informational-review.js";
 
 type StepInput = Pick<Step, "from" | "description"> &
-  Partial<Pick<Step, "priority" | "asset_id" | "goal_id" | "hint_ids" | "lead_ids" | "property" | "method_hint">>;
+  Partial<
+    Pick<
+      Step,
+      | "priority"
+      | "asset_id"
+      | "goal_id"
+      | "hint_ids"
+      | "lead_ids"
+      | "property"
+      | "method_hint"
+      | "test_domain"
+      | "focus"
+    >
+  >;
 export interface DecisionContext {
   db: DatabaseSync;
   mutate<T>(id: string, kind: string, observation: boolean, fn: (graph: Graph) => T): T;
@@ -679,6 +692,12 @@ export function submitDecisionBatch(
       if (input.priority !== undefined) {
         if (step.priority !== input.priority) step.version = versionOf(step) + 1;
         step.priority = input.priority;
+      }
+      // 测试域与 focus 只是分类标签：补齐旧 Step 时不改 version，也不触发重新规划。
+      if (input.test_domain && step.test_domain !== input.test_domain) step.test_domain = input.test_domain;
+      if (input.focus !== undefined) {
+        const focus = input.focus.trim();
+        if ((step.focus ?? "") !== focus) step.focus = focus || undefined;
       }
       if (input.discard && !step.concluded_at) {
         if (step.worker) ctx.endRun(g, step.worker, "cancelled", "Step discarded by Decide", step.run_id);

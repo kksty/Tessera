@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
 import { CatalogRefresh, createCatalogStore, refreshPublicCatalog } from "../../packages/models/src/catalog-refresh.js";
-import { createModelRuntime, resolveModel } from "../../packages/models/src/runtime.js";
+import { createModelRuntime } from "../../packages/models/src/runtime.js";
 
 test("catalog refresh coalesces reads, respects freshness, and retries failed refreshes", async (t) => {
   let now = Date.now(),
@@ -84,22 +84,13 @@ test("Pi remote catalogs update model limits without sending deployment keys; er
     await refresh.refresh();
     assert.equal(refresh.status.state, "ready");
     assert.equal(headers.length, 2, "the public catalog must actually be requested without a provider credential");
-    const cfg = {
-      provider: "zai",
-      id: native.id,
-      base_url: "",
-      api: native.api,
-      api_key: "private-deployment-key",
-      context_window: 0,
-    };
-    const resolved = resolveModel(live, cfg);
-    assert.equal(resolved.metadata.context_window, 765432);
-    assert.equal(resolved.model.maxTokens, 65536);
-    assert.equal(resolved.metadata.catalog_match?.via, "provider");
+    const refreshed = live.getModel("zai", native.id)!;
+    assert.equal(refreshed.contextWindow, 765432);
+    assert.equal(refreshed.maxTokens, 65536);
     invalid = true;
     await refresh.refresh(true);
     assert.equal(refresh.status.state, "partial");
-    assert.equal(resolveModel(live, cfg).metadata.context_window, 765432);
+    assert.equal(live.getModel("zai", native.id)!.contextWindow, 765432);
     assert.ok(headers.every((value) => value === undefined));
   } finally {
     await server.close();

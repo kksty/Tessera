@@ -2,7 +2,11 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { DomainError } from "../../../packages/core/src/errors.js";
 import { modelIssue, redactModelError } from "../../../packages/protocol/src/model-errors.js";
-import type { ModelConfig, ModelMetadata } from "../../../packages/protocol/src/model-config.js";
+import {
+  sameModelDeployment,
+  type ModelConfig,
+  type ModelMetadata,
+} from "../../../packages/protocol/src/model-config.js";
 import {
   configuredModel,
   modelCatalog,
@@ -48,6 +52,8 @@ function probeBudget(metadata: ModelMetadata) {
   return {
     context: Math.max(PROBE_CONTEXT_MINIMUM, Math.min(PROBE_CONTEXT_CEILING, available)),
     output: metadata.max_output_tokens,
+    // The cost ceiling means a large declaration is only probed up to 32K; report that honestly.
+    capped: available > PROBE_CONTEXT_CEILING,
   };
 }
 
@@ -117,7 +123,7 @@ export function registerRuntimeRoutes(
   const modelInput = (body: unknown) => {
     const b = modelInputSchema.parse(body);
     const matches = (stored: ModelConfig) =>
-      normalizeModelBaseURL(b.base_url, b.api) === normalizeModelBaseURL(stored.base_url, stored.api) &&
+      sameModelDeployment(b.base_url, stored.base_url, b.api) &&
       (b.provider || "") === (stored.provider || "") &&
       b.api === stored.api;
     const candidates = b.scope
@@ -202,6 +208,8 @@ export function registerRuntimeRoutes(
           context_window: metadata.context_window,
           output_limit: metadata.max_output_tokens,
           context_probe_tokens: budget.context,
+          context_probe_limit: PROBE_CONTEXT_CEILING,
+          context_probe_capped: budget.capped,
           max_tokens: sent,
           prompt_tokens: promptTokens,
           cached_tokens: usage ? usage.cacheRead + usage.cacheWrite : null,

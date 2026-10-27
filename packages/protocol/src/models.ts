@@ -6,6 +6,7 @@ import type {
   cvssSchema,
   coverageEntrySchema,
 } from "./schemas.js";
+import type { TestDomain } from "./domains.js";
 import type { ReviewGate } from "./review-scheduling.js";
 
 export type FactStatus = z.infer<typeof factStatusSchema>;
@@ -99,6 +100,10 @@ export interface Step {
   property?: string;
   /** Optional suggested technique; the executor remains free to choose its method. */
   method_hint?: string;
+  /** 测试域；只影响分组、筛选与统计，不作为完成、审核或授权门槛。 */
+  test_domain?: TestDomain;
+  /** 域内细节，≤20 字；后渗透使用「提权：SUID」这类固定前缀。 */
+  focus?: string;
   priority: number;
   /** Incremented by execute, close, reopen, discard and priority changes; settle checks it. */
   version?: number;
@@ -158,10 +163,14 @@ export interface Finding {
     at: string;
     version: number;
     step_id?: string;
+    /** Evidence cited by the version the retest must improve on. */
+    baseline_evidence_ids?: string[];
   };
   /** Undefined only on legacy rows; null explicitly means unclassified. */
   kind?: "vulnerability" | "informational" | null;
   deleted?: NodeDeletion;
+  /** Latest operator undo of a deletion; the original tombstone stays auditable here. */
+  restored?: { at: string; by: string; deletion: NodeDeletion };
   /** Merged sources stay readable for audit; only the target remains actionable. */
   merged_into?: string;
   merge_reason?: string;
@@ -181,6 +190,7 @@ export interface Finding {
       | "description"
       | "evidence"
       | "evidence_ids"
+      | "traffic_ids"
       | "from"
       | "kind"
       | "severity"
@@ -200,6 +210,11 @@ export interface Finding {
   description: string;
   evidence: string;
   evidence_ids: string[];
+  /**
+   * HTTP flows captured by the recording proxy for this claim. The executor
+   * cites the exact request(s) it sent; operators open them from the Finding.
+   */
+  traffic_ids?: string[];
   from: string[];
   status: "candidate" | "confirmed" | "rejected";
   version: number;

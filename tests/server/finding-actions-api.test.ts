@@ -76,6 +76,14 @@ test("operator HTTP actions enforce Review, version and notes; library and repor
     assert.ok(retest.json().human_feedback.step_id);
     assert.equal((await send({ ...base, expected_version: 3, action: "delete" })).statusCode, 200);
     assert.ok(store.get(id).findings[0].deleted);
+    // Operator undo: deletion stays reversible without minting a new ID or version.
+    const restore = (payload: object) =>
+      app.inject({ method: "POST", url: `/api/projects/${id}/findings/${finding.id}/restore`, payload });
+    assert.equal((await restore({ creator: "operator" })).statusCode, 200);
+    assert.equal(store.get(id).findings[0].deleted, undefined);
+    assert.equal(store.get(id).findings[0].version, 3);
+    assert.equal(store.get(id).findings[0].restored?.deletion.reason, base.reason);
+    assert.equal((await restore({ creator: "operator" })).statusCode, 409);
     assert.equal(
       (await app.inject({ method: "POST", url: `/api/projects/${id}/findings/${finding.id}/manual`, payload: {} }))
         .statusCode,

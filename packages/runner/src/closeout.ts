@@ -1,4 +1,4 @@
-export const closeoutReads = ["read_graph", "read_evidence", "read_workspace"];
+export const closeoutReads = ["read_graph", "read_evidence", "read_workspace", "query_traffic"];
 export const closeoutWrites = ["save_evidence", "submit_fact", "submit_finding"];
 /**
  * A Decide/Review repair is not an Execute closeout: the model still needs its

@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Store } from "../../packages/core/src/store.js";
-import { createProjectSchema, findingSchema } from "../../packages/protocol/src/index.js";
+import { findingMergeConflicts, findingUpdateConflicts } from "../../packages/core/src/finding-merges.js";
+import { createProjectSchema, deletionPreviewSchema, findingSchema } from "../../packages/protocol/src/index.js";
 import { humanApproved } from "../../packages/protocol/src/finding-policy.js";
 import { pendingReviews } from "../../packages/protocol/src/review-scheduling.js";
 
@@ -110,6 +111,71 @@ test("a rejected finding cannot be approved", () => {
         }),
       /驳回/,
     );
+  } finally {
+    f.store.close();
+  }
+});
+
+test("operator approval protects the Finding from Decide deletion, withdrawal and source-side merges", () => {
+  const f = fixture();
+  try {
+    f.store.setFindingApproval(f.id, f.finding.id, {
+      approved: true,
+      expected_version: f.finding.version,
+      creator: "operator",
+    });
+    const preview = f.store.previewDeletions(
+      f.id,
+      deletionPreviewSchema.parse({ delete_nodes: [{ id: f.finding.id, reason: "Retire claim" }] }).delete_nodes,
+    );
+    assert.equal(preview.valid, false);
+    assert.match(preview.conflicts[0].reason, /Operator-approved/);
+    const other = f.store.submitFinding(
+      f.id,
+      findingSchema.parse({
+        title: "Related admin page",
+        description: "The same admin page also exposes the build id.",
+        from: ["origin"],
+        evidence_ids: [f.evidence.id],
+        kind: "vulnerability",
+      }),
+    );
+    const graph = f.store.get(f.id);
+    assert.deepEqual(
+      findingUpdateConflicts(graph, [
+        { id: f.finding.id, expected_version: 1, reason: "Retire claim", withdraw: true, changes: {} },
+      ]),
+      [
+        {
+          kind: "finding_update",
+          id: f.finding.id,
+          reason: "Operator-approved Finding cannot be withdrawn by Decide; ask the operator",
+        },
+      ],
+    );
+    const merges = [
+      {
+        target_id: other.id,
+        source_ids: [f.finding.id],
+        expected_versions: { [other.id]: 1, [f.finding.id]: 1 },
+        reason: "Deduplicate the same admin page",
+      },
+    ];
+    assert.ok(findingMergeConflicts(graph, merges).some((conflict) => /approved/.test(conflict.reason)));
+    // The operator can still unapprove and then retire or merge the claim.
+    f.store.setFindingApproval(f.id, f.finding.id, {
+      approved: false,
+      expected_version: f.finding.version,
+      creator: "operator",
+    });
+    const current = f.store.get(f.id);
+    assert.deepEqual(
+      findingUpdateConflicts(current, [
+        { id: f.finding.id, expected_version: 1, reason: "Retire claim", withdraw: true, changes: {} },
+      ]),
+      [],
+    );
+    assert.deepEqual(findingMergeConflicts(current, merges), []);
   } finally {
     f.store.close();
   }

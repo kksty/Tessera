@@ -2,10 +2,18 @@ import type { Finding, Graph, Run, decideSchema } from "../../protocol/src/index
 import type { z } from "zod";
 import { normalizeFindingIdentity } from "../../protocol/src/finding-identity.js";
 import { stepAssets } from "../../protocol/src/asset-scope.js";
+import { humanApproved } from "../../protocol/src/finding-policy.js";
 import { digest } from "./execution.js";
 
 export type FindingMerge = z.infer<typeof decideSchema>["finding_merges"][number];
 export type FindingUpdate = z.infer<typeof decideSchema>["finding_updates"][number];
+
+/**
+ * Only the immediately previous claim is kept for review comparison and the
+ * retest check. The node is working state, not a version archive: older bodies
+ * live only in the event log, and the model never reads them.
+ */
+export const KEPT_FINDING_EDITS = 1;
 
 export function archiveFinding(finding: Finding, worker: string, reason: string) {
   const {
@@ -13,6 +21,7 @@ export function archiveFinding(finding: Finding, worker: string, reason: string)
     description,
     evidence,
     evidence_ids,
+    traffic_ids,
     from,
     severity,
     severity_reason,
@@ -23,7 +32,8 @@ export function archiveFinding(finding: Finding, worker: string, reason: string)
     cvss,
     kind,
   } = finding;
-  (finding.edits ??= []).push({
+  const edits = (finding.edits ??= []);
+  edits.push({
     at: new Date().toISOString(),
     editor: worker,
     reason,
@@ -33,6 +43,7 @@ export function archiveFinding(finding: Finding, worker: string, reason: string)
       description,
       evidence,
       evidence_ids,
+      traffic_ids,
       from,
       kind,
       severity,
@@ -44,6 +55,8 @@ export function archiveFinding(finding: Finding, worker: string, reason: string)
       cvss,
     }),
   });
+  // Bounded: keep the newest snapshot only, never an unbounded revision chain.
+  if (edits.length > KEPT_FINDING_EDITS) edits.splice(0, edits.length - KEPT_FINDING_EDITS);
 }
 
 export function findingUpdateConflicts(graph: Graph, updates: FindingUpdate[]) {
@@ -55,24 +68,26 @@ export function findingUpdateConflicts(graph: Graph, updates: FindingUpdate[]) {
         ? "Finding deleted"
         : finding.merged_into
           ? `Finding merged into ${finding.merged_into}`
-          : finding.withdrawn_at && !input.restore
-            ? "Finding withdrawn; use restore:true with new supporting material"
-            : input.restore && !finding.withdrawn_at
-              ? "Only withdrawn Findings can be restored"
-              : input.restore && !Object.keys(input.changes).length
-                ? "Restoring requires revised claims or supporting evidence"
-                : input.restore &&
-                    Object.entries(input.changes).every(
-                      ([key, value]) => digest(value) === digest(finding[key as keyof Finding]),
-                    )
-                  ? "Restoring requires changed claims or new supporting evidence"
-                  : finding.version !== input.expected_version
-                    ? `Finding version changed (expected ${input.expected_version}, current ${finding.version})`
-                    : input.changes.from?.some((id) => !graph.facts.some((f) => f.id === id && !f.deleted))
-                      ? "Invalid source Fact"
-                      : input.changes.evidence_ids?.some((id) => !graph.evidence.some((e) => e.id === id))
-                        ? "Unknown evidence"
-                        : undefined;
+          : input.withdraw && humanApproved(finding)
+            ? "Operator-approved Finding cannot be withdrawn by Decide; ask the operator"
+            : finding.withdrawn_at && !input.restore
+              ? "Finding withdrawn; use restore:true with new supporting material"
+              : input.restore && !finding.withdrawn_at
+                ? "Only withdrawn Findings can be restored"
+                : input.restore && !Object.keys(input.changes).length
+                  ? "Restoring requires revised claims or supporting evidence"
+                  : input.restore &&
+                      Object.entries(input.changes).every(
+                        ([key, value]) => digest(value) === digest(finding[key as keyof Finding]),
+                      )
+                    ? "Restoring requires changed claims or new supporting evidence"
+                    : finding.version !== input.expected_version
+                      ? `Finding version changed (expected ${input.expected_version}, current ${finding.version})`
+                      : input.changes.from?.some((id) => !graph.facts.some((f) => f.id === id && !f.deleted))
+                        ? "Invalid source Fact"
+                        : input.changes.evidence_ids?.some((id) => !graph.evidence.some((e) => e.id === id))
+                          ? "Unknown evidence"
+                          : undefined;
     return reason ? [{ kind: "finding_update" as const, id: input.id, reason }] : [];
   });
 }
@@ -192,6 +207,8 @@ export function findingMergeConflicts(graph: Graph, merges: FindingMerge[]) {
       else if (finding.deleted) reason = "Finding deleted";
       else if (finding.merged_into) reason = `Finding already merged into ${finding.merged_into}`;
       else if (finding.withdrawn_at) reason = "Finding withdrawn";
+      else if (id !== merge.target_id && humanApproved(finding))
+        reason = "Operator-approved Finding cannot be merged away as a source; ask the operator";
       else if (finding.human_feedback && finding.reviewed_version <= finding.human_feedback.version)
         reason = "Resolve the operator feedback on the original Finding ID before merging";
       else if (finding.version !== merge.expected_versions[id])
@@ -233,6 +250,10 @@ export function applyFindingMerges(
     }
     target.from = [...new Set([target, ...sources].flatMap((f) => f.from))];
     target.evidence_ids = [...new Set([target, ...sources].flatMap((f) => f.evidence_ids))];
+    // Captured flows are part of the merged claim's support, like facts and evidence:
+    // the target must open every request its sources cited, not only its own.
+    const traffic = [...new Set([target, ...sources].flatMap((f) => f.traffic_ids ?? []))];
+    if (traffic.length) target.traffic_ids = traffic;
     // Conflicting ratings are not settled by choosing max/min or copying a pass.
     // Review reads all retained source records and evaluates the merged version.
     target.status = "candidate";

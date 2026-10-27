@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { workerConfig } from "../../apps/dispatcher/src/worker-config.js";
-import { configuredModel } from "../../packages/models/src/runtime.js";
+import { configuredModel, modelMetadata } from "../../packages/models/src/runtime.js";
 import type { DispatchConfig, Job } from "../../packages/protocol/src/index.js";
 import type { ModelConfig } from "../../packages/protocol/src/model-config.js";
 import { withModelRelay } from "../../packages/models/src/relay-transport.js";
@@ -31,6 +31,11 @@ test("relay capabilities preserve URL-derived Pi wire compatibility and OpenAI s
       "dispatcher",
     );
     const payloads: Record<string, unknown>[] = [];
+    // The Runner must start from the capacity resolved for the settings page, not
+    // re-derive a different fallback from its own catalog snapshot.
+    const resolved = await modelMetadata(config.model);
+    assert.equal(safe.model.context_window, resolved.context_window);
+    assert.equal(safe.model.max_output_tokens, resolved.max_output_tokens);
     for (const cfg of [config.model, safe.model]) {
       const sdk = await configuredModel(cfg);
       await sdk.runtime.completeSimple(

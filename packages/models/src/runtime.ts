@@ -1,7 +1,12 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ModelRuntime, SettingsManager, type CreateModelRuntimeOptions } from "@earendil-works/pi-coding-agent";
 import {
   MODEL_APIS,
   normalizeModelBaseURL,
+  sameModelEndpoint,
   type ModelConfig,
   type ModelMetadata,
   type ModelProvider,
@@ -11,8 +16,48 @@ import { CatalogRefresh, createCatalogStore, refreshPublicCatalog } from "./cata
 type PiModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 const supported = (model: PiModel) => (MODEL_APIS as readonly string[]).includes(model.api);
 
+/**
+ * Pi's own models.json schema. Tessera generates this document from its runtime
+ * settings and lets Pi compose the provider and model: defaults, API selection,
+ * catalog metadata, compatibility flags and request transport all stay in Pi.
+ */
+type ModelDefinition = {
+  id: string;
+  name?: string;
+  api?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning?: boolean;
+  input?: PiModel["input"];
+  inputLimits?: PiModel["inputLimits"];
+  thinkingLevelMap?: PiModel["thinkingLevelMap"];
+  cost?: PiModel["cost"];
+  promptCache?: PiModel["promptCache"];
+  samplingParams?: PiModel["samplingParams"];
+  samplingParamsByThinkingLevel?: PiModel["samplingParamsByThinkingLevel"];
+  compat?: PiModel["compat"];
+};
+type ProviderDefinition = {
+  name?: string;
+  baseUrl?: string;
+  api?: string;
+  models?: ModelDefinition[];
+  modelOverrides?: Record<string, { contextWindow?: number; maxTokens?: number }>;
+};
+type ModelsDocument = { providers: Record<string, ProviderDefinition> };
+type ModelPlan = {
+  provider: string;
+  known?: PiModel;
+  /** The composed model really takes its capacity from the catalog definition. */
+  capacityFromCatalog?: boolean;
+  document: ModelsDocument;
+};
+type LoadedModel = { runtime: ModelRuntime; model: PiModel; metadata: ModelMetadata };
+
 /** Catalog inspection and API probes never load the user's global Pi credentials/config. */
-export function createModelRuntime(options: Pick<CreateModelRuntimeOptions, "catalogBaseUrl" | "modelsStore"> = {}) {
+export function createModelRuntime(
+  options: Pick<CreateModelRuntimeOptions, "catalogBaseUrl" | "modelsStore" | "modelsPath"> = {},
+) {
   const credentials: NonNullable<CreateModelRuntimeOptions["credentials"]> = {
     read: async () => undefined,
     list: async () => [],
@@ -21,10 +66,11 @@ export function createModelRuntime(options: Pick<CreateModelRuntimeOptions, "cat
     },
     delete: async () => {},
   };
+  const { modelsPath, ...rest } = options;
   return ModelRuntime.create({
-    ...options,
+    ...rest,
     credentials,
-    modelsPath: null,
+    modelsPath: modelsPath ?? null,
     refreshOnCreate: false,
     allowModelNetwork: false,
   });
@@ -47,6 +93,7 @@ async function catalogRuntime(force = false) {
 
 export async function modelCatalogStatus(force = false) {
   await catalogRuntime(force);
+  if (force) clearConfiguredCache();
   return { ...catalogRefresh!.status };
 }
 
@@ -59,94 +106,210 @@ function providerFor(runtime: ModelRuntime, cfg: ModelConfig) {
       throw new Error(`Unsupported Pi API provider: ${cfg.provider}`);
     return cfg.provider;
   }
-  const base = normalizeModelBaseURL(cfg.base_url, cfg.api);
-  if (!base) return undefined;
-  // Exact path matching also distinguishes coding plans from regular API plans.
-  return runtime.getModels().find((m) => m.api === cfg.api && normalizeModelBaseURL(m.baseUrl, m.api) === base)
+  if (!normalizeModelBaseURL(cfg.base_url, cfg.api)) return undefined;
+  // Exact path matching also distinguishes coding plans from regular API plans;
+  // a trailing /v1 is the one documented spelling difference we tolerate.
+  return runtime.getModels().find((m) => m.api === cfg.api && sameModelEndpoint(cfg.base_url, m.baseUrl, cfg.api))
     ?.provider;
 }
 
-export function resolveModel(runtime: ModelRuntime, cfg: ModelConfig) {
-  const provider = providerFor(runtime, cfg);
-  const known = provider ? runtime.getModel(provider, cfg.id) : undefined;
-  // Explicit providers use their native protocol unless an endpoint/protocol override is supplied.
-  const template = known ?? (provider ? runtime.getModels(provider).find(supported) : undefined);
-  const api = cfg.base_url ? cfg.api : (template?.api ?? cfg.api);
-  if (!(MODEL_APIS as readonly string[]).includes(api)) throw new Error(`Unsupported model API: ${api}`);
-  const compatible = known?.api === api ? known : undefined;
-  const baseUrl = normalizeModelBaseURL(cfg.base_url || template?.baseUrl || "", api);
-  if (!baseUrl) throw new Error("请先选择 Pi 供应商或填写 API 地址。");
-  const catalogWindow = compatible?.contextWindow;
-  const contextWindow =
-    cfg.context_window > 0
-      ? Math.min(cfg.context_window, catalogWindow || cfg.context_window)
-      : catalogWindow || 128000;
-  const catalogOutput = compatible?.maxTokens;
-  const maxTokens = Math.min(
-    cfg.max_output_tokens && cfg.max_output_tokens > 0 ? cfg.max_output_tokens : catalogOutput || 16384,
-    catalogOutput || Infinity,
-    contextWindow - 4096 || 1,
-  );
-  const model: PiModel = {
-    ...compatible,
-    id: cfg.id,
-    name: compatible?.name || cfg.id,
-    provider: provider || "tessera",
-    api: api as PiModel["api"],
-    baseUrl,
-    reasoning: compatible?.reasoning ?? false,
-    input: compatible?.input || ["text"],
-    contextWindow,
-    maxTokens: Math.max(1, maxTokens),
-    cost: compatible?.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+function modelCaps(cfg: ModelConfig) {
+  return {
+    ...(cfg.context_window > 0 ? { contextWindow: cfg.context_window } : {}),
+    ...(cfg.max_output_tokens && cfg.max_output_tokens > 0 ? { maxTokens: cfg.max_output_tokens } : {}),
   };
-  const metadata: ModelMetadata = {
+}
+
+function customPlan(cfg: ModelConfig): ModelPlan {
+  const baseUrl = normalizeModelBaseURL(cfg.base_url, cfg.api);
+  if (!baseUrl) throw new Error("请先填写 API 地址。");
+  return {
+    provider: "tessera",
+    document: {
+      providers: {
+        tessera: {
+          name: "Tessera",
+          baseUrl,
+          api: cfg.api,
+          models: [{ id: cfg.id, name: cfg.id, api: cfg.api, reasoning: false, input: ["text"], ...modelCaps(cfg) }],
+        },
+      },
+    },
+  };
+}
+
+function officialPlan(runtime: ModelRuntime, cfg: ModelConfig, provider: string): ModelPlan {
+  const known = runtime.getModel(provider, cfg.id);
+  const baseUrl = cfg.base_url ? normalizeModelBaseURL(cfg.base_url, cfg.api) : undefined;
+  // A catalog model with its native protocol keeps the catalog definition. Only
+  // the deployment-specific capacity or endpoint is overlaid via modelOverrides.
+  if (known && known.api === cfg.api) {
+    return {
+      provider,
+      known,
+      capacityFromCatalog: true,
+      document: {
+        providers: {
+          [provider]: {
+            ...(baseUrl ? { baseUrl } : {}),
+            modelOverrides: { [cfg.id]: modelCaps(cfg) },
+          },
+        },
+      },
+    };
+  }
+  // An unknown ID or an explicit protocol change is still composed by Pi from a
+  // models.json definition, not by hand-building a model in Tessera.
+  const modelBase = known?.baseUrl || runtime.getModels(provider).find(supported)?.baseUrl;
+  const resolvedBase = baseUrl || modelBase;
+  if (!resolvedBase) throw new Error(`Pi 供应商 ${provider} 没有可用的 API 地址。`);
+  return {
+    provider,
+    known,
+    document: {
+      providers: {
+        [provider]: {
+          baseUrl: resolvedBase,
+          api: cfg.api,
+          models: [
+            {
+              id: cfg.id,
+              name: known?.name ?? cfg.id,
+              api: cfg.api,
+              ...(known
+                ? {
+                    reasoning: known.reasoning,
+                    input: known.input,
+                    inputLimits: known.inputLimits,
+                    thinkingLevelMap: known.thinkingLevelMap,
+                    cost: known.cost,
+                    promptCache: known.promptCache,
+                    samplingParams: known.samplingParams,
+                    samplingParamsByThinkingLevel: known.samplingParamsByThinkingLevel,
+                    compat: known.compat,
+                  }
+                : { reasoning: false, input: ["text"] }),
+              ...modelCaps(cfg),
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+function planModel(runtime: ModelRuntime | undefined, cfg: ModelConfig): ModelPlan {
+  if (!runtime) return customPlan(cfg);
+  const provider = providerFor(runtime, cfg);
+  return provider ? officialPlan(runtime, cfg, provider) : customPlan(cfg);
+}
+
+const MODELS_DIR = join(tmpdir(), "tessera-pi-models");
+async function writeModelsDocument(document: ModelsDocument) {
+  const body = JSON.stringify(document);
+  const hash = createHash("sha256").update(body).digest("hex").slice(0, 32);
+  const path = join(MODELS_DIR, `${hash}.json`);
+  await mkdir(MODELS_DIR, { recursive: true });
+  await writeFile(path, body, { mode: 0o600 });
+  return path;
+}
+
+function metadataFor(model: PiModel, cfg: ModelConfig, known?: PiModel, capacityFromCatalog = !!known): ModelMetadata {
+  const compaction = modelSettings(model).getCompactionSettings(model);
+  return {
     id: model.id,
     name: model.name,
     provider: model.provider,
-    api,
-    base_url: baseUrl,
-    context_window: contextWindow,
+    api: model.api,
+    base_url: model.baseUrl,
+    context_window: model.contextWindow,
     max_output_tokens: model.maxTokens,
-    context_source:
-      cfg.context_window > 0 && (!catalogWindow || cfg.context_window < catalogWindow)
-        ? "configured"
-        : catalogWindow
-          ? "pi"
-          : "default",
+    // A known catalog ID with a different protocol is composed from a models.json
+    // definition, so its unset capacity comes from Pi's defaults, not the catalog.
+    context_source: cfg.context_window > 0 ? "configured" : capacityFromCatalog ? "pi" : "default",
     output_source:
-      cfg.max_output_tokens && cfg.max_output_tokens > 0 && (!catalogOutput || cfg.max_output_tokens < catalogOutput)
-        ? "configured"
-        : catalogOutput
-          ? "pi"
-          : "default",
+      cfg.max_output_tokens && cfg.max_output_tokens > 0 ? "configured" : capacityFromCatalog ? "pi" : "default",
     reasoning: model.reasoning,
     input: model.input,
-    ...(compatible
+    compaction: {
+      enabled: compaction.enabled,
+      reserveTokens: compaction.reserveTokens,
+      keepRecentTokens: compaction.keepRecentTokens,
+      // Pi compacts when context > window - reserve; a window smaller than the
+      // reserve yields a non-positive threshold and compacts immediately.
+      threshold: model.contextWindow - compaction.reserveTokens,
+    },
+    ...(known
       ? {
           catalog_match: {
-            provider: compatible.provider,
-            id: compatible.id,
-            context_window: compatible.contextWindow,
-            max_output_tokens: compatible.maxTokens,
+            provider: known.provider,
+            id: known.id,
+            context_window: known.contextWindow,
+            max_output_tokens: known.maxTokens,
             via: cfg.provider ? ("provider" as const) : ("endpoint" as const),
           },
         }
       : {}),
   };
-  return { model, metadata };
+}
+
+function configuredKey(cfg: ModelConfig) {
+  // The catalog refresh replaces model metadata; a refreshed timestamp starts a new
+  // cache generation instead of serving a stale window from the previous catalog.
+  const catalogVersion = cfg.provider === "custom" ? "custom" : (catalogRefresh?.status.refreshed_at ?? "");
+  return `${catalogVersion}\n${JSON.stringify(cfg)}`;
+}
+
+const configuredCache = new Map<string, Promise<LoadedModel>>();
+const CONFIGURED_CACHE_LIMIT = 16;
+export function clearConfiguredCache() {
+  configuredCache.clear();
+}
+
+async function buildConfigured(cfg: ModelConfig): Promise<LoadedModel> {
+  // A custom endpoint is explicitly outside the Pi catalog. Do not trigger the
+  // public catalog network check for a local vLLM or proxy.
+  const runtimeCatalog = cfg.provider === "custom" ? undefined : await catalogRuntime();
+  const plan = planModel(runtimeCatalog, cfg);
+  const modelsPath = await writeModelsDocument(plan.document);
+  // Reuse the refreshed public catalog snapshot; otherwise modelOverrides would
+  // overlay the older bundled catalog and lose its compatibility metadata.
+  const runtime = await createModelRuntime({ modelsPath, modelsStore: catalogStore });
+  // Apply the catalog snapshot already installed by catalogRuntime (without a
+  // network request), so modelOverrides act on the same model metadata the
+  // settings page and API probe saw.
+  await runtime.refresh({ allowNetwork: false });
+  const model = runtime.getModel(plan.provider, cfg.id);
+  if (!model) throw new Error(`Pi 未加载模型：${plan.provider}/${cfg.id}`);
+  await runtime.setRuntimeApiKey(plan.provider, cfg.api_key || "tessera-no-key");
+  return { runtime, model, metadata: metadataFor(model, cfg, plan.known, plan.capacityFromCatalog ?? false) };
+}
+
+async function loadConfigured(cfg: ModelConfig) {
+  const key = configuredKey(cfg);
+  let loaded = configuredCache.get(key);
+  if (!loaded) {
+    loaded = buildConfigured(cfg).catch((error) => {
+      configuredCache.delete(key);
+      throw error;
+    });
+    configuredCache.set(key, loaded);
+    if (configuredCache.size > CONFIGURED_CACHE_LIMIT) {
+      const oldest = configuredCache.keys().next().value;
+      if (oldest) configuredCache.delete(oldest);
+    }
+  }
+  return loaded;
 }
 
 export async function configuredModel(cfg: ModelConfig) {
-  const { model, metadata } = resolveModel(await catalogRuntime(), cfg);
-  const runtime = await createModelRuntime();
-  runtime.registerProvider(model.provider, { baseUrl: model.baseUrl, models: [model] });
-  // Runtime keys are literal, never models.json commands or environment interpolation.
-  await runtime.setRuntimeApiKey(model.provider, cfg.api_key || "tessera-no-key");
-  return { runtime, model: runtime.getModel(model.provider, model.id)!, metadata };
+  const { runtime, model, metadata } = await loadConfigured(cfg);
+  return { runtime, model, metadata };
 }
 
 export async function modelCatalog(cfg?: ModelConfig) {
+  // 自定义端点不继承目录模型；直接返回空列表，也不触发公共目录联网刷新。
+  if (cfg?.provider === "custom") return [];
   const runtime = await catalogRuntime();
   const provider = cfg ? providerFor(runtime, cfg) : undefined;
   const rows = runtime
@@ -156,17 +319,32 @@ export async function modelCatalog(cfg?: ModelConfig) {
   if (cfg && !provider) return [];
   return rows
     .filter((m) => !cfg?.base_url || m.api === cfg.api)
-    .map(
-      (m) =>
-        resolveModel(runtime, {
+    .map((m) => {
+      const base = cfg ?? {
+        id: m.id,
+        provider: m.provider,
+        base_url: "",
+        api_key: "",
+        api: m.api,
+        context_window: 0,
+      };
+      const metadata = metadataFor(
+        m,
+        {
+          ...base,
           id: m.id,
-          provider: m.provider,
-          base_url: cfg?.base_url || "",
-          api: cfg?.base_url ? cfg.api : m.api,
-          api_key: "",
+          provider: cfg?.provider || m.provider,
+          api: m.api,
           context_window: 0,
-        }).metadata,
-    )
+          max_output_tokens: 0,
+        },
+        m,
+      );
+      return {
+        ...metadata,
+        base_url: cfg?.base_url ? normalizeModelBaseURL(cfg.base_url, cfg.api) : m.baseUrl,
+      };
+    })
     .sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
 }
 
@@ -182,17 +360,13 @@ export async function modelProviders(): Promise<ModelProvider[]> {
 }
 
 export async function modelMetadata(cfg: ModelConfig) {
-  return resolveModel(await catalogRuntime(), cfg).metadata;
+  return (await loadConfigured(cfg)).metadata;
 }
 
-/** Keep Pi's defaults for ordinary windows; fit its summary and retained history in small deployments. */
-export function modelSettings(model: PiModel, recovery = false) {
-  const defaults = SettingsManager.inMemory().getCompactionSettings(model);
-  return SettingsManager.inMemory({
-    compaction: {
-      enabled: !recovery,
-      reserveTokens: Math.min(defaults.reserveTokens, Math.floor(model.contextWindow / 4)),
-      keepRecentTokens: Math.min(defaults.keepRecentTokens, Math.floor(model.contextWindow / 3)),
-    },
-  });
+/**
+ * Settings stay in memory: Tessera never reads Pi's settings.json. Pi owns the
+ * compaction policy and its defaults; Tessera only disables it for read-only recovery.
+ */
+export function modelSettings(_model: PiModel, recovery = false) {
+  return SettingsManager.inMemory({ compaction: { enabled: !recovery } });
 }

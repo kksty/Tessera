@@ -1,12 +1,11 @@
-import { Overlay } from "./components/ui.js";
+import { Badge, Field, Modal, Overlay } from "./components/ui.js";
 import { ActionMenu } from "./components/ActionMenu.js";
 import { useEffect, useState } from "react";
 import {
   Plus,
   Check,
-  HeartPulse,
-  Unlock,
   FileCheck,
+  Flag,
   Settings,
   FileText,
   Copy,
@@ -16,11 +15,15 @@ import {
   Play,
   RotateCcw,
   Download,
+  User,
 } from "lucide-react";
 import type { Graph, ProjectSummary } from "../../../packages/protocol/src/index.js";
 import { api, path } from "./api.js";
 import { layoutOptions, localPrefs } from "./layouts.js";
+import { reviewTone, statusLabels } from "./format.js";
 import { StepDecision } from "./components/StepDecision.js";
+import { nodeReference } from "./node-reference.js";
+import { stepState } from "./workspace.js";
 type Action = (fn: () => Promise<unknown>) => Promise<boolean>;
 export function Preferences({ afterChange }: { afterChange: Action }) {
   const [open, setOpen] = useState(false),
@@ -414,6 +417,34 @@ export function ProjectExtras({
     </div>
   );
 }
+function ManualAction({
+  icon,
+  title,
+  hint,
+  tone,
+  disabled,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  hint: string;
+  tone?: "warn";
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className="manual-action" data-tone={tone} disabled={disabled} title={hint} onClick={onClick}>
+      <span className="manual-action-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="manual-action-text">
+        <strong>{title}</strong>
+        <small>{hint}</small>
+      </span>
+    </button>
+  );
+}
+
 export function WorkbenchTools({
   graph,
   selectedFacts,
@@ -430,234 +461,437 @@ export function WorkbenchTools({
   onRemoveFact: (id: string) => void;
 }) {
   const [modal, setModal] = useState<"step" | "conclude" | "complete" | null>(null);
+  const [description, setDescription] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const s = graph.steps.find((s) => s.id === selectedId),
-    actor = localPrefs().actor_name;
-  const active = graph.project.status === "active" && !replaying,
-    canOwn = !!s && !s.concluded_at && (!s.worker || s.worker === actor);
+    actor = localPrefs().actor_name,
+    selected = selectedId ? nodeReference(graph, selectedId) : null,
+    status = s ? stepState(s) : null;
+  const active = graph.project.status === "active" && !replaying;
+  const canUseTask = active && !!s && !s.discarded;
+  const canSubmit = active && !!s && !s.discarded && !s.concluded_at && (!s.worker || s.worker === actor);
+  const canDecide = canUseTask;
+  const canUseFacts = active && selectedFacts.length > 0;
+  const openSteps = graph.steps.filter((step) => !step.deleted && !step.concluded_at && !step.discarded).length;
+  const openLeads = (graph.leads ?? []).filter((lead) => lead.status === "open").length;
+  const openHints = graph.hints.filter((hint) => !hint.withdrawn_at && !hint.resolved).length;
+  const paused =
+    graph.project.status === "stopped"
+      ? "项目已暂停。先在项目页恢复项目，才能声明、关闭或完成。"
+      : graph.project.status === "completed"
+        ? "项目已完成。如需继续，先在项目页恢复评估。"
+        : "";
+  function openModal(next: "step" | "conclude" | "complete") {
+    setDescription("");
+    setModal(next);
+  }
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const values = new FormData(e.currentTarget);
-    let ok = false;
-    const description = String(values.get("description"));
-    if (modal === "step") {
-      const button = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement;
-      ok = await afterChange(() =>
-        api(path(graph.project.id, "/intents"), {
-          from: selectedFacts,
-          description,
-          creator: actor,
-          claim: button?.value === "claim",
-        }),
-      );
-    } else if (modal === "complete")
-      ok = await afterChange(() =>
-        api(path(graph.project.id, "/complete"), {
-          from: selectedFacts,
-          description,
-          worker: actor,
-        }),
-      );
-    else if (modal === "conclude" && s)
-      ok = await afterChange(() =>
-        api(path(graph.project.id, `/intents/${s.id}/conclude`), {
-          description,
-          worker: actor,
-        }),
-      );
-    if (ok) setModal(null);
+    if (!modal || !description.trim()) return;
+    setSubmitting(true);
+    try {
+      let ok = false;
+      if (modal === "step")
+        ok = await afterChange(() =>
+          api(path(graph.project.id, "/intents"), {
+            from: selectedFacts,
+            description: description.trim(),
+            creator: actor,
+          }),
+        );
+      else if (modal === "complete")
+        ok = await afterChange(() =>
+          api(path(graph.project.id, "/complete"), {
+            from: selectedFacts,
+            description: description.trim(),
+            worker: actor,
+          }),
+        );
+      else if (modal === "conclude" && s)
+        ok = await afterChange(() =>
+          api(path(graph.project.id, `/intents/${s.id}/conclude`), {
+            description: description.trim(),
+            worker: actor,
+          }),
+        );
+      if (ok) {
+        setModal(null);
+        setDescription("");
+      }
+    } finally {
+      setSubmitting(false);
+    }
   }
   return (
-    <>
-      <div className="workbench-tools">
-        <button disabled={!active || !selectedFacts.length} onClick={() => setModal("step")}>
-          <Plus size={13} />
-          声明 Step
-        </button>
-        <button disabled={!active || !selectedFacts.length} onClick={() => setModal("complete")}>
-          <Check size={13} />
-          完成项目
-        </button>
-        <button
-          disabled={!active || !canOwn}
-          onClick={() =>
-            void afterChange(() =>
-              api(path(graph.project.id, `/intents/${s!.id}/heartbeat`), {
-                worker: actor,
-              }),
-            )
-          }
-        >
-          <HeartPulse size={13} />
-          {s?.worker === actor ? "Heartbeat" : "Claim"}
-        </button>
-        <button
-          disabled={!active || !s || s.concluded_at !== null || s.worker !== actor}
-          onClick={() =>
-            void afterChange(() =>
-              api(path(graph.project.id, `/intents/${s!.id}/release`), {
-                worker: actor,
-              }),
-            )
-          }
-        >
-          <Unlock size={13} />
-          Release
-        </button>
-        <button disabled={!active || !canOwn} onClick={() => setModal("conclude")}>
-          <FileCheck size={13} />
-          Conclude
-        </button>
-        <button disabled={!active || !s} onClick={() => setDecisionOpen(true)}>
-          {s?.concluded_at ? <RotateCcw size={13} /> : <Check size={13} />}
-          {s?.concluded_at ? "重开任务" : "关闭任务"}
-        </button>
-        <span className="quiet">
-          Actor: {actor}
-          {selectedFacts.length ? ` · 已选 ${selectedFacts.length} 个事实` : ""}
-        </span>
-        {selectedFacts.map((fid) => (
-          <button
-            key={fid}
-            className="source-chip"
-            aria-label={`移除已选事实 ${fid}`}
-            onClick={() => onRemoveFact(fid)}
-          >
-            {fid} ×
-          </button>
-        ))}
-      </div>
-      {modal && (
-        <Overlay>
-          <form className="modal legacy-modal" role="dialog" aria-modal="true" aria-label="黑板操作" onSubmit={submit}>
-            <h2>
-              {
-                {
-                  step: "声明探索方向",
-                  complete: "人工完成项目",
-                  conclude: "提交探索结果",
-                }[modal]
-              }
-            </h2>
+    <div className="manual-panel">
+      <div className="manual-context" data-empty={!selectedId || undefined}>
+        <div className="manual-context-head">
+          <span className="manual-kind">{selected?.kind || "未选择"}</span>
+          {selectedId && <span className="manual-node-id mono">{selectedId}</span>}
+          {status && <Badge value={status} />}
+          <span className="manual-spacer" />
+          <span className="manual-actor" title="操作人来自本地偏好">
+            <User size={12} aria-hidden="true" />
+            {actor}
+          </span>
+        </div>
+        <p className="manual-context-text">{selected?.text || "在黑板中选中任务或事实后，相应操作才会启用。"}</p>
+        {!!selectedFacts.length && (
+          <div className="manual-selected-facts">
+            <span className="quiet">已选 {selectedFacts.length} 条事实</span>
             <div className="source-links">
-              {selectedFacts.map((f) => (
-                <span className="badge" key={f}>
-                  {f}
-                </span>
+              {selectedFacts.map((fid) => (
+                <button
+                  key={fid}
+                  type="button"
+                  className="manual-source-chip"
+                  aria-label={`移除已选事实 ${fid}`}
+                  onClick={() => onRemoveFact(fid)}
+                >
+                  {fid} <span aria-hidden="true">×</span>
+                </button>
               ))}
             </div>
-            <label>
-              {modal === "conclude"
-                ? "发现了什么事实？"
-                : modal === "complete"
-                  ? "为何目标已经满足？"
-                  : "准备探索什么？"}
-              <textarea name="description" required autoFocus />
-            </label>
-            <p className="quiet">Actor: {actor}</p>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setModal(null)}>
+          </div>
+        )}
+      </div>
+
+      {paused && <p className="manual-note">{paused}</p>}
+      {replaying && <p className="manual-note">回放中只能查看；退出回放后才能写入。</p>}
+
+      {s && (
+        <section className="manual-section">
+          <h3>当前任务</h3>
+          <div className="manual-actions">
+            {s.discarded ? (
+              <p className="manual-empty-line">该任务已废弃，不再接受关闭或重开。</p>
+            ) : s.concluded_at ? (
+              <ManualAction
+                icon={<RotateCcw size={16} />}
+                title="重开任务"
+                hint="清空关闭记录，让下一次领取直接重跑"
+                disabled={!canDecide || submitting}
+                onClick={() => setDecisionOpen(true)}
+              />
+            ) : (
+              <>
+                <ManualAction
+                  icon={<FileCheck size={16} />}
+                  title="提交结果"
+                  hint={
+                    !active
+                      ? "项目恢复后可提交"
+                      : canSubmit
+                        ? "写入一条事实并结束这个任务"
+                        : `任务正由 ${s.worker || "其他执行者"} 执行，结束后才能提交`
+                  }
+                  disabled={!canSubmit || submitting}
+                  onClick={() => openModal("conclude")}
+                />
+                <ManualAction
+                  icon={<Check size={16} />}
+                  title="关闭任务"
+                  hint="不写入事实，只记录关闭理由"
+                  disabled={!canDecide || submitting}
+                  onClick={() => setDecisionOpen(true)}
+                />
+              </>
+            )}
+          </div>
+          {s.close_reason && <p className="manual-close-reason">关闭理由：{s.close_reason}</p>}
+        </section>
+      )}
+
+      <section className="manual-section">
+        <h3>新建</h3>
+        <div className="manual-actions">
+          <ManualAction
+            icon={<Plus size={16} />}
+            title="声明任务"
+            hint={
+              replaying
+                ? "退出回放后可声明"
+                : !active
+                  ? "项目恢复后可声明"
+                  : selectedFacts.length
+                    ? `以选中的 ${selectedFacts.length} 条事实为起点`
+                    : "先在黑板选中至少一条事实"
+            }
+            disabled={!canUseFacts || submitting}
+            onClick={() => openModal("step")}
+          />
+        </div>
+      </section>
+
+      <section className="manual-section">
+        <h3>项目</h3>
+        <div className="manual-actions">
+          <ManualAction
+            icon={<Flag size={16} />}
+            title="完成项目"
+            hint={
+              replaying
+                ? "退出回放后可完成"
+                : !active
+                  ? "项目恢复后可完成"
+                  : !selectedFacts.length
+                    ? "先在黑板选中至少一条事实"
+                    : openSteps
+                      ? `仍有 ${openSteps} 个任务未结束；完成会中断在途执行`
+                      : "目标已满足，结束整个项目"
+            }
+            tone="warn"
+            disabled={!canUseFacts || submitting}
+            onClick={() => openModal("complete")}
+          />
+        </div>
+      </section>
+
+      {modal && (
+        <Modal
+          label="黑板操作"
+          title={
+            {
+              step: "声明新任务",
+              complete: "人工完成项目",
+              conclude: "提交任务结果",
+            }[modal]
+          }
+          onClose={() => setModal(null)}
+          onSubmit={submit}
+          busy={submitting}
+          footer={
+            <>
+              <button type="button" className="button" disabled={submitting} onClick={() => setModal(null)}>
                 取消
               </button>
-              {modal === "step" && (
-                <button name="action" value="declare">
-                  声明
-                </button>
-              )}
-              <button className="primary" name="action" value="claim">
-                {modal === "step" ? "声明并领取" : "确认"}
+              <button className="button primary" disabled={submitting || !description.trim()}>
+                {submitting
+                  ? "提交中…"
+                  : modal === "step"
+                    ? "声明任务"
+                    : modal === "complete"
+                      ? "完成项目"
+                      : "提交结果"}
               </button>
-            </div>
-          </form>
-        </Overlay>
+            </>
+          }
+        >
+          {modal === "step" ? (
+            <>
+              <p className="quiet">新任务会进入黑板，由调度器交给模型执行，不会自动占有执行权。</p>
+              <div className="manual-sources">
+                <span className="field-label">来源事实</span>
+                <div className="source-links">
+                  {selectedFacts.map((f) => (
+                    <span className="badge" key={f}>
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <Field label="要回答的问题" hint="写成可验证的问题；验收属性和方法建议可在任务详情里补充。">
+                <textarea
+                  required
+                  rows={4}
+                  autoFocus
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </Field>
+            </>
+          ) : modal === "complete" ? (
+            <>
+              {openSteps > 0 && <p className="banner warn">仍有 {openSteps} 个任务未结束；人工完成会中断在途执行。</p>}
+              {openLeads > 0 && <p className="banner warn">还有 {openLeads} 个 open lead 未处置。</p>}
+              {openHints > 0 && <p className="banner warn">还有 {openHints} 条 Hint 未确认关闭或撤回。</p>}
+              <p className="quiet">完成后项目标记为已完成，目标状态改为已满足；原始证据与历史保留。</p>
+              <Field label="为何目标已经满足？" hint="写清覆盖范围与仍未验证的边界，便于日后复核。">
+                <textarea
+                  required
+                  rows={4}
+                  autoFocus
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </Field>
+            </>
+          ) : (
+            <>
+              <p className="quiet">
+                {s ? `提交后会写入一条事实，并结束 ${s.id}；执行记录和证据保留。` : "提交后写入一条事实。"}
+              </p>
+              {s && (
+                <p className="manual-target mono">
+                  {s.id} · {s.description}
+                </p>
+              )}
+              <Field label="发现了什么事实？" hint="只写已由证据支持的内容；不确定的部分留作后续任务。">
+                <textarea
+                  required
+                  rows={4}
+                  autoFocus
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </Field>
+            </>
+          )}
+        </Modal>
       )}
       {decisionOpen && s && (
         <StepDecision step={s} onClose={() => setDecisionOpen(false)} onDone={() => setDecisionOpen(false)} />
       )}
-    </>
+    </div>
   );
 }
+export type QuickTab = "hints" | "goals" | "findings";
+
+type QuickTone = "neutral" | "accent" | "success" | "warn" | "danger";
+
+/** 快速面板的一行：标题和状态先读，正文其次；整行是一张可点的卡片。 */
+function QuickItem({
+  active,
+  meta,
+  tag,
+  tone,
+  title,
+  note,
+  onClick,
+}: {
+  active: boolean;
+  meta: string;
+  tag: string;
+  tone: QuickTone;
+  title: string;
+  note?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`quick-item${active ? " active" : ""}`}
+      aria-pressed={active}
+      title={title}
+      onClick={onClick}
+    >
+      <span className="quick-item-head">
+        <span className="quick-item-meta">{meta}</span>
+        <span className="quick-item-tag" data-tone={tone}>
+          {tag}
+        </span>
+      </span>
+      <span className="quick-item-title">{title}</span>
+      {note && <span className="quick-item-note">{note}</span>}
+    </button>
+  );
+}
+
+const goalStateLabels: Record<string, { label: string; tone: QuickTone }> = {
+  active: { label: "进行中", tone: "accent" },
+  satisfied: { label: "已满足", tone: "success" },
+  withdrawn: { label: "已撤回", tone: "neutral" },
+};
+
 export function QuickSidebar({
   graph,
   selectedId,
+  tab,
+  onTabChange,
   onSelect,
 }: {
   graph: Graph;
-  onSelect: (id: string) => void;
   selectedId?: string | null;
+  tab: QuickTab | null;
+  onTabChange: (tab: QuickTab | null) => void;
+  onSelect: (id: string) => void;
 }) {
-  const [tab, setTab] = useState<"hints" | "goals" | "findings" | null>(null);
+  const visibleHints = graph.hints.filter((h) => !h.withdrawn_at);
   return (
     <div className="quick-sidebar">
       <div className="quick-tabs">
         {(
           [
-            ["hints", "提示 Hints"],
-            ["goals", "目标 Goals"],
-            ["findings", "发现 Findings"],
+            ["hints", "提示"],
+            ["goals", "目标"],
+            ["findings", "发现"],
           ] as const
         ).map(([value, label]) => (
           <button
             className={tab === value ? "active" : ""}
             key={value}
-            onClick={() => setTab(tab === value ? null : value)}
+            aria-pressed={tab === value}
+            title={tab === value ? "收起列表" : "展开列表"}
+            onClick={() => onTabChange(tab === value ? null : value)}
           >
             {label}
-            <span>{value === "hints" ? graph.hints.filter((h) => !h.withdrawn_at).length : graph[value].length}</span>
+            <span>{value === "hints" ? visibleHints.length : graph[value].length}</span>
           </button>
         ))}
       </div>
       {tab && (
-        <div className="quick-content">
+        <div className="quick-content" key={tab}>
           {tab === "hints"
-            ? graph.hints
-                .filter((h) => !h.withdrawn_at)
+            ? visibleHints
                 .slice()
                 .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.id.localeCompare(b.id))
                 .map((h) => {
                   const covered = graph.steps.filter((s) => s.hint_ids?.includes(h.id)).map((s) => s.id);
+                  const tone: QuickTone = h.resolved
+                    ? h.resolved_by === "operator"
+                      ? "success"
+                      : "neutral"
+                    : covered.length
+                      ? "accent"
+                      : "warn";
+                  const status = h.resolved
+                    ? h.resolved_by === "operator"
+                      ? "已人工确认"
+                      : "历史关闭"
+                    : covered.length
+                      ? "已落实"
+                      : "待确认";
                   return (
-                    <button
-                      className={`quick-item${selectedId === h.id ? " active" : ""}`}
-                      aria-pressed={selectedId === h.id}
+                    <QuickItem
                       key={h.id}
+                      active={selectedId === h.id}
+                      meta={`优先级 ${h.priority ?? 0}`}
+                      tag={status}
+                      tone={tone}
+                      title={h.content}
+                      note={!h.resolved && covered.length ? `已落实到 ${covered.length} 个任务` : undefined}
                       onClick={() => onSelect(h.id)}
-                    >
-                      <small>
-                        {h.id} · p{h.priority ?? 0} ·{" "}
-                        {h.resolved
-                          ? h.resolved_by === "operator"
-                            ? `已人工确认`
-                            : `历史关闭`
-                          : covered.length
-                            ? `落实 ${covered.join(",")} · 待确认`
-                            : "待确认"}
-                      </small>
-                      <p>{h.content}</p>
-                    </button>
+                    />
                   );
                 })
             : tab === "goals"
-              ? graph.goals.map((g) => (
-                  <button
-                    className={`quick-item${selectedId === g.id ? " active" : ""}`}
-                    aria-pressed={selectedId === g.id}
-                    key={g.id}
-                    onClick={() => onSelect(g.id)}
-                  >
-                    <small>
-                      {g.id} · {g.state}
-                    </small>
-                    <p>{g.description}</p>
-                  </button>
-                ))
+              ? graph.goals.map((g) => {
+                  const state = goalStateLabels[g.state] ?? { label: g.state, tone: "neutral" as const };
+                  return (
+                    <QuickItem
+                      key={g.id}
+                      active={selectedId === g.id}
+                      meta="当前目标"
+                      tag={state.label}
+                      tone={state.tone}
+                      title={g.description}
+                      onClick={() => onSelect(g.id)}
+                    />
+                  );
+                })
               : graph.findings.map((f) => (
-                  <div className="quick-item" key={f.id}>
-                    <button onClick={() => onSelect(f.id)}>{f.title}</button>
-                    <small>{f.status}</small>
-                  </div>
+                  <QuickItem
+                    key={f.id}
+                    active={selectedId === f.id}
+                    meta={`第 ${f.version ?? 1} 版`}
+                    tag={statusLabels[f.review_status] || statusLabels[f.status] || f.status}
+                    tone={reviewTone(f.review_status)}
+                    title={f.title}
+                    onClick={() => onSelect(f.id)}
+                  />
                 ))}
-          {!graph[tab].length && <p className="quiet">暂无记录</p>}
+          {(tab === "hints" ? visibleHints.length : graph[tab].length) === 0 && <p className="quick-empty">暂无记录</p>}
         </div>
       )}
     </div>

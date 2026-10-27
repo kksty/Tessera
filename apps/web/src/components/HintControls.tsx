@@ -82,16 +82,16 @@ export function HintControls({ hintId }: { hintId: string }) {
             ? `已由人工确认：${hint.resolved.note}（${hint.resolved.worker}）`
             : `历史备注关闭（${hint.resolved.worker}），尚未经过新的操作员确认；请核对后重新确认或重开`
           : tasks.length
-            ? `已落实到任务 ${tasks.map((step) => step.id).join("、")}；仍需人工确认后才能完成项目`
-            : "尚未落实：下一轮 Decide 应建任务，或说明不采纳的理由；说明本身不会关闭提示"}
+            ? `已落实到 ${tasks.length} 个任务；仍需人工确认后才能完成项目`
+            : "尚未落实：下一轮决策应建任务，或说明不采纳的理由；说明本身不会关闭提示"}
       </small>
       {!hint.resolved && (hint.notes?.length ?? 0) > 0 && (
-        <small className="quiet">Decide 建议：{hint.notes?.at(-1)?.note}</small>
+        <small className="quiet">决策建议：{hint.notes?.at(-1)?.note}</small>
       )}
       <small>数字越大越先领取关联任务；不会抢占正在运行的任务。</small>
       {tasks.map((step) => (
-        <button key={step.id} className="hint-task-link" onClick={() => locateRecord(ws, step.id)}>
-          {step.id}
+        <button key={step.id} className="hint-task-link" title={step.id} onClick={() => locateRecord(ws, step.id)}>
+          <span className="hint-task-text">{step.description}</span>
           <Badge value={stepState(step)} />
           <span>{step.fact_ids.length} 条事实</span>
         </button>

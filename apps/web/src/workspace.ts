@@ -37,6 +37,9 @@ export type Page = WorkspacePage | ProjectPage;
 
 export type ModalName = "create" | "rename" | "reopen" | "discard" | null;
 
+/** Open one captured HTTP flow, optionally showing where the operator came from. */
+export type TrafficTarget = { flowId: string; findingId?: string; label?: string };
+
 export type RuntimeModel = DispatchConfig["model"] & { api_key_set?: boolean };
 
 export type RuntimeConfig = Omit<
@@ -144,6 +147,8 @@ export interface Workspace {
   evidencePreview: { item: Evidence; text?: string } | null;
   findingSeverity: string;
   focusFinding: { projectId: string; findingId: string } | null;
+  /** Set when a Finding opens its captured flow in the Traffic page. */
+  trafficTarget: TrafficTarget | null;
   paletteOpen: boolean;
   refreshing: boolean;
   node: any;
@@ -184,6 +189,8 @@ export interface Workspace {
   setFindingSeverity: (value: string) => void;
   /** 全局跳转到一个具体发现：打开项目并定位卡片。 */
   openFinding: (projectId: string, findingId: string) => void;
+  /** Open an exact captured flow in the Traffic page. */
+  openTraffic: (target: TrafficTarget) => void;
   clearFocusFinding: () => void;
   setPaletteOpen: (open: boolean) => void;
   setTheme: (theme: "light" | "dark") => void;

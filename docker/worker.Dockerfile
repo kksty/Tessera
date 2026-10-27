@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt -o Acquire::Retries=3 install -y --no-install-recommends \
     ca-certificates curl wget git jq unzip bash tmux procps \
     python3 python3-pip python3-venv ripgrep \
-    nmap sqlmap ffuf whatweb nikto dirsearch \
+    sqlmap ffuf whatweb nikto dirsearch \
     default-mysql-client redis-tools postgresql-client sqlite3 seclists \
     dnsutils iproute2 iputils-ping tcpdump netcat-openbsd \
     openssh-client sshpass proxychains4 smbclient impacket-scripts \
@@ -43,11 +43,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt -o Acquire::Retries=3 update && \
     apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt -o Acquire::Retries=3 install -y --no-install-recommends \
     python3-pwntools python3-pymongo && rm -rf /var/lib/apt/lists/*
-# Kali 的 nmap 包给 /usr/lib/nmap/nmap 打了 cap_net_raw,cap_net_admin,cap_net_bind_service 文件能力。
-# 带文件能力的二进制在容器里要求其 permitted 集合是容器权能边界集的子集，否则 execve 直接返回 EPERM
-# （表现为 "/usr/lib/nmap/nmap: Operation not permitted"，模型只能改用 Python 扫描）。
-# 项目容器以 root 运行并显式授予 NET_RAW / NET_ADMIN，这里移除文件能力，避免依赖权能跃迁。
-RUN python3 -c "import os; p='/usr/lib/nmap/nmap'; 'security.capability' in os.listxattr(p) and os.removexattr(p,'security.capability'); assert 'security.capability' not in os.listxattr(p), 'nmap file capabilities still present'"
 COPY docker/tools/chainreactors.lock.json docker/tools/install-chainreactors.py /opt/tessera/tools/
 RUN python3 /opt/tessera/tools/install-chainreactors.py
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
@@ -78,8 +73,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     mitmproxy libnss3-tools iptables && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --user-group --home-dir /var/lib/tessera-proxy --shell /usr/sbin/nologin tessera-proxy && \
     useradd --system --user-group --no-create-home --shell /usr/sbin/nologin tessera-scan
-COPY docker/traffic/nmap-wrapper /usr/local/bin/nmap
-RUN chmod 755 /usr/local/bin/nmap
 WORKDIR /workspace
 # dirsearch 0.4.3 still imports pkg_resources, removed by Kali's setuptools 84.
 # Scope the compatibility dependency to this CLI; keep system Python unchanged.
@@ -92,13 +85,17 @@ RUN python3 -m venv --system-site-packages /opt/tessera/dirsearch-venv && \
     rm /tmp/setuptools-80.9.0-py3-none-any.whl
 COPY docker/tools/dirsearch-wrapper /usr/local/bin/dirsearch
 RUN chmod 755 /usr/local/bin/dirsearch && dirsearch --help > /dev/null
+# 执行环境固定以 root 运行：端口扫描、抓包、apt 与 /workspace 文件操作都需要 root 身份。
+# Dispatcher 创建容器时也显式传 User: "root"；这里写死镜像默认身份，避免基础镜像或
+# 构建参数变化后默认用户漂移，导致工具因权限不足失败。
+USER root
 CMD ["sleep", "infinity"]
 
 FROM core AS full
 RUN apt-get update && apt-get install -y kali-linux-headless \
     netexec enum4linux-ng bloodyad coercer pwncat \
     chisel-common-binaries naabu gitleaks adb && \
-    apt-get purge -y nuclei && \
+    apt-get purge -y nuclei nmap && \
     rm -rf /var/lib/apt/lists/*
 
 # Core is the default image; full remains an explicit optional build target.

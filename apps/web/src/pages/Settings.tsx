@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ChevronRight,
   Cpu,
   Download,
   FileText,
@@ -17,6 +18,7 @@ import type { ModelConfig } from "../../../../packages/protocol/src/model-config
 import { Preferences } from "../WorkbenchTools.js";
 import { Card, Field, PageHeader, Skeleton } from "../components/ui.js";
 import { editableRuntimeUpdate, readOnlyRuntimeField } from "../runtime-config.js";
+import { changedPaths, changeSummary, FIELD_LABELS, reviewModelEnabled, runtimeFieldErrors } from "../settings-form.js";
 import type { RuntimeConfig, RuntimeModel } from "../workspace.js";
 import { useWorkspace } from "../workspace.js";
 
@@ -37,53 +39,32 @@ const blankReviewModel = (): RuntimeModel => ({
   max_output_tokens: 0,
 });
 
-/** 未保存项的中文名称；未覆盖的键回退成路径本身。 */
-const FIELD_LABELS: Record<string, string> = {
-  "model.provider": "接入方式",
-  "model.max_output_tokens": "输出上限",
-  "model.base_url": "API 地址",
-  "model.api_key": "API Key",
-  "model.api": "接口协议",
-  "model.id": "模型",
-  "model.context_window": "上下文窗口",
-  "review_model.base_url": "审核模型 API 地址",
-  "review_model.api_key": "审核模型 API Key",
-  "review_model.api": "审核模型接口协议",
-  "review_model.id": "审核模型",
-  "review_model.context_window": "审核模型上下文窗口",
-  "review_model.provider": "审核模型接入方式",
-  "review_model.max_output_tokens": "审核模型输出上限",
-  max_workers: "总并发",
-  max_project_workers: "单项目并发",
-  max_project_review_workers: "单项目审核并发",
-  interval_ms: "调度间隔",
-  debounce_ms: "决策合并等待",
-  task_timeout_seconds: "单次任务超时",
-  closeout_seconds: "收尾预留",
-  tool_timeout_seconds: "命令上限",
-  result_repairs: "结果修复次数",
-  capture_enabled: "录制代理",
-  skip_informational_review: "信息类免审",
+/** 分区索引：点击跳转，滚动时高亮当前分区。 */
+const SECTIONS = [
+  ["model", "主模型"],
+  ["review", "审核模型"],
+  ["runtime", "执行与调度"],
+  ["capture", "流量采集"],
+  ["budget", "收尾与预算"],
+  ["logs", "运行日志"],
+] as const;
+
+type SectionKey = (typeof SECTIONS)[number][0];
+
+const sectionOf = (path: string): SectionKey => {
+  if (path.startsWith("model.")) return "model";
+  if (path.startsWith("review_model.") || path === "skip_informational_review") return "review";
+  if (path === "capture_enabled") return "capture";
+  if (path === "closeout_seconds" || path === "tool_timeout_seconds" || path === "result_repairs") return "budget";
+  return "runtime";
 };
 
-function flatten(value: unknown, prefix = "", out: Record<string, unknown> = {}) {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      flatten(item, prefix ? `${prefix}.${key}` : key, out);
-    }
-  } else if (prefix) {
-    out[prefix] = value;
-  }
-  return out;
-}
+/** 离开设置页后保留未保存的草稿；配置本身变化（保存、外部刷新）时作废。 */
+let pendingDraft: { baseline: string; draft: RuntimeConfig; reviewEnabled: boolean } | null = null;
 
-/** 与保存载荷同构的叶子级差异，用于「N 项未保存」。 */
-function changedPaths(baseline: unknown, draft: unknown) {
-  const before = flatten(baseline);
-  const after = flatten(draft);
-  return Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).filter(
-    (key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]),
-  );
+function restoreDraft(config: RuntimeConfig | null) {
+  if (!config || !pendingDraft) return null;
+  return pendingDraft.baseline === JSON.stringify(editableRuntimeUpdate(config)) ? pendingDraft : null;
 }
 
 function NumberField({
@@ -95,6 +76,7 @@ function NumberField({
   max,
   step = 1,
   disabled,
+  error,
   wide,
   onChange,
 }: {
@@ -106,12 +88,13 @@ function NumberField({
   max?: number;
   step?: number;
   disabled?: boolean;
+  error?: string;
   wide?: boolean;
   onChange: (value: number) => void;
 }) {
   return (
     <div className={wide ? "settings-field-wide" : undefined}>
-      <Field label={label} htmlFor={id} hint={hint}>
+      <Field label={label} htmlFor={id} hint={hint} error={disabled ? undefined : error}>
         <input
           id={id}
           type="number"
@@ -120,6 +103,7 @@ function NumberField({
           max={max}
           step={step}
           disabled={disabled}
+          aria-invalid={!disabled && error ? true : undefined}
           value={Number.isFinite(value) ? value : 0}
           onChange={(event) => {
             const next = Number(event.target.value);
@@ -134,13 +118,19 @@ function NumberField({
 export function SettingsPage() {
   const ws = useWorkspace();
   const baseline = ws.config;
-  const [draft, setDraft] = useState<RuntimeConfig | null>(baseline);
-  const [reviewEnabled, setReviewEnabled] = useState(false);
+  const restored = restoreDraft(baseline);
+  const [draft, setDraft] = useState<RuntimeConfig | null>(restored?.draft ?? baseline);
+  const [reviewEnabled, setReviewEnabled] = useState(
+    restored ? restored.reviewEnabled : reviewModelEnabled(baseline?.review_model),
+  );
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [retryKey, setRetryKey] = useState(0);
   const [clampNote, setClampNote] = useState("");
   const [logProject, setLogProject] = useState("");
+  const [activeSection, setActiveSection] = useState<SectionKey>("model");
+  const saveRef = useRef<() => void>(() => {});
+  const spyPause = useRef(0);
   const selectedLogProject = ws.projects.some((project) => project.id === logProject)
     ? logProject
     : ws.projects[0]?.id || "";
@@ -163,9 +153,12 @@ export function SettingsPage() {
     };
   }, [baseline, retryKey, setConfig]);
 
+  // 配置变化（首次加载、保存成功、外部刷新）时回到最新配置；只是重新进入页面时恢复未保存草稿。
   useEffect(() => {
-    setDraft(ws.config);
-    setReviewEnabled(!!ws.config?.review_model);
+    const pending = restoreDraft(ws.config);
+    const next = pending?.draft ?? ws.config;
+    setDraft(next);
+    setReviewEnabled(pending ? pending.reviewEnabled : reviewModelEnabled(next?.review_model));
     setClampNote("");
   }, [ws.config]);
 
@@ -174,6 +167,12 @@ export function SettingsPage() {
     [draft, baseline],
   );
   const dirty = changes.length > 0;
+  const errors = useMemo(() => (draft ? runtimeFieldErrors(draft, reviewEnabled) : {}), [draft, reviewEnabled]);
+  const errorKeys = useMemo(() => Object.keys(errors), [errors]);
+  const invalid = errorKeys.length > 0;
+  const summary = useMemo(() => changeSummary(changes), [changes]);
+  const changedSections = useMemo(() => new Set(changes.map(sectionOf)), [changes]);
+  const ready = draft !== null;
   const locked = (field: string) => (draft ? readOnlyRuntimeField(draft, field) : false);
   const lockedHint = (field: string, hint?: string) =>
     locked(field) ? `${hint ? `${hint} ` : ""}由环境变量管理，不可在此修改。` : hint;
@@ -234,14 +233,14 @@ export function SettingsPage() {
   };
 
   async function save() {
-    if (!draft || !dirty || saving) return;
+    if (!draft || !dirty || saving || invalid) return;
     setSaving(true);
     try {
       await api<RuntimeConfig>("/runtime", editableRuntimeUpdate(draft), "PUT");
       const fresh = await api<RuntimeConfig>("/runtime");
       ws.setConfig(fresh);
       setDraft(fresh);
-      setReviewEnabled(!!fresh.review_model);
+      setReviewEnabled(reviewModelEnabled(fresh.review_model));
       setClampNote("");
       ws.setMessage("设置已保存");
     } catch (failure) {
@@ -250,6 +249,82 @@ export function SettingsPage() {
       setSaving(false);
     }
   }
+  saveRef.current = () => {
+    void save();
+  };
+
+  /** 记下未保存的草稿：切到别的页面再回来时继续编辑，而不是静默丢弃。 */
+  useEffect(() => {
+    if (!draft || !baseline) {
+      pendingDraft = null;
+      return;
+    }
+    const base = editableRuntimeUpdate(baseline);
+    const changes = changedPaths(base, editableRuntimeUpdate(draft));
+    pendingDraft = changes.length ? { baseline: JSON.stringify(base), draft, reviewEnabled } : null;
+  }, [draft, baseline, reviewEnabled]);
+
+  /** 刷新或关闭标签页前提醒，避免误丢修改。 */
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  /** ⌘/Ctrl + S 直接保存，与底部保存条一致。 */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
+      event.preventDefault();
+      saveRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  /** 滚动时高亮当前分区，分区按钮据此指示位置与未保存修改。 */
+  useEffect(() => {
+    if (!ready) return;
+    const root = document.querySelector<HTMLElement>(".content");
+    if (!root) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      if (Date.now() < spyPause.current) return;
+      const navHeight = document.querySelector<HTMLElement>(".settings-nav")?.getBoundingClientRect().height ?? 0;
+      const threshold = root.getBoundingClientRect().top + navHeight + 32;
+      let current: SectionKey = SECTIONS[0][0];
+      for (const [key] of SECTIONS) {
+        const section = document.getElementById(`settings-${key}`);
+        if (section && section.getBoundingClientRect().top <= threshold) current = key;
+      }
+      // 滚到底时最后一节可能永远够不到阈值，直接认为它在当前位置。
+      if (root.scrollTop + root.clientHeight >= root.scrollHeight - 4) current = SECTIONS[SECTIONS.length - 1][0];
+      setActiveSection(current);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      root.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [ready]);
+
+  const jumpTo = (key: SectionKey) => {
+    // 滚动动画期间暂停观察，避免刚选中的分区被中途的位置计算覆盖。
+    spyPause.current = Date.now() + 700;
+    document.getElementById(`settings-${key}`)?.scrollIntoView({ block: "start" });
+    setActiveSection(key);
+  };
 
   if (!draft) {
     return (
@@ -305,8 +380,22 @@ export function SettingsPage() {
         }
       />
 
+      <nav className="settings-nav" aria-label="设置分区">
+        {SECTIONS.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            aria-current={activeSection === key ? "true" : undefined}
+            onClick={() => jumpTo(key)}
+          >
+            {label}
+            {changedSections.has(key) && <span className="settings-nav-flag" role="img" aria-label="有未保存修改" />}
+          </button>
+        ))}
+      </nav>
+
       <div className="section-stack">
-        <Card title="主模型" note="未配置独立审核模型时共用" icon={<Cpu size={15} />}>
+        <Card id="settings-model" title="主模型" note="未配置独立审核模型时共用" icon={<Cpu size={15} />}>
           <div className="settings-grid">
             <div className="settings-field-wide">
               <ProviderPicker
@@ -413,13 +502,26 @@ export function SettingsPage() {
           </label>
           <p className="settings-hint">
             开启后，每次模型请求都会附带 <code>chat_template_kwargs</code> 中的 <code>enable_thinking=false</code>
-            。长上下文下 Qwen 的思考内容可能被当成正文或工具名（出现 <code>&lt;/think&gt;</code>、
-            <code>&lt;/parameter&gt;</code> 等标记），导致空回复或最终 JSON
-            无效；此时应关闭思考通道。不识别该参数的供应商会忽略它。
+            ；不识别该参数的供应商会忽略它。
           </p>
+          <details className="settings-disclosure">
+            <summary>
+              <ChevronRight size={12} aria-hidden="true" />
+              为什么长上下文下需要关闭思考通道
+            </summary>
+            <p className="settings-hint">
+              长上下文下 Qwen 的思考内容可能被当成正文或工具名（出现 <code>&lt;/think&gt;</code>、
+              <code>&lt;/parameter&gt;</code> 等标记），导致空回复或最终 JSON 无效；此时应关闭思考通道。
+            </p>
+          </details>
         </Card>
 
-        <Card title="审核模型" note="候选发现可用独立模型审核；未启用时与主模型共用" icon={<ShieldCheck size={15} />}>
+        <Card
+          id="settings-review"
+          title="审核模型"
+          note="候选发现可用独立模型审核；未启用时与主模型共用"
+          icon={<ShieldCheck size={15} />}
+        >
           <label className="settings-toggle">
             <input
               type="checkbox"
@@ -442,9 +544,20 @@ export function SettingsPage() {
           </label>
           <p className="settings-hint">
             {draft.skip_informational_review === true
-              ? "已开启：明确标注为信息类、且引用原始证据的发现直接归档，不启动审核；漏洞类与待分类仍需审核，无证据的候选也仍会进入审核。已在审核中的信息类不会被打断。开启会让独立审核对信息类失效，请确认这是有意的审核范围收窄。"
-              : "关闭：新提交的发现都进入审核；此前已免审的信息类保持原状，需要重审的请在发现页逐条点“重新审核”（或批量重审），历史审核记录不会删除。信息类通过后保留在发现页，不计入漏洞库和风险。"}
+              ? "已开启：明确标注为信息类、且引用原始证据的发现直接归档，漏洞类与待分类仍需审核。"
+              : "关闭：新提交的发现都进入审核；信息类通过后保留在发现页，不计入漏洞库和风险。"}
           </p>
+          <details className="settings-disclosure">
+            <summary>
+              <ChevronRight size={12} aria-hidden="true" />
+              免审边界与历史记录
+            </summary>
+            <p className="settings-hint">
+              {draft.skip_informational_review === true
+                ? "无证据的候选仍会进入审核；已在审核中的信息类不会被打断；开启会让独立审核对信息类失效，请确认这是有意的审核范围收窄。"
+                : "此前已免审的信息类保持原状，需要重审的请在发现页逐条点“重新审核”（或批量重审），历史审核记录不会删除。"}
+            </p>
+          </details>
           {reviewEnabled && review && (
             <>
               <div className="settings-grid">
@@ -459,6 +572,7 @@ export function SettingsPage() {
                 <Field
                   label="API 地址"
                   htmlFor="settings-review-base-url"
+                  error={locked("review_model.base_url") ? undefined : errors["review_model.base_url"]}
                   hint={lockedHint(
                     "review_model.base_url",
                     reviewPiAuto
@@ -547,12 +661,17 @@ export function SettingsPage() {
                   readOnly={modelLocks("review_model")}
                   onChange={(model) => changeModel("review_model", model)}
                 />
+                {!locked("review_model.id") && errors["review_model.id"] && (
+                  <p className="field-error" role="alert">
+                    {errors["review_model.id"]}
+                  </p>
+                )}
               </div>
             </>
           )}
         </Card>
 
-        <Card title="执行与调度" note="并发上限、心跳与本地偏好" icon={<Gauge size={15} />}>
+        <Card id="settings-runtime" title="执行与调度" note="并发上限、心跳与本地偏好" icon={<Gauge size={15} />}>
           <div className="settings-preferences">
             <Preferences afterChange={ws.action} />
             <span className="settings-hint">
@@ -568,6 +687,7 @@ export function SettingsPage() {
               min={1}
               max={64}
               disabled={locked("max_workers")}
+              error={errors.max_workers}
               onChange={(value) => setDraft({ ...draft, max_workers: value })}
             />
             <NumberField
@@ -578,6 +698,7 @@ export function SettingsPage() {
               min={1}
               max={32}
               disabled={locked("max_project_workers")}
+              error={errors.max_project_workers}
               onChange={(value) => setDraft({ ...draft, max_project_workers: value })}
             />
             <NumberField
@@ -591,6 +712,7 @@ export function SettingsPage() {
               min={1}
               max={32}
               disabled={locked("max_project_review_workers")}
+              error={errors.max_project_review_workers}
               onChange={(value) => setDraft({ ...draft, max_project_review_workers: value })}
             />
             <NumberField
@@ -601,6 +723,7 @@ export function SettingsPage() {
               min={500}
               step={100}
               disabled={locked("interval_ms")}
+              error={errors.interval_ms}
               onChange={(value) => setDraft({ ...draft, interval_ms: value })}
             />
             <NumberField
@@ -611,22 +734,27 @@ export function SettingsPage() {
               min={0}
               step={100}
               disabled={locked("debounce_ms")}
+              error={errors.debounce_ms}
               onChange={(value) => setDraft({ ...draft, debounce_ms: value })}
             />
             <NumberField
               id="settings-task-timeout"
               label="单次任务超时（秒）"
-              hint={lockedHint("task_timeout_seconds", "0 表示不限时，同时关闭按时间触发的收尾。")}
+              hint={lockedHint(
+                "task_timeout_seconds",
+                "0 表示不限时（同时关闭按时间触发的收尾）；其他值需不少于 30 秒。",
+              )}
               value={draft.task_timeout_seconds}
               min={0}
               disabled={locked("task_timeout_seconds")}
+              error={errors.task_timeout_seconds}
               onChange={changeTaskTimeout}
             />
           </div>
           {clampNote && <p className="settings-clamp">{clampNote}</p>}
         </Card>
 
-        <Card title="流量采集" note="录制代理总开关" icon={<Network size={15} />}>
+        <Card id="settings-capture" title="流量采集" note="录制代理总开关" icon={<Network size={15} />}>
           <label className="settings-toggle">
             <input
               type="checkbox"
@@ -643,7 +771,12 @@ export function SettingsPage() {
           </p>
         </Card>
 
-        <Card title="收尾与工具预算" note="超时前预留收尾；工具预算独立生效" icon={<Wrench size={15} />}>
+        <Card
+          id="settings-budget"
+          title="收尾与工具预算"
+          note="超时前预留收尾；工具预算独立生效"
+          icon={<Wrench size={15} />}
+        >
           <div className="settings-grid">
             <NumberField
               id="settings-closeout"
@@ -658,6 +791,7 @@ export function SettingsPage() {
               min={1}
               max={closeoutMax}
               disabled={closeoutDisabled}
+              error={errors.closeout_seconds}
               onChange={(value) => setDraft({ ...draft, closeout_seconds: value })}
             />
             <NumberField
@@ -668,6 +802,7 @@ export function SettingsPage() {
               min={0}
               max={600}
               disabled={locked("tool_timeout_seconds")}
+              error={errors.tool_timeout_seconds}
               onChange={(value) => setDraft({ ...draft, tool_timeout_seconds: value })}
             />
             <NumberField
@@ -678,12 +813,13 @@ export function SettingsPage() {
               min={0}
               max={3}
               disabled={locked("result_repairs")}
+              error={errors.result_repairs}
               onChange={(value) => setDraft({ ...draft, result_repairs: value })}
             />
           </div>
         </Card>
 
-        <Card title="运行日志" note="按项目导出诊断日志" icon={<FileText size={15} />}>
+        <Card id="settings-logs" title="运行日志" note="按项目导出诊断日志" icon={<FileText size={15} />}>
           {ws.projects.length ? (
             <div className="settings-grid settings-log-grid">
               <Field label="项目" hint="诊断日志包含运行记录、请求与诊断事件，仅供内部排查。">
@@ -713,34 +849,49 @@ export function SettingsPage() {
         </Card>
       </div>
 
-      {dirty && (
-        <div className="settings-savebar" data-dirty={dirty ? "true" : "false"}>
+      {(dirty || invalid) && (
+        <div className="settings-savebar" data-dirty="true" data-invalid={invalid ? "true" : undefined}>
           <div className="settings-savebar-state">
-            <span className="settings-savebar-count">{dirty ? `${changes.length} 项未保存` : "没有未保存的修改"}</span>
-            <span className="settings-savebar-list">
-              {dirty
-                ? changes
+            <span className="settings-savebar-count">
+              {invalid ? `${errorKeys.length} 项需要修正` : `${summary.length} 项未保存`}
+            </span>
+            <span
+              className="settings-savebar-list"
+              title={invalid ? errorKeys.map((key) => FIELD_LABELS[key] ?? key).join(" · ") : changes.join(" · ")}
+            >
+              {invalid
+                ? `${errorKeys
                     .slice(0, 3)
-                    .map((field) => FIELD_LABELS[field] ?? field)
-                    .join(" · ") + (changes.length > 3 ? " 等" : "")
-                : "修改保存后立即生效。"}
+                    .map((key) => FIELD_LABELS[key] ?? key)
+                    .join(" · ")}${errorKeys.length > 3 ? " 等" : ""}，请按字段下方提示修正`
+                : `${summary.slice(0, 3).join(" · ")}${summary.length > 3 ? " 等" : ""}`}
             </span>
           </div>
           <div className="settings-savebar-actions">
+            <span className="settings-savebar-shortcut" aria-hidden="true">
+              ⌘/Ctrl + S
+            </span>
             <button
               type="button"
               className="button ghost"
               disabled={!dirty || saving}
               onClick={() => {
                 setDraft(baseline);
-                setReviewEnabled(!!baseline?.review_model);
+                setReviewEnabled(reviewModelEnabled(baseline?.review_model));
                 setClampNote("");
+                pendingDraft = null;
               }}
             >
               <RotateCcw size={14} />
               弃改
             </button>
-            <button type="button" className="button primary" disabled={!dirty || saving} onClick={() => void save()}>
+            <button
+              type="button"
+              className="button primary"
+              disabled={!dirty || saving || invalid}
+              title={invalid ? "先修正标红的字段再保存" : undefined}
+              onClick={() => void save()}
+            >
               <Save size={14} />
               {saving ? "保存中…" : "保存"}
             </button>

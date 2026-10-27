@@ -1074,7 +1074,9 @@ button.danger.subtle:hover {
   border-radius: 4px;
   color: var(--ink-4);
   font-size: 11px;
-  transition: background var(--fast), color var(--fast);
+  transition:
+    background var(--fast),
+    color var(--fast);
 }
 
 .repro-copy:hover {
@@ -1371,6 +1373,14 @@ button.danger.subtle:hover {
   color: var(--accent-ink);
 }
 
+.hint-task-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hint-task-picker {
   border: 1px solid var(--line-faint);
   border-radius: var(--r-sm);
@@ -1576,14 +1586,20 @@ button.danger.subtle:hover {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
 }
 
+/* 展开任一快速列表时，列表接管整个右侧面板；详情/黑板时间线收起。 */
+.detail-panel.quick-open .quick-sidebar {
+  flex: 1;
+}
+
+/* 快捷入口是二级导航：透明底、小一号，不与下面的详情切换争夺层级。 */
 .quick-tabs {
   display: flex;
+  flex: none;
   gap: 2px;
-  background: var(--surface-3);
-  border-radius: var(--r-sm);
-  padding: 2px;
+  padding: 0;
 }
 
 .quick-tabs button {
@@ -1591,52 +1607,153 @@ button.danger.subtle:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   height: 25px;
   border-radius: 5px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--ink-3);
+}
+
+.quick-tabs button:hover {
+  background: var(--surface-2);
+  color: var(--ink-2);
 }
 
 .quick-tabs button span {
   color: var(--ink-4);
-  font-size: var(--f-2xs);
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
 }
 
 .quick-tabs button.active {
-  background: var(--surface);
+  background: var(--surface-3);
   color: var(--ink);
-  box-shadow: var(--shadow-1);
 }
 
 .quick-content {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
+  min-height: 0;
+}
+
+.detail-panel.quick-open .quick-content {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 
 .quick-item {
+  width: 100%;
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 7px 8px;
+  gap: 3px;
+  padding: 8px 9px;
   border-radius: var(--r-sm);
-  border: 1px solid transparent;
+  border: 1px solid var(--line-faint);
+  background: var(--surface-2);
   text-align: left;
-  font-size: 13px;
-  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  transition:
+    background-color var(--fast),
+    border-color var(--fast),
+    color var(--fast);
 }
 
 .quick-item:hover {
-  background: var(--surface-2);
+  background: var(--surface-3);
+  border-color: var(--line-strong);
   color: var(--ink);
 }
 
 .quick-item.active {
-  background: var(--accent-soft-2);
+  background: var(--accent-soft);
   border-color: var(--accent-line);
   color: var(--ink);
+}
+
+.quick-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quick-item-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.quick-item-tag {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-faint);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.quick-item-tag[data-tone="accent"] {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.quick-item-tag[data-tone="success"] {
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: transparent;
+}
+
+.quick-item-tag[data-tone="warn"] {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: transparent;
+}
+
+.quick-item-tag[data-tone="danger"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: transparent;
+}
+
+.quick-item-title {
+  display: block;
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.quick-item-note {
+  display: block;
+  color: var(--ink-4);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.quick-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--ink-4);
+  font-size: 12.5px;
 }
 
 .quick-finding-actions {

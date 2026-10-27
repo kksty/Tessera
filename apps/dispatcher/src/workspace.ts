@@ -2,13 +2,23 @@ import Docker from "dockerode";
 import { demuxDockerChunk } from "./docker.js";
 import type { DispatchConfig } from "../../../packages/protocol/src/index.js";
 
-export interface FileRequest { operation: "list" | "read" | "delete"; path: string; limit?: number }
+export interface FileRequest {
+  operation: "list" | "read" | "delete";
+  path: string;
+  limit?: number;
+  /** Optional cap for the recursive listing summary; never above the built-in default. */
+  stats_limit?: number;
+}
 // Self-contained so the same checked operation runs inside an isolated helper container.
 export async function workspaceOperation(root: string, request: FileRequest): Promise<any> {
-  const fs = await import("node:fs/promises"), path = await import("node:path");
-  const fail = (code: number, message: string): never => { throw Object.assign(new Error(message), { statusCode: code }); };
+  const fs = await import("node:fs/promises"),
+    path = await import("node:path");
+  const fail = (code: number, message: string): never => {
+    throw Object.assign(new Error(message), { statusCode: code });
+  };
   if (!request.path || request.path.includes("\0") || request.path.includes("\\")) fail(422, "Invalid workspace path");
-  const base = await fs.realpath(root), candidate = path.resolve(base, request.path.replace(/^\/+/, ""));
+  const base = await fs.realpath(root),
+    candidate = path.resolve(base, request.path.replace(/^\/+/, ""));
   const inside = (file: string) => file === base || file.startsWith(base + path.sep);
   if (!inside(candidate)) fail(403, "Path must stay inside the project workspace");
   let target = candidate;
@@ -27,12 +37,86 @@ export async function workspaceOperation(root: string, request: FileRequest): Pr
     if (!inside(target)) fail(403, "Symlink escapes the workspace");
     if (request.operation === "list") {
       const entries = await fs.readdir(target, { withFileTypes: true });
-      const files = await Promise.all(entries.slice(0, 5000).map(async entry => {
-        const file = path.join(target, entry.name), info = await fs.lstat(file);
-        return { name: entry.name, path: path.relative(base, file), kind: entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file", size: info.size, modified_at: info.mtime.toISOString() };
-      }));
-      files.sort((a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name));
-      return { path: path.relative(base, target) || ".", files, truncated: entries.length > 5000 };
+      const files = await Promise.all(
+        entries.slice(0, 5000).map(async (entry) => {
+          const file = path.join(target, entry.name),
+            info = await fs.lstat(file);
+          return {
+            name: entry.name,
+            path: path.relative(base, file),
+            kind: entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file",
+            size: info.size,
+            modified_at: info.mtime.toISOString(),
+          };
+        }),
+      );
+      files.sort(
+        (a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name),
+      );
+      // The workspace home usually contains only directories, so summing the
+      // visible rows would report 0 B. Walk the subtree without following
+      // symlinks to report the real total for the current directory. A workspace
+      // can hold an extracted tree far larger than a UI summary is worth, so the
+      // walk is bounded by an entry/time budget and marks the total as partial
+      // instead of holding the request until the helper's 30s timeout.
+      const stats = { files: 0, directories: 0, size: 0, truncated: false },
+        maxEntries = Math.min(Math.max(request.stats_limit ?? 20000, 1), 20000),
+        deadline = Date.now() + 5000;
+      let visited = 0,
+        level = [target];
+      while (level.length && !stats.truncated) {
+        const next: string[] = [];
+        await Promise.all(
+          level.map(async (dir) => {
+            let children;
+            try {
+              children = await fs.readdir(dir, { withFileTypes: true });
+            } catch (error: any) {
+              if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return;
+              throw error;
+            }
+            const rows = await Promise.all(
+              children
+                .slice(0, Math.max(maxEntries - visited, 0))
+                .map(async (child): Promise<{ real: string } | { size: number } | undefined> => {
+                  if (++visited > maxEntries || Date.now() > deadline) {
+                    stats.truncated = true;
+                    return undefined;
+                  }
+                  const file = path.join(dir, child.name);
+                  let info;
+                  try {
+                    info = await fs.lstat(file);
+                  } catch (error: any) {
+                    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return undefined;
+                    throw error;
+                  }
+                  if (!info.isDirectory()) return { size: info.size };
+                  const real = await fs.realpath(file).catch((error: any) => {
+                    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return undefined;
+                    throw error;
+                  });
+                  if (!real) return undefined;
+                  return { real };
+                }),
+            );
+            if (children.length > rows.length) stats.truncated = true;
+            for (const row of rows) {
+              if (!row) continue;
+              if ("real" in row) {
+                if (!inside(row.real)) continue;
+                stats.directories += 1;
+                next.push(row.real);
+              } else {
+                stats.files += 1;
+                stats.size += row.size;
+              }
+            }
+          }),
+        );
+        level = next;
+      }
+      return { path: path.relative(base, target) || ".", files, truncated: entries.length > 5000, stats };
     }
     const info = await fs.stat(target);
     if (!info.isFile()) fail(422, "Select a regular file");
@@ -41,8 +125,15 @@ export async function workspaceOperation(root: string, request: FileRequest): Pr
     try {
       const bytes = Buffer.alloc(Math.min(info.size, limit));
       const result = await handle.read(bytes, 0, bytes.length, 0);
-      return { path: path.relative(base, target), content: bytes.subarray(0, result.bytesRead).toString("base64"), size: info.size, truncated: info.size > limit };
-    } finally { await handle.close(); }
+      return {
+        path: path.relative(base, target),
+        content: bytes.subarray(0, result.bytesRead).toString("base64"),
+        size: info.size,
+        truncated: info.size > limit,
+      };
+    } finally {
+      await handle.close();
+    }
   } catch (error: any) {
     if (error.code === "ENOENT") fail(404, "Workspace path not found");
     if (error.code === "ENOTDIR") fail(422, "Select a directory");
@@ -60,36 +151,73 @@ export class DockerWorkspace {
     this.running.set(projectId, tasks);
     const task = this.perform(projectId, config, request);
     tasks.add(task);
-    try { return await task; }
-    finally { tasks.delete(task); if (!tasks.size) this.running.delete(projectId); }
+    try {
+      return await task;
+    } finally {
+      tasks.delete(task);
+      if (!tasks.size) this.running.delete(projectId);
+    }
   }
   async drainProject(projectId: string) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([Promise.allSettled([...(this.running.get(projectId) ?? [])]), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("工作区文件操作尚未退出，请稍后重试删除")), 35000);
-      })]);
-    } finally { clearTimeout(timer); }
+      await Promise.race([
+        Promise.allSettled([...(this.running.get(projectId) ?? [])]),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("工作区文件操作尚未退出，请稍后重试删除")), 35000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   private async perform(projectId: string, config: DispatchConfig, request: FileRequest) {
     const volume = `${config.volume_prefix}-workspace-${projectId}`;
-    try { await this.docker.getVolume(volume).inspect(); }
-    catch (error: any) { if (error.statusCode === 404) throw Object.assign(new Error("工作区尚未创建"), { statusCode: 404 }); throw error; }
+    try {
+      await this.docker.getVolume(volume).inspect();
+    } catch (error: any) {
+      if (error.statusCode === 404) throw Object.assign(new Error("工作区尚未创建"), { statusCode: 404 });
+      throw error;
+    }
     const script = `const run=${workspaceOperation.toString()};try{console.log(JSON.stringify(await run('/workspace',JSON.parse(Buffer.from(process.argv[1],'base64').toString()))))}catch(e){console.log(JSON.stringify({error:e.message,status:e.statusCode||500}));process.exitCode=1}`;
-    const helper = await this.docker.createContainer({ Image: config.worker_image, Cmd: ["node", "--input-type=module", "-e", script, Buffer.from(JSON.stringify(request)).toString("base64")],
-      HostConfig: { NetworkMode: "none", ReadonlyRootfs: true, CapDrop: ["ALL"], Mounts: [{ Type: "volume", Source: volume, Target: "/workspace", ReadOnly: request.operation !== "delete" }] },
-      Labels: { "tessera.workspace-helper": "true", "tessera.project": projectId }, User: "root" });
+    const helper = await this.docker.createContainer({
+      Image: config.worker_image,
+      Cmd: ["node", "--input-type=module", "-e", script, Buffer.from(JSON.stringify(request)).toString("base64")],
+      HostConfig: {
+        NetworkMode: "none",
+        ReadonlyRootfs: true,
+        CapDrop: ["ALL"],
+        Mounts: [{ Type: "volume", Source: volume, Target: "/workspace", ReadOnly: request.operation !== "delete" }],
+      },
+      Labels: { "tessera.workspace-helper": "true", "tessera.project": projectId },
+      User: "root",
+    });
     try {
       await helper.start();
       let timer: ReturnType<typeof setTimeout> | undefined;
       let result;
-      try { result = await Promise.race([helper.wait(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Workspace operation timed out")), 30000); timer.unref(); })]); }
-      finally { clearTimeout(timer); }
-      const raw = await helper.logs({ stdout: true, stderr: false }); let output = "";
-      demuxDockerChunk(Buffer.from(raw as Buffer), { pending: Buffer.alloc(0) }, text => { output += text; });
+      try {
+        result = await Promise.race([
+          helper.wait(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Workspace operation timed out")), 30000);
+            timer.unref();
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      const raw = await helper.logs({ stdout: true, stderr: false });
+      let output = "";
+      demuxDockerChunk(Buffer.from(raw as Buffer), { pending: Buffer.alloc(0) }, (text) => {
+        output += text;
+      });
       const data = JSON.parse(output.trim());
-      if ((result as any).StatusCode || data.error) throw Object.assign(new Error(data.error || "Workspace operation failed"), { statusCode: data.status || 500 });
+      if ((result as any).StatusCode || data.error)
+        throw Object.assign(new Error(data.error || "Workspace operation failed"), { statusCode: data.status || 500 });
       return data;
-    } finally { await helper.remove({ force: true }).catch(() => {}); }
+    } finally {
+      await helper.remove({ force: true }).catch(() => {});
+    }
   }
 }

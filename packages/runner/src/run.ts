@@ -115,6 +115,7 @@ async function runJobInternal(
   if (recoverySession && job.kind !== "execute")
     throw new Error("Read-only session recovery currently supports Execute only");
   const timeouts = client.timeouts;
+  const runStartedAt = Date.now();
   if (recoverySession)
     await client.request(client.projectPath(job, "/jobs/heartbeat"), job, "POST", timeouts.heartbeat_timeout_ms);
   const timeLimited = config.task_timeout_seconds > 0;
@@ -123,6 +124,9 @@ async function runJobInternal(
   const recoveryDeadline = recoverySession ? Date.now() + Math.max(1, config.closeout_seconds ?? 60) * 1000 : Infinity;
   const deadline = Math.min(timeLimited ? Date.now() + config.task_timeout_seconds * 1000 : Infinity, recoveryDeadline);
   const graph = await client.request<Graph>(client.projectPath(job));
+  // Counted at claim time on the server; the entry records it so a Run's attempt is
+  // visible next to the Step cost without joining the Run snapshot later.
+  const stepAttempts = job.step_id ? (graph.steps.find((step) => step.id === job.step_id)?.attempts ?? null) : null;
   let memorySnapshot = graph;
   let observedGraph = graph;
   const observedBookmarks = new Map((graph.bookmarks ?? []).map((b) => [b.node_id, b]));
@@ -257,6 +261,7 @@ async function runJobInternal(
     model: (job.kind === "review" ? config.review_model || config.model : config.model).id,
     api: (job.kind === "review" ? config.review_model || config.model : config.model).api,
     context_window: (job.kind === "review" ? config.review_model || config.model : config.model).context_window,
+    step_attempts: stepAttempts,
   });
   let captureError: Error | undefined;
   // What this Run has already persisted. The final payload may restate one of
@@ -288,7 +293,6 @@ async function runJobInternal(
           worker: job.worker,
         })
       : undefined;
-  const processEvidence = new Map<string, Evidence>();
   const outbox = new SubmissionOutbox(directory, job, client, (event) =>
     diagnose("submission", {
       ...event,
@@ -458,25 +462,27 @@ async function runJobInternal(
     ),
     tool(
       "read_graph",
-      "Read a current work record by id with character pagination; deleted IDs return a marker. history=true explicitly reads an original historical record, without restoring it or acknowledging a current decision snapshot. Without id refreshes the current graph projection; read it before deciding from newer observations. Pass expected_hash on later pages of the same record.",
+      "Read a current work record by id with character pagination; deleted IDs return a deletion marker without their original content. Without id returns the current graph projection. Pass expected_hash on later pages of the same record.",
       Type.Object({
         id: Type.Optional(Type.String()),
         offset: Type.Optional(Type.Integer({ minimum: 0 })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 12000 })),
         expected_hash: Type.Optional(Type.String()),
-        history: Type.Optional(Type.Boolean()),
       }),
       async (a) => {
-        if (a.history && !a.id) throw new Error("Explicit history requires a record id");
+        if ((a as { history?: unknown }).history !== undefined)
+          throw new Error(
+            "Historical records are operator-only; read_graph returns the current record. Use the current graph or query_graph for active ids.",
+          );
         if (!a.id) {
           if (job.kind === "decide") return refreshDecisionView();
           memorySnapshot = await client.request<Graph>(p("/fgs"));
           observeGraph(memorySnapshot);
           return memoryEntry(memorySnapshot, job);
         }
-        const full = await client.request<Graph>(p(a.history ? "/fgs?history=true" : "/fgs"));
-        if (!a.history) observeGraph(full);
-        const record = readMemoryRecord(full, a.id, a.offset, a.limit, a.expected_hash, !!a.history);
+        const full = await client.request<Graph>(p("/fgs"));
+        observeGraph(full);
+        const record = readMemoryRecord(full, a.id, a.offset, a.limit, a.expected_hash);
         // A missing or stale record is a tool error, not a successful JSON result:
         // otherwise the model tends to imitate `{"error": ...}` in its final answer.
         if (record.error)
@@ -485,13 +491,13 @@ async function runJobInternal(
               "Use query_graph to find the current id or read_graph without id to refresh the view; " +
               "a tool error is not a job result.",
           );
-        if (!record.deleted && !a.history) void client.request(p("/fgs/read"), { id: a.id }).catch(() => {});
+        if (!record.deleted) void client.request(p("/fgs/read"), { id: a.id }).catch(() => {});
         return record;
       },
     ),
     tool(
       "query_changes",
-      "Page the semantic changes recorded since your previous plan. Use read_change(event_seq) for the exact stored event, read_graph for current state.",
+      "Page the semantic changes recorded since your previous plan. Rows carry event_seq and a cursor for the next page.",
       Type.Object({
         cursor: Type.Optional(Type.String()),
         limit: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
@@ -515,7 +521,7 @@ async function runJobInternal(
     ),
     tool(
       "query_graph",
-      "Search stored history: keyword (also searches evidence bodies), asset_id, status, related_to, or a cursor-paged browse with no filter. related_to with relation=sources/outputs follows typed causal edges up/down (depth 1..3); Fact sources include producing Steps and direct Evidence, Step sources include input Facts. relations distinguish production from evidence references; provenance marks legacy producers and ambiguity, and never guesses a Run. Continue deeper from boundary IDs. Keyword hits use the current server index; a hit newer than the job snapshot refreshes that snapshot automatically. Use read_graph to read a record and read_change for exact event material. Step statuses: pending/running/blocked/executed/concluded/discarded. Finding statuses: pending/pass/needs_evidence/rejected. Assets: approved/pending/rejected, plus cooled/cold markers. status cold/hot applies only to Facts/Findings; closed Steps and Evidence are not cold — use kind=evidence or the evidence page.",
+      "Search the current graph: keyword (also searches evidence bodies), asset_id, status, related_to, or a cursor-paged browse with no filter. related_to with relation=sources/outputs follows typed causal edges up/down (depth 1..3); Fact sources include producing Steps and direct Evidence, Step sources include input Facts. relations distinguish production from evidence references; provenance marks legacy producers and ambiguity, and never guesses a Run. Keyword hits use the current server index; a hit newer than the job snapshot refreshes that snapshot automatically. Step statuses: pending/running/blocked/executed/concluded/discarded. Finding statuses: pending/pass/needs_evidence/rejected. Assets: approved/pending/rejected, plus cooled/cold markers. status cold/hot applies only to Facts/Findings; closed Steps and Evidence are not cold — use kind=evidence or the evidence page. Deleted records and older versions are excluded.",
       Type.Object({
         kind: Type.Optional(Type.Union(memoryKinds.map((k) => Type.Literal(k)))),
         keyword: Type.Optional(Type.String()),
@@ -528,13 +534,12 @@ async function runJobInternal(
         limit: Type.Optional(Type.Integer({ minimum: 0, maximum: 200 })),
         mode: Type.Optional(Type.Union([Type.Literal("peek"), Type.Literal("query")])),
         refresh: Type.Optional(Type.Boolean()),
-        history: Type.Optional(Type.Boolean()),
       }),
       async ({ refresh, ...query }) => {
-        if (query.history) {
-          const history = await client.request<Graph>(p("/fgs?history=true"));
-          return queryMemory(history, query);
-        }
+        if ((query as { history?: unknown }).history !== undefined)
+          throw new Error(
+            "Historical records are operator-only; query_graph searches the current graph. Deleted records and older versions are not readable from a Run.",
+          );
         const latest = await client.request<Graph>(p("/fgs"));
         // Deletion changes membership even for an in-flight Run. Start a new
         // query snapshot so old cursors cannot skip or reintroduce removed rows.
@@ -640,8 +645,8 @@ async function runJobInternal(
         "preview_deletions",
         "Read the exact current impact of a proposed delete_nodes batch without changing graph, leases or decided watermarks. " +
           "Returns every deleted ID, affected retained nodes, execution/review Runs to cancel and shared_descendants that still have retained dependencies but WILL be deleted. " +
-          "Call before submitting any deletion and read the complete result in the next model turn; do not queue preview and submit together. Use read_graph for unfamiliar IDs. A different batch or a changed impact requires a fresh preview. " +
-          "This is not approval and does not refresh the Decide observation snapshot; use read_graph without id for a fresh full view.",
+          "A preview is bound to that exact batch; a different batch or a changed impact invalidates it. " +
+          "This is not approval and does not refresh the Decide observation snapshot.",
         Type.Unsafe(z.toJSONSchema(deletionPreviewSchema, { io: "input" })),
         async (raw) => {
           const body = deletionPreviewSchema.parse(raw);
@@ -667,18 +672,17 @@ async function runJobInternal(
         "submit_decisions",
         "Submit decisions in one call, or in bounded parts under the same Decide run: new steps, priority updates, closes, reopens, finding_merges, finding_updates, delete_nodes, goals or complete. " +
           "New Steps belong in steps[] with from/description/property; updates[] only addresses existing Step ids and every entry needs id. " +
-          "If the settlement is large (roughly more than 8 finding_updates or an estimated 6000-token JSON), send the plan and Step settlement first with more:true, then finding_merges/finding_updates in further calls with more:true, and finish with complete or the last settlement without more. A part with more:true is applied and keeps the run open; only the final part ends it. A completion cannot carry more. " +
-          "The runtime also splits an oversized single call into ordered parts automatically, but that cannot undo model output already generated; prefer deliberate parts. " +
-          "Before deleting, call preview_deletions with the same batch and inspect all IDs, shared_descendants and cancelled_runs. " +
-          "Delete work nodes with delete_nodes:[{id,reason,cascade:'none'|'downstream'}]; default none deletes only listed IDs. Downstream deletes ALL reachable dependents even if they have other retained sources, never shared Evidence or assets alone. " +
-          "Deleted Findings leave current risk totals and new reports; originals, evidence, reviews and frozen reports remain in history. Deleted IDs cannot be restored. Only deleted Steps and Findings lose their execution/review leases; already sent external requests may have executed. " +
-          "Merge duplicate findings with target_id, source_ids, expected_versions for every participant and reason; the target is re-reviewed and source history is retained. " +
-          "Revise finding content with finding_updates: id, expected_version, reason, changes; content edits are audited and re-reviewed, never confirmed by Decide. " +
-          "Use withdraw:true for non-deliverable claims; retain useful informational Findings. Restore a withdrawn ID with restore:true and changes containing new support; it becomes a new version for review. " +
-          "Carry each active Hint with a Step's hint_ids, or explain in hint_notes why no Step is needed. Either way, a note is advice only and does not close the Hint; complete stays rejected until a human confirms every open Hint in the hint panel. " +
-          "Before complete, account for every coverage_surfaces entry in complete.coverage: tested requires evidence_ids, waived requires a reason, na means it is not a testable surface. Omitted surfaces reject the settlement and name the missing entries. " +
-          "Open leads from the view block completion: attach each to a new Step with lead_ids, or waive it in lead_dispositions with waiver_reason. " +
-          "Review planning_issues also block completion: account for each in complete.review_issues with its review_id and zero-based issue_index. addressed requires a Step executed and concluded after that Review; waived requires a reason, and IDOR / authorization / PII issues can only be waived by the operator. " +
+          "Large settlements can be sent in ordered parts with more:true: plan and Step settlement first, then finding_merges/finding_updates, and finish with complete or the last settlement without more. A part with more:true is applied and keeps the run open; only the final part ends it. A completion cannot carry more. " +
+          "The runtime also splits an oversized single call into ordered parts automatically, but that cannot undo model output already generated. " +
+          "delete_nodes takes [{id,reason,cascade:'none'|'downstream'}]; default none deletes only the listed IDs, downstream deletes ALL reachable dependents even if they have other retained sources, and never shared Evidence or assets alone. " +
+          "Deleted Findings leave current risk totals and new reports; originals, evidence, reviews and frozen reports remain, and the operator can restore a deleted Finding ID. Deleted Facts, Steps and subgoals keep history only. An operator-approved Finding cannot be deleted; withdraw or revise it instead. Only deleted Steps and Findings lose their execution/review leases; already sent external requests may have executed. " +
+          "finding_merges takes target_id, source_ids, expected_versions for every participant and reason; the target is re-reviewed and source history is retained. " +
+          "finding_updates takes id, expected_version, reason and changes; content edits are audited and re-reviewed, never confirmed by Decide. " +
+          "withdraw:true withdraws a Finding; restore:true with changes restores a withdrawn ID as a new version for review. An operator-approved current version cannot be withdrawn or merged away as a source; the operator must withdraw the approval first. " +
+          "hint_ids on a Step carries an active Hint; hint_notes records advice and does not close it. complete stays rejected until a human confirms every open Hint in the hint panel. " +
+          "complete.coverage accounts for every coverage_surfaces entry: tested requires evidence_ids, waived requires a reason, na means it is not a testable surface. Omitted surfaces reject the settlement and name the missing entries. " +
+          "Open leads block completion: lead_ids on a new Step or lead_dispositions with waiver_reason. " +
+          "Review planning_issues block completion too: complete.review_issues accounts for each with its review_id and zero-based issue_index. addressed requires a Step executed and concluded after that Review; waived requires a reason, and IDOR / authorization / PII issues can only be waived by the operator. " +
           "A successful final settlement ends the Decide run and blocks further tool calls. " +
           "New Steps are planned first and are never rolled back by a settlement conflict. Pass expected_version (the v shown in the entry) for every update/close/reopen. " +
           "If the response lists a settle conflict, read current_view, reconsider, and resend only the settlement fields with explicit current versions (omit steps); the runtime reuses the committed plan_id.",
@@ -776,7 +780,7 @@ async function runJobInternal(
       ),
       tool(
         "submit_finding",
-        "Submit or revise a candidate finding with evidence.",
+        "Submit or revise a candidate finding with evidence. traffic_ids references captured HTTP(S) flow ids and is optional.",
         Type.Unsafe(z.toJSONSchema(findingSchema, { io: "input" })),
         async (args) => {
           // The JSON Schema cannot express cross-field identity rules; reject them
@@ -793,7 +797,7 @@ async function runJobInternal(
       ),
       tool(
         "discover_assets",
-        "Record relevant discovered hosts before touching them. Only explicit target hosts and their subdomains can become pending assets; out-of-scope hosts become Facts only. Third-party links, certificates or API dependencies do not expand scope. This call never approves or tests hosts.",
+        "Record discovered hosts as pending assets or as Facts. Only explicit target hosts and their subdomains can become pending assets; out-of-scope hosts become Facts only. Third-party links, certificates or API dependencies do not expand scope. This call never approves or tests hosts.",
         Type.Object({
           assets: Type.Array(
             Type.Object({
@@ -815,7 +819,7 @@ async function runJobInternal(
       ),
       tool(
         "save_evidence",
-        "Save an original output, request/response or image from a project workspace file. Returns its evidence id.",
+        "Save a project workspace file as immutable Evidence and return its id.",
         Type.Object({
           path: Type.String(),
           title: Type.String(),
@@ -832,6 +836,19 @@ async function runJobInternal(
             (body) => submit<Evidence>("/evidence", body),
           );
           return e;
+        },
+      ),
+      tool(
+        "query_traffic",
+        "List the HTTP(S) flows the recording proxy captured for this Step, newest first, with flow ids and summaries.",
+        Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
+        async (a) => {
+          const query = new URLSearchParams();
+          if (job.run_id) query.set("run_id", job.run_id);
+          if (a.limit) query.set("limit", String(a.limit));
+          return client.request(
+            p(`/fgs/steps/${encodeURIComponent(job.step_id || "unknown")}/traffic?${query.toString()}`),
+          );
         },
       ),
     );
@@ -1099,6 +1116,7 @@ async function runJobInternal(
   };
   const toolInputs = new Map<string, unknown>();
   const toolStarts = new Map<string, number>();
+  let toolCalls = 0;
   const requestUsages = new Map<string, RequestCounters>();
   const requestPhases = new Map<string, { summary: boolean; check: boolean; generation: number }>();
   const requestTimes = new Map<string, number>();
@@ -1280,6 +1298,7 @@ async function runJobInternal(
       capacity.sample(session.getContextUsage()?.tokens);
     }
     if (event.type === "tool_execution_start") {
+      toolCalls++;
       toolInputs.set(event.toolCallId, event.args);
       toolStarts.set(event.toolCallId, Date.now());
       diagnose("tool_start", {
@@ -1351,43 +1370,13 @@ async function runJobInternal(
       // can reproduce a download or transformation rather than guess its source.
       const content = JSON.stringify({ ...event, args: toolInputs.get(event.toolCallId) });
       toolInputs.delete(event.toolCallId);
-      const saving = appendFile(join(directory, "tools.ndjson"), content + "\n").then(async () => {
-        // Auxiliary reads stay local. The reference tools say so themselves
-        // ("guidance, never project observations or evidence"), and archiving a
-        // lookup result made its upload latency into a Run-failing error.
-        if (
-          [
-            "read_graph",
-            "query_graph",
-            "query_changes",
-            "read_change",
-            "preview_deletions",
-            "read_evidence",
-            "read_reference",
-            "query_references",
-            "submit_fact",
-            "submit_finding",
-            "submit_decisions",
-            "discover_assets",
-            "save_evidence",
-          ].includes(event.toolName)
-        )
-          return;
-        // The settlement already ended the Run and released its lease. A late
-        // archive upload would only produce "Submission does not belong to the
-        // active Run"; the local tools.ndjson remains the durable record.
-        if (decisionsCommitted || leaseError) return;
-        await submit<Evidence>("/evidence", {
-          title: `${event.toolName} tool result`,
-          source_path: join(directory, "tools.ndjson"),
-          step_id: job.step_id,
-          content,
-          mime_type: "application/json",
-        });
-      });
+      // The per-Run tools.ndjson is the durable trace for every tool call. It stays
+      // in the project workspace; only save_evidence creates graph Evidence, so tool
+      // traffic does not flood the evidence index with unreferenced tool results.
+      const saving = appendFile(join(directory, "tools.ndjson"), content + "\n");
       pending.push(
         saving.catch((error) => {
-          captureError = error instanceof Error ? error : new Error("Evidence recording failed");
+          captureError = error instanceof Error ? error : new Error("Tool trace recording failed");
         }),
       );
     }
@@ -1654,23 +1643,13 @@ async function runJobInternal(
         data.summary += "\n只读恢复：未写入新事实、发现或线索，也不把 Step 记为已执行；仅根据已有材料收尾。";
       }
       if (processes) {
-        for (const row of processes.list()) {
-          const evidence = await saveEvidenceFile(
-            row.log_path,
-            {
-              title: `Shell process ${row.process_id} raw output`,
-              step_id: job.step_id,
-              mime_type: "application/octet-stream",
-            },
-            (body) => submit<Evidence>("/evidence", body),
-          );
-          processEvidence.set(row.process_id, evidence);
-        }
-        if (processEvidence.size)
-          data.summary += `\n进程原始输出：${[...processEvidence].map(([id, evidence]) => `${id} → ${evidence.id}`).join("；")}。`;
+        const logs = processes
+          .list()
+          .map((row) => `${row.process_id} → ${relative(workspace, row.log_path).replaceAll("\\", "/")}`);
+        if (logs.length) data.summary += `\n进程原始输出（项目文件）：${logs.join("；")}。`;
         if (runningAtSubmit.length)
           throw new Error(
-            `Execution incomplete: 提交结果时仍有运行中的进程，已停止且未自然完成：${runningAtSubmit.join("、")}。原始输出已保存；Step 不记为完成。`,
+            `Execution incomplete: 提交结果时仍有运行中的进程，已停止且未自然完成：${runningAtSubmit.join("、")}。原始输出保留在项目文件；Step 不记为完成。`,
           );
       }
       // Legacy string observations carry no attribution. Never guess their
@@ -1705,30 +1684,21 @@ async function runJobInternal(
       trace_chars: traces.chars,
       omitted_traces: traces.omitted,
       diagnostic_delivery_failed: diagnosticFailures > 0,
+      // Same shape as the success path: a failed long Run is exactly what the
+      // cost export needs to explain, so it cannot be the only one without numbers.
+      ...capacity.snapshot(),
+      compactions: capacity.generation,
+      tool_calls: toolCalls,
+      closeout: closing,
+      step_attempts: stepAttempts,
+      duration_ms: Date.now() - runStartedAt,
     });
     throw error;
   } finally {
     if (processes) {
       await processes.close();
-      // Failure/lease loss may prevent server writes; raw logs and metadata remain
-      // in the persistent workspace even when archival cannot be accepted.
-      for (const row of processes.list())
-        if (!processEvidence.has(row.process_id)) {
-          try {
-            const evidence = await saveEvidenceFile(
-              row.log_path,
-              {
-                title: `Shell process ${row.process_id} raw output`,
-                step_id: job.step_id,
-                mime_type: "application/octet-stream",
-              },
-              (body) => submit<Evidence>("/evidence", body),
-            );
-            processEvidence.set(row.process_id, evidence);
-          } catch {
-            /* Original log remains durable; never conceal the Run error. */
-          }
-        }
+      // Raw logs and metadata stay in the persistent workspace. They are not
+      // graph Evidence unless the model explicitly saves a copy and cites it.
     }
     if (runSucceeded)
       diagnose("run_end", {
@@ -1736,6 +1706,12 @@ async function runJobInternal(
         trace_chars: traces.chars,
         omitted_traces: traces.omitted,
         diagnostic_delivery_failed: diagnosticFailures > 0,
+        ...capacity.snapshot(),
+        compactions: capacity.generation,
+        tool_calls: toolCalls,
+        closeout: closing,
+        step_attempts: stepAttempts,
+        duration_ms: Date.now() - runStartedAt,
         note: "See server Run snapshot for final commit/conflict status; returned does not imply semantic fidelity",
       });
     clearInterval(heartbeat);

@@ -1,40 +1,18 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-react";
 import type { TrafficRecord, TrafficStatus, TrafficSummary } from "../../../../packages/protocol/src/traffic.js";
 import { api, path } from "../api.js";
+import { TrafficInspector } from "../components/TrafficInspector.js";
 import { Drawer, EmptyState, PageHeader, Segmented, Skeleton } from "../components/ui.js";
 import { fmt, fmtBytes, fmtTime } from "../format.js";
 import { useWorkspace } from "../workspace.js";
 
 type TrafficList = { records: TrafficSummary[]; capture: TrafficStatus };
 type Kind = "" | "http" | "connection" | "packet";
-type MessageMode = "raw" | "body" | "hex";
-type BodyPage = { body_base64: string; offset: number; size: number; next: number | null };
 
 const kindLabels: Record<string, string> = { http: "HTTP", connection: "连接", packet: "数据包" };
 
 const messageOf = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure));
-
-/** base64 → 字节；损坏的正文返回 null，而不是抛出。 */
-function decodeBase64(value: string): Uint8Array | null {
-  try {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-    return bytes;
-  } catch {
-    return null;
-  }
-}
-
-function hexDump(bytes: Uint8Array, offset: number) {
-  const lines: string[] = [];
-  for (let index = 0; index < bytes.length; index += 16) {
-    const chunk = Array.from(bytes.slice(index, index + 16), (byte) => byte.toString(16).padStart(2, "0")).join(" ");
-    lines.push(`${(offset + index).toString(16).padStart(6, "0")}  ${chunk}`);
-  }
-  return lines.join("\n");
-}
 
 /** 非 HTTP 记录没有可判定的状态码：连接看生命周期，数据包看聚合数量。 */
 function stateLabel(row: TrafficSummary) {
@@ -57,125 +35,6 @@ function volumeLabel(row: TrafficSummary) {
   return `${fmtBytes(row.response_size)}${row.truncated ? " *" : ""}`;
 }
 
-const decoder = new TextDecoder();
-
-function MessageView({
-  project,
-  record,
-  side,
-  mode,
-}: {
-  project: string;
-  record: TrafficRecord;
-  side: "request" | "response";
-  mode: MessageMode;
-}) {
-  const message = record[side];
-  const [offset, setOffset] = useState(0);
-  const [page, setPage] = useState<BodyPage | null>(null);
-  const [error, setError] = useState("");
-  const url = path(project, `/traffic/${encodeURIComponent(record.id)}/${side}/body`);
-  useEffect(() => {
-    let stopped = false;
-    setPage(null);
-    setError("");
-    if (!message) return;
-    api<BodyPage>(`${url}?offset=${offset}`)
-      .then((value) => {
-        if (!stopped) setPage(value);
-      })
-      .catch((failure: unknown) => {
-        if (!stopped) setError(messageOf(failure));
-      });
-    return () => {
-      stopped = true;
-    };
-  }, [url, offset, message]);
-
-  const bytes = page ? decodeBase64(page.body_base64) : null;
-  const length = bytes?.length ?? 0;
-  const body = !page
-    ? error
-      ? "预览加载失败"
-      : "加载正文…"
-    : bytes === null
-      ? "正文编码无法解析"
-      : bytes.length === 0
-        ? "（正文为空）"
-        : mode === "hex"
-          ? hexDump(bytes, page.offset)
-          : decoder.decode(bytes);
-  const preview = message
-    ? [
-        mode === "raw" ? message.head : "",
-        body,
-        mode === "raw" && message.trailers && page?.next === null ? message.trailers : "",
-      ]
-        .filter((part) => part !== "")
-        .join("\n\n")
-    : "";
-  const range = page
-    ? `预览字节 ${page.size ? page.offset + 1 : 0}–${page.offset + length} / ${page.size}`
-    : "加载正文…";
-
-  return (
-    <section className="traffic-message" aria-label={side === "request" ? "请求" : "响应"}>
-      <header className="traffic-message-head">
-        <h3>{side === "request" ? "请求" : "响应"}</h3>
-        {message && (
-          <span className="traffic-message-meta">
-            {message.truncated ? "保存不完整" : "正文完整"} · {fmtBytes(message.size)}
-          </span>
-        )}
-      </header>
-      {message ? (
-        <>
-          <div className="traffic-message-tools">
-            <span className="traffic-message-hint">{range}</span>
-            <span className="spacer" />
-            <a className="button small" href={`/api${url}?download=1`}>
-              下载{message.truncated ? "已保存" : "完整"}正文
-            </a>
-          </div>
-          {error && (
-            <p className="traffic-bad" role="alert">
-              {error}
-            </p>
-          )}
-          <pre className="traffic-pre" tabIndex={0}>
-            {preview}
-          </pre>
-          {page && (
-            <div className="traffic-body-nav">
-              <button
-                type="button"
-                className="button small"
-                disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - 65536))}
-              >
-                上一页
-              </button>
-              <button
-                type="button"
-                className="button small"
-                disabled={page.next === null}
-                onClick={() => {
-                  if (page.next !== null) setOffset(page.next);
-                }}
-              >
-                下一页
-              </button>
-              <span className="toolbar-hint">每页 64 KiB</span>
-            </div>
-          )}
-        </>
-      ) : (
-        <p className="traffic-message-empty">{record.error ? "未获得响应" : "等待响应"}</p>
-      )}
-    </section>
-  );
-}
-
 export function TrafficPage() {
   const ws = useWorkspace();
   const id = ws.id!;
@@ -191,9 +50,17 @@ export function TrafficPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [record, setRecord] = useState<TrafficRecord | null>(null);
   const [detailError, setDetailError] = useState("");
-  const [mode, setMode] = useState<MessageMode>("raw");
   const generation = useRef(0);
   const selection = useRef(0);
+  const trafficTarget = ws.trafficTarget;
+
+  // A Finding opens the exact captured flow: select it, force the HTTP view, and
+  // let the detail request render the inspector without waiting for the list.
+  useEffect(() => {
+    if (!trafficTarget?.flowId) return;
+    setKind("http");
+    setSelected(trafficTarget.flowId);
+  }, [trafficTarget]);
 
   // 搜索防抖：输入停顿 200 ms 后才换查询串，避免每敲一个字都重建轮询。
   useEffect(() => {
@@ -268,7 +135,9 @@ export function TrafficPage() {
       );
       if (current === generation.current) setOlder((existing) => [...existing, ...result.records]);
     } catch (failure) {
-      setError(messageOf(failure));
+      // The filter may have changed while the older page was in flight; a late
+      // failure must not raise an error banner over the new, healthy list.
+      if (current === generation.current) setError(messageOf(failure));
     } finally {
       setLoadingMore(false);
     }
@@ -379,6 +248,26 @@ export function TrafficPage() {
           </>
         }
       />
+
+      {trafficTarget?.findingId && (
+        <div className="banner traffic-origin" role="status">
+          <span className="banner-text">
+            来自发现{" "}
+            <button type="button" className="link-button" onClick={() => ws.openFinding(id, trafficTarget.findingId!)}>
+              {trafficTarget.label || trafficTarget.findingId}
+            </button>{" "}
+            的真实流量：下面展示执行时录制代理捕获的原始请求与响应。
+          </span>
+          <button
+            type="button"
+            className="button ghost small"
+            onClick={() => ws.openFinding(id, trafficTarget.findingId!)}
+          >
+            <ArrowLeft size={13} aria-hidden="true" />
+            返回发现
+          </button>
+        </div>
+      )}
 
       <details className="traffic-scope">
         <summary>
@@ -590,32 +479,13 @@ export function TrafficPage() {
         <Drawer
           label="流量详情"
           title={record ? `${record.method} ${record.host}` : "流量详情"}
-          width={720}
+          width={record?.capture_kind === "http" ? 1240 : 720}
+          className={record?.capture_kind === "http" ? "traffic-inspector-drawer" : undefined}
           onClose={() => {
             setSelected(null);
             setRecord(null);
           }}
         >
-          <div className="traffic-insp-bar">
-            <span className="traffic-insp-meta mono">{record ? fmt(record.created_at) : "读取中…"}</span>
-            <span className="spacer" />
-            {record?.capture_kind === "http" && (
-              <Segmented<MessageMode>
-                ariaLabel="报文展示"
-                size="sm"
-                value={mode}
-                onChange={setMode}
-                options={
-                  [
-                    ["raw", "原始报文"],
-                    ["body", "正文"],
-                    ["hex", "十六进制"],
-                  ] as const
-                }
-              />
-            )}
-          </div>
-
           {detailError && (
             <div className="banner danger" role="alert">
               <AlertCircle size={15} aria-hidden="true" />
@@ -625,20 +495,7 @@ export function TrafficPage() {
 
           {!record && !detailError && <Skeleton rows={4} />}
 
-          {record && record.capture_kind === "http" && (
-            <>
-              <div className="traffic-insp-sub">
-                {record.run_id ? <span className="mono">{record.run_id}</span> : <span>未关联运行</span>}
-                {record.step_id && <span className="mono">· {record.step_id}</span>}
-                {record.error && <span className="traffic-bad">· {record.error}</span>}
-              </div>
-              <div className="traffic-messages">
-                {(["request", "response"] as const).map((side) => (
-                  <MessageView key={`${record.id}-${side}`} project={id} record={record} side={side} mode={mode} />
-                ))}
-              </div>
-            </>
-          )}
+          {record && record.capture_kind === "http" && <TrafficInspector project={id} record={record} />}
 
           {record && record.capture_kind !== "http" && (
             <>

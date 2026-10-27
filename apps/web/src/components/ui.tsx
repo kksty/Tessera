@@ -291,12 +291,14 @@ export function Drawer({
   onClose,
   children,
   width = 460,
+  className,
 }: {
   label: string;
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   width?: number;
+  className?: string;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   useDialogFocus(true, dialogRef, onClose);
@@ -304,7 +306,7 @@ export function Drawer({
     <>
       <div className="drawer-backdrop" onClick={onClose} />
       <aside
-        className="drawer"
+        className={`drawer ${className || ""}`.trim()}
         ref={dialogRef}
         tabIndex={-1}
         role="dialog"
@@ -387,11 +389,13 @@ export function Tabs<T extends string>({
 export function Field({
   label,
   hint,
+  error,
   children,
   htmlFor,
 }: {
   label: ReactNode;
   hint?: ReactNode;
+  error?: ReactNode;
   children: ReactNode;
   htmlFor?: string;
 }) {
@@ -399,7 +403,13 @@ export function Field({
     <label className="field" htmlFor={htmlFor}>
       <span className="field-label">{label}</span>
       {children}
-      {hint && <span className="field-hint">{hint}</span>}
+      {error ? (
+        <span className="field-error" role="alert">
+          {error}
+        </span>
+      ) : (
+        hint && <span className="field-hint">{hint}</span>
+      )}
     </label>
   );
 }

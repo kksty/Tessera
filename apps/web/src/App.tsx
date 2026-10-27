@@ -45,6 +45,7 @@ import {
   type Page,
   type ProjectPage,
   type RuntimeConfig,
+  type TrafficTarget,
   type Workspace,
   type WorkspacePage,
 } from "./workspace.js";
@@ -127,6 +128,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     projectId: string;
     findingId: string;
   } | null>(null);
+  const [trafficTarget, setTrafficTarget] = useState<TrafficTarget | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const authenticated = session?.authenticated === true;
   // 时间线和回放按「图有变化」推进：用量与证据归档不产生新的画面时刻。
@@ -334,6 +336,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       const route = parseRoute();
       if (route.id === id && route.page === page) return;
       rememberView();
+      setTrafficTarget(null);
       if (route.id !== id) {
         sequence.current++;
         currentId.current = route.id;
@@ -579,6 +582,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   }
   function navigate(next: Page, options?: { top?: boolean; anchor?: string }) {
     rememberView();
+    setTrafficTarget(null);
     if (isWorkspacePage(next)) {
       evidenceRequest.current++;
       setEvidencePreview(null);
@@ -627,6 +631,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     if (id) history.replaceState(null, "", routeHash(id, "blackboard"));
   }
   function openProject(nextId: string, destination?: ProjectPage) {
+    setTrafficTarget(null);
     if (!nextId) {
       rememberView();
       backStack.current = [];
@@ -662,6 +667,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     history.replaceState(null, "", routeHash(nextId, target));
   }
   function goBack() {
+    setTrafficTarget(null);
     const previous = backStack.current.pop();
     if (!previous) {
       openProject("");
@@ -747,6 +753,11 @@ export function App({ session, setSession }: { session: Session; setSession: (se
         </button>
       ) : null;
     });
+
+  function openTraffic(target: TrafficTarget) {
+    navigate("traffic");
+    setTrafficTarget(target);
+  }
 
   function openFinding(projectId: string, findingId: string) {
     setFindingSeverity("all");
@@ -844,6 +855,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     evidencePreview,
     findingSeverity,
     focusFinding,
+    trafficTarget,
     paletteOpen,
     refreshing,
     node,
@@ -883,6 +895,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     setError,
     setFindingSeverity,
     openFinding,
+    openTraffic,
     clearFocusFinding: () => setFocusFinding(null),
     setPaletteOpen,
     setTheme: setThemeState,

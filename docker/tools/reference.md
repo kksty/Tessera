@@ -4,7 +4,7 @@
 
 ## 文件、变量与证据
 
-示例变量均须赋值：`HOST` 为已批准主机，`BASE_URL` 为已批准 HTTP 基址，`PORTS` 为本次端口，`WORDLIST` 为所选字典的实际路径，`OUT` 为证据文件名前缀。它们不是预设环境变量。示例中的并发、速率与参数可按问题调整。
+示例变量均须赋值：`HOST` 为已批准主机，`BASE_URL` 为已批准 HTTP 基址，`PORTS` 为本次端口，`WORDLIST` 为所选字典的实际路径，`OUT` 为输出文件名前缀。它们不是预设环境变量。示例中的并发、速率与参数可按问题调整。
 
 ## 字典
 
@@ -14,7 +14,7 @@ core 自带 dirsearch 字典 `/usr/lib/python3/dist-packages/dirsearch/db/dicc.t
 
 输出参数以安装版本为准，不统一假设存在 `--json`。完整结果写文件，再检索必要字段或片段；必要的请求/响应原文与 stderr 分开保留，结构化结果不一定包含这些原件。
 
-结合退出状态、错误和输出内容判断执行是否成功；解析失败不能视为阴性结果。文件路径和摘要用于定位，原件通过 `save_evidence` 归档并引用返回的 Evidence ID。
+结合退出状态、错误和输出内容判断执行是否成功；解析失败不能视为阴性结果。文件路径和摘要用于定位；`save_evidence` 把文件归档为不可变 Evidence 并返回 ID，路径与哈希不能替代 Evidence ID；工具输出、进程日志和中间产物留在 `/workspace`，未引用时不进入证据索引。
 
 | 绝对路径 | 用途 |
 |---|---|
@@ -103,14 +103,6 @@ gogo -F "$OUT-gogo.dat" -o json > "$OUT-gogo.json" 2> "$OUT-gogo-format.stderr"
 
 `nikto --help`。按当前问题选择检查项，告警仍需原始证据验证。
 
-## nmap：针对已批准主机的端口/轻量服务识别
-
-本机帮助：`nmap --help`。
-
-```sh
-nmap -sT -sV --version-light -p "$PORTS" -oA "$OUT-nmap" "$HOST" > "$OUT-nmap.stdout" 2> "$OUT-nmap.stderr"
-```
-
 ## node：JavaScript / TypeScript 工具运行环境
 
 Worker 已预装 Node.js；本机帮助 `node --help`，版本用 `node --version` 核对。当前基线为 v24.19.0，无需为了执行脚本再次安装 Node.js。
@@ -139,7 +131,7 @@ Worker 已预装 npm。本机帮助 `npm --help`，版本用 `npm --version` 核
 
 录制代理、上游与网络限制见本文末尾“代理与录制”；不提供自动公网端口发布。
 
-按当前网络路径创建工作区内的独立配置：`proxychains4 -f /workspace/路径/proxychains.conf 工具 参数`，避免修改全局配置。参数以本机用法为准。只支持动态链接 TCP 客户端；Go 静态程序等应优先使用其原生代理参数。`proxy_dns` 影响解析位置。nmap 经代理时使用 `-sT -Pn -n`；SYN、UDP、ICMP 和原始套接字探测不能通过 proxychains 转发。代理连通不扩大资产授权范围。
+按当前网络路径创建工作区内的独立配置：`proxychains4 -f /workspace/路径/proxychains.conf 工具 参数`，避免修改全局配置。参数以本机用法为准。只支持动态链接 TCP 客户端；Go 静态程序等应优先使用其原生代理参数。`proxy_dns` 影响解析位置。SYN、UDP、ICMP 和原始套接字探测不能通过 proxychains 转发。gogo 支持 `--proxy=socks5://host:port`，经代理时优先用它而不是 proxychains。代理连通不扩大资产授权范围。
 
 ## python3：自定义脚本与数据处理
 
@@ -211,7 +203,7 @@ Execute 尝试为支持的 HTTP 客户端提供录制代理和项目 CA。已有
 - `TESSERA_CAPTURE_PROXY_URL` 带 Run/Step 关联信息；CA 为 `/var/lib/tessera-proxy/mitmproxy-ca-cert.pem`。
 - HTTP/HTTPS 正文分块保存；当前不新建 TCP/UDP/ICMP 记录。采集故障不会重放请求，也不阻止普通执行。
 - 工具自带代理或 `proxychains4 -f /workspace/路径/proxychains.conf 工具 参数` 由任务自主选择。proxychains 包装器保留用户代理，去除自动注入的采集变量。
-- Nmap 经 TCP 代理时使用 `-sT -Pn -n`；SYN、UDP、ICMP 及原始套接字不能由 proxychains 转发。Go 静态程序优先使用原生代理参数。
+- gogo 经代理时优先用 `--proxy=socks5://host:port`；SYN、UDP、ICMP 及原始套接字不能由 proxychains 转发。Go 静态程序优先使用原生代理参数。
 - 设置页的「流量采集」可关闭录制代理；关闭后新 Run 直连，不注入代理环境变量，已有记录保留。
 - Dispatcher 可配置 `TESSERA_CAPTURE_UPSTREAM`（http、https、socks5）及 `TESSERA_CAPTURE_BYPASS`。上游失败不回退直连，不重放目标请求。
 - 上游 TLS 默认上限为 1.2，旧站点首次请求即可成功；`TESSERA_CAPTURE_TLS_MAX=TLS1_3` 或 `UNBOUNDED` 可放开。放开后若握手被目标直接断开，采集会记录该错误并把后续连接降为 TLS 1.2，首次失败请求仍不重放。降级后 TLS 握手仍失败时，流量页会显示黄色 `tls_notice` 提示（不会把 Run 标失败），该主机后续成功响应会清除提示。目标只接受 TLS 1.2 时，OpenSSL 客户端直连可显式加 `--tlsv1.2 --tls-max 1.2`；不要因为一次 TLS EOF 就判定站点不可达。

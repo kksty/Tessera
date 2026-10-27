@@ -1,5 +1,6 @@
 import type { ElementDefinition } from "cytoscape";
-import type { Event, Graph } from "../../../packages/protocol/src/index.js";
+import { recordEvidenceIds } from "../../../packages/protocol/src/index.js";
+import type { Event, EvidenceRecord, Graph } from "../../../packages/protocol/src/index.js";
 import { changedIds } from "./replay.js";
 
 /** 显式范围：黑板只画「这条链路」——从这个节点往上追到起点、往下追到结论。
@@ -21,11 +22,7 @@ export function scopeSeeds(scope?: GraphScope | null): string[] {
  *  这就是 FGS 的因果链：「开始 → 当前节点」；漏洞的链路就是它的全部证据来路。
  *  只保留两端都在集合里的连线，因此画布上永远是一张连起来的图；
  *  Step 入口额外显示它直接产出的第一层节点；不展开后续任务或其他分支。 */
-export function chainElements(
-  elements: ElementDefinition[],
-  seeds: string[],
-  hops = SCOPE_FULL,
-): ElementDefinition[] {
+export function chainElements(elements: ElementDefinition[], seeds: string[], hops = SCOPE_FULL): ElementDefinition[] {
   const isEdge = (el: ElementDefinition) => typeof (el.data as any).source === "string";
   const known = new Set<string>();
   for (const el of elements) if (!isEdge(el)) known.add(String(el.data.id));
@@ -54,8 +51,14 @@ export function chainElements(
       }
   }
   // 任务入口额外保留它直接产生的一层节点，不递归展开后续任务。
-  const stepSeeds = new Set(elements.filter(el => !isEdge(el) && el.data.type === "step" && wanted.includes(String(el.data.id))).map(el => String(el.data.id)));
-  for (const el of elements) if (isEdge(el) && stepSeeds.has(String(el.data.source)) && known.has(String(el.data.target))) keep.add(String(el.data.target));
+  const stepSeeds = new Set(
+    elements
+      .filter((el) => !isEdge(el) && el.data.type === "step" && wanted.includes(String(el.data.id)))
+      .map((el) => String(el.data.id)),
+  );
+  for (const el of elements)
+    if (isEdge(el) && stepSeeds.has(String(el.data.source)) && known.has(String(el.data.target)))
+      keep.add(String(el.data.target));
   return elements.filter((el) => {
     const data = el.data as any;
     return isEdge(el) ? keep.has(data.source) && keep.has(data.target) : keep.has(String(data.id));
@@ -80,15 +83,31 @@ export function scopeForFinding(_graph: Graph, findingId: string): GraphScope {
 export function scopeForNode(graph: Graph, nodeId: string): GraphScope {
   return {
     ids: [nodeId],
-    label: graph.steps.some(s => s.id === nodeId) ? `任务链路 ${nodeId} · 来路与直接产出` : `链路 ${nodeId} · 起点到这里`,
+    label: graph.steps.some((s) => s.id === nodeId)
+      ? `任务链路 ${nodeId} · 来路与直接产出`
+      : `链路 ${nodeId} · 起点到这里`,
   };
 }
 
-/** 证据：所有引用它的观测与候选结论，各自展开成链路。 */
+/** 证据：所有引用它的观测、候选结论、审核与完成记录，各自展开成链路。
+ *  审核只通过被审 Finding 回到黑板；资产与 Lead 没有独立画布节点。 */
 export function scopeForEvidence(graph: Graph, evidenceId: string): GraphScope {
-  const facts = graph.facts.filter((f) => f.evidence_ids.includes(evidenceId));
-  const findings = graph.findings.filter((f) => f.evidence_ids.includes(evidenceId));
-  const ids = [...facts.map((f) => f.id), ...findings.map((f) => f.id)];
+  const cites = (record: EvidenceRecord) => recordEvidenceIds(record).has(evidenceId);
+  const facts = graph.facts.filter(cites);
+  const findings = graph.findings.filter(cites);
+  const reviews = graph.reviews.filter(cites);
+  const steps = graph.steps.filter(cites);
+  const reviewFindings = reviews
+    .map((review) => review.finding_id)
+    .filter((id) => graph.findings.some((finding) => finding.id === id));
+  const ids = [
+    ...new Set([
+      ...facts.map((fact) => fact.id),
+      ...findings.map((finding) => finding.id),
+      ...reviewFindings,
+      ...steps.map((step) => step.id),
+    ]),
+  ];
   return {
     ids,
     label: `证据 ${evidenceId} · 引用它的链路`,
@@ -99,9 +118,7 @@ export function scopeForEvidence(graph: Graph, evidenceId: string): GraphScope {
  *  图始终是总视图，链路视图只能由显式入口进入。 */
 export function eventTargets(graph: Graph, event: Event): string[] {
   const known = new Set<string>(
-    [...graph.facts, ...graph.steps, ...graph.goals, ...graph.findings, ...graph.hints].map(
-      (item) => item.id,
-    ),
+    [...graph.facts, ...graph.steps, ...graph.goals, ...graph.findings, ...graph.hints].map((item) => item.id),
   );
   return [...new Set(changedIds(event.data.changes))].filter((id) => known.has(id));
 }

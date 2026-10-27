@@ -57,6 +57,94 @@
   max-width: 340px;
 }
 
+/* ---------- 测试域覆盖 ---------- */
+.timeline-domains {
+  display: grid;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  min-width: 0;
+}
+
+.timeline-domains-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  min-width: 0;
+}
+
+.timeline-domains-head strong {
+  font-size: var(--f-sm);
+  color: var(--ink);
+}
+
+.timeline-domains-head span {
+  font-size: var(--f-sm);
+  color: var(--ink-3);
+}
+
+.timeline-domain-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 2px 20px;
+}
+
+.timeline-domain {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--f-sm);
+}
+
+.timeline-domain[data-empty="true"] {
+  opacity: 0.45;
+}
+
+.timeline-domain-label {
+  overflow: hidden;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-domain-track {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  background: var(--surface-3);
+  border-radius: 999px;
+}
+
+.timeline-domain-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.timeline-domain[data-domain="other"] .timeline-domain-fill {
+  background: var(--warn);
+}
+
+.timeline-domain-count {
+  color: var(--ink-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-domains-note {
+  margin: 0;
+  font-size: var(--f-xs);
+  color: var(--ink-4);
+}
+
 /* ---------- 纵向轨道 ---------- */
 .timeline-list {
   position: relative;

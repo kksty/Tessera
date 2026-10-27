@@ -107,6 +107,7 @@ try {
     await main
       .getByLabel("Pi 模型配置")
       .getByText(/16,000 tokens/)
+      .first()
       .waitFor();
     assert.equal(calls, 1, "catalog refresh does not send a deployment completion request");
   }

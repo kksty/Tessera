@@ -61,7 +61,7 @@ export function ProviderPicker({ model, onChange, readOnly = {}, scope = "model"
       <span className="settings-hint">
         {legacy
           ? `当前仍使用 Pi 原生供应商「${legacyName}」。改选以上任一方式后将按 API 地址连接，需要填写地址并重新填写密钥。`
-          : "按 API 地址识别：地址、协议与模型 ID 匹配 Pi 目录时采用目录容量，未知地址使用默认容量。自定义 / 中转 API：不套用官方目录容量，容量取自接口声明或手动填写。两种方式都需填写 API 地址。"}
+          : "按 API 地址识别：地址、协议与模型 ID 匹配 Pi 目录时采用目录容量，未知地址使用默认容量。自定义 / 中转 API：不套用官方目录容量，容量取自接口声明或手动填写。两种方式都由 Pi 的 models.json 组合模型，均需填写 API 地址。"}
       </span>
     </label>
   );
@@ -76,6 +76,8 @@ type Check = {
     context_window: number;
     output_limit: number;
     context_probe_tokens: number;
+    context_probe_limit: number;
+    context_probe_capped: boolean;
     max_tokens: number | null;
     prompt_tokens: number | null;
     cached_tokens: number | null;
@@ -302,7 +304,9 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
             {checking ? "检测中…" : "检测 API"}
           </button>
         </div>
-        <span className="settings-hint">检测会发送一次真实容量请求：上下文检测加当前输出上限，可能需要几十秒。</span>
+        <span className="settings-hint">
+          检测会发送一次真实容量请求：上下文检测加当前输出上限，可能需要几十秒；上下文最多探测 32,768 tokens。
+        </span>
       </label>
       {custom && (
         <label>
@@ -358,7 +362,9 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
             {metadata.catalog_match
               ? `目录已匹配：${metadata.catalog_match.provider} / ${metadata.catalog_match.id}（${metadata.catalog_match.via === "provider" ? "按所选供应商和模型 ID" : "按 API 地址、协议和模型 ID"}）`
               : metadata.context_source === "default" && metadata.output_source === "default"
-                ? "目录未匹配：未识别部署容量，下方使用默认值。"
+                ? metadata.provider !== "tessera"
+                  ? `已识别官方端点（${metadata.provider}），但模型 ID「${metadata.id}」不在目录中：当前使用默认容量，可能高于或低于实际。请从上方目录选择模型，或填写实际窗口与输出上限。`
+                  : "目录未匹配：自定义 / 中转端点不继承 Pi 目录容量，当前使用默认值。请填写实际容量，或先「获取模型」读取接口声明；若这是官方端点，请确认接口协议与供应商一致。"
                 : "目录未匹配：已配置的容量来自手动填写或「获取模型」时的接口声明。"}
           </p>
           <dl>
@@ -376,12 +382,38 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
                 <span>来源：{sourceLabel(metadata.output_source)}</span>
               </dd>
             </div>
+            <div>
+              <dt>自动压缩</dt>
+              <dd>
+                {!metadata.compaction.enabled
+                  ? "已关闭"
+                  : metadata.compaction.threshold > 0
+                    ? `超过 ${metadata.compaction.threshold.toLocaleString()} tokens 触发`
+                    : "窗口小于 Pi 预留，会持续触发"}
+                <span>
+                  预留 {metadata.compaction.reserveTokens.toLocaleString()} · 保留最近{" "}
+                  {metadata.compaction.keepRecentTokens.toLocaleString()} tokens
+                </span>
+              </dd>
+            </div>
           </dl>
+          <p>
+            压缩预算完全由 Pi 管理（当前预留与保留量见上方）；Tessera 不按窗口比例改写。压缩摘要由当前模型生成，压缩后
+            Runner 会重新注入图状态锚点。
+          </p>
+          {metadata.compaction.enabled && metadata.compaction.threshold < metadata.compaction.keepRecentTokens && (
+            <p className="settings-clamp">
+              当前窗口 {metadata.context_window.toLocaleString()} tokens 容纳不下 Pi 的压缩预算（预留{" "}
+              {metadata.compaction.reserveTokens.toLocaleString()} + 保留最近{" "}
+              {metadata.compaction.keepRecentTokens.toLocaleString()} tokens）：压缩后保留的上下文仍会超过触发阈值，
+              因此会反复压缩；窗口更小时甚至找不到可压缩的切点。请填写真实窗口，或改用更大窗口的模型。
+            </p>
+          )}
           {metadata.catalog_match && (
             <p>
               目录参考：上下文 {metadata.catalog_match.context_window.toLocaleString()}；输出{" "}
               {metadata.catalog_match.max_output_tokens.toLocaleString()}{" "}
-              tokens。手动配置作为上限，不超过匹配的目录容量。
+              tokens。手动填写的容量会直接覆盖目录值，请确认部署实际支持。
             </p>
           )}
           {(metadata.context_source === "default" || metadata.output_source === "default") && (
@@ -391,7 +423,12 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
             能力声明：{metadata.reasoning ? "支持推理" : metadata.catalog_match ? "普通对话" : "推理能力未知"} ·{" "}
             {metadata.input.includes("image") ? "文本 / 图像" : metadata.catalog_match ? "文本" : "按文本模式接入"}
           </p>
-          {!check && <p>目录与协议声明不等于部署真实上限；「检测 API」会按当前输出上限发起一次真实容量请求。</p>}
+          {!check && (
+            <p>
+              目录与协议声明不等于部署真实上限；「检测 API」会按当前输出上限发起一次真实容量请求，上下文探测最多 32,768
+              tokens。
+            </p>
+          )}
         </div>
       )}
       {check && (
@@ -407,6 +444,12 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
               }、输出 ${(check.capacity.completion_tokens ?? 0).toLocaleString()} tokens）`}
           。自动压缩{check.compaction.enabled ? "已启用" : "已关闭"}，预留{" "}
           {check.compaction.reserveTokens.toLocaleString()} tokens。
+        </p>
+      )}
+      {check?.capacity.context_probe_capped && (
+        <p className="settings-hint">
+          上下文探测上限为 {check.capacity.context_probe_limit.toLocaleString()} tokens：更大的声明窗口只验证到该上限，
+          完整窗口仍需在真实任务或专项容量测试中观察。
         </p>
       )}
       {error && (

@@ -179,7 +179,7 @@ export function RetryPage() {
             <span className="retry-guide-num">2</span>
             <div>
               <strong>再看外部影响</strong>
-              <p>shell、nmap、curl 等动作可能已经发送。确认目标允许重复请求，且上次没有未归档的结果。</p>
+              <p>shell、gogo、curl 等动作可能已经发送。确认目标允许重复请求，且上次没有未归档的结果。</p>
             </div>
           </li>
           <li>

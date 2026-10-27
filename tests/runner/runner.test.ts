@@ -2,7 +2,7 @@ import { commitPlan } from "../helpers/current-api.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Store } from "../../packages/core/src/store.js";
@@ -49,12 +49,17 @@ function assertTaskRequest(body: any, expectedTools: string[]) {
     .map((m: any) => m.content)
     .join("\n");
   assert.ok(system.includes(taskSystemPrompts(fallbackEnvironment).systemPrompt));
+  // Pi resources are disabled, so a planted workspace resource must not add a
+  // description or execute. The coding-agent system prompt is replaced too.
   assert.doesNotMatch(system, /expert coding assistant|Pi documentation|TESSERA_AUTOMATIC_RESOURCE_MUST_NOT_LOAD/);
+  // Resource loading is an implementation detail; the model context must not
+  // announce which Pi resource types are enabled or disabled.
+  assert.doesNotMatch(system, /skills?|extensions?|prompt templates?|themes?/i);
   const names = body.tools.map((t: any) => t.function.name).sort();
   assert.deepEqual(names, [...expectedTools].sort());
 }
 
-test("task resources use explicit prompts, isolate automatic files and keep ordinary SDK compaction", async () => {
+test("task resources use explicit prompts, load no Pi resources and keep ordinary SDK compaction", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tessera-resources-"));
   try {
     plantAutomaticResources(dir, join(dir, "agent"));
@@ -63,6 +68,7 @@ test("task resources use explicit prompts, isolate automatic files and keep ordi
       if (path.endsWith("blank.md")) writeFileSync(path, "  \n");
       const { loader, environment } = await taskResources(dir, join(dir, "agent"), settings, path);
       assert.equal(environment, fallbackEnvironment);
+      // The workspace cannot inject any Pi resource into the task.
       assert.deepEqual(loader.getAgentsFiles().agentsFiles, []);
       assert.deepEqual(loader.getSkills().skills, []);
       assert.deepEqual(loader.getExtensions().extensions, []);
@@ -388,6 +394,16 @@ test("Pi SDK calls an actual tool and commits observations through the HTTP API"
     assert.equal(diagnostics.filter((e) => e.type === "model_end").length, 3);
     assert.ok(diagnostics.some((e) => e.type === "model_end" && typeof e.data.cache_read === "number"));
     assert.equal(diagnostics.at(-1).type, "run_end");
+    // The Run summary carries the cost fields the export relies on: a long Run
+    // must be explainable from its own end event, not only from edited code paths.
+    const end = diagnostics.at(-1)!.data;
+    assert.equal(end.step_attempts, 1);
+    assert.equal(end.tool_calls, 2);
+    assert.equal(end.closeout, false);
+    assert.equal(end.compactions, 0);
+    assert.equal(typeof end.threshold, "number");
+    assert.equal(typeof end.window, "number");
+    assert.ok(end.duration_ms >= 0);
   } finally {
     await model.close();
     await app.close();
@@ -631,6 +647,9 @@ test("Pi Review preserves useful information with explicit classification and no
     content: "Original observation",
     encoding: "utf8",
     mime_type: "text/plain",
+  });
+  f.store.mutate(f.graph.project.id, "fixture.review-evidence", true, (graph) => {
+    graph.findings[0].evidence_ids = [proof.id];
   });
   f.model.post("/v1/chat/completions", (req: any, reply) => {
     const input = JSON.stringify(req.body.messages);
@@ -1035,7 +1054,7 @@ test("Decide final JSON uses the same deletion-preview gate as submit_decisions"
   }
 });
 
-test("in-flight Pi queries exclude newly deleted bodies and explicit history does not restore them", async () => {
+test("in-flight Pi queries exclude deleted bodies and the model cannot read historical originals", async () => {
   const f = await sdkFixture();
   let calls = 0;
   const target = f.store.manualStep(f.graph.project.id, {
@@ -1051,7 +1070,9 @@ test("in-flight Pi queries exclude newly deleted bodies and explicit history doe
   });
   f.model.post("/v1/chat/completions", async (req: any, reply) => {
     calls++;
-    const result = () => JSON.parse(req.body.messages.filter((message: any) => message.role === "tool").at(-1).content);
+    const lastContent = () =>
+      String(req.body.messages.filter((message: any) => message.role === "tool").at(-1)?.content ?? "");
+    const result = () => JSON.parse(lastContent());
     if (calls === 1) {
       const planner = f.store.claim(f.graph.project.id, "concurrent-planner", 0)!,
         graph = f.store.get(f.graph.project.id);
@@ -1087,14 +1108,16 @@ test("in-flight Pi queries exclude newly deleted bodies and explicit history doe
       });
     }
     if (calls === 4) {
-      assert.ok(result().content.includes("REMOVED_RUNNER_BODY"));
+      assert.match(lastContent(), /operator-only/);
+      assert.ok(!lastContent().includes("REMOVED_RUNNER_BODY"));
       return streamFixture(reply, {
         role: "assistant",
         tool_calls: [toolCall("query_graph", { kind: "facts", keyword: "REMOVED_RUNNER_BODY", history: true })],
       });
     }
     if (calls === 5) {
-      assert.ok(JSON.stringify(result()).includes("REMOVED_RUNNER_BODY"));
+      assert.match(lastContent(), /operator-only/);
+      assert.ok(!lastContent().includes("REMOVED_RUNNER_BODY"));
       const event = f.store.events(f.graph.project.id).find((event) => event.kind === "fact.observed")!;
       return streamFixture(reply, {
         role: "assistant",
@@ -1102,11 +1125,11 @@ test("in-flight Pi queries exclude newly deleted bodies and explicit history doe
       });
     }
     if (calls === 6) {
-      assert.ok(result().content.includes("REMOVED_RUNNER_BODY"));
+      assert.ok(!lastContent().includes("REMOVED_RUNNER_BODY"));
       return streamFixture(reply, { role: "assistant", tool_calls: [toolCall("read_graph", {})] });
     }
     assert.ok(!JSON.stringify(result()).includes("REMOVED_RUNNER_BODY"));
-    streamFixture(reply, { role: "assistant", content: '{"summary":"历史已显式读取，继续基于活动图执行"}' });
+    streamFixture(reply, { role: "assistant", content: '{"summary":"活动图已刷新，继续基于当前状态执行"}' });
   });
   try {
     await f.run();
@@ -1127,7 +1150,7 @@ test("in-flight Pi queries exclude newly deleted bodies and explicit history doe
 });
 
 for (const id of ["fixture", "glm-5"])
-  test(`${id} uses Pi output sizing and fits compaction into a small window without changing normal transport`, async () => {
+  test(`${id} uses Pi output sizing and Pi's compaction defaults without changing normal transport`, async () => {
     const f = await sdkFixture();
     let calls = 0;
     f.config.model.id = id;
@@ -1156,8 +1179,9 @@ for (const id of ["fixture", "glm-5"])
         .map((line) => JSON.parse(line));
       const capacity = events.find((event) => event.type === "capacity_plan").data;
       const defaults = SettingsManager.inMemory().getCompactionSettings();
-      assert.equal(capacity.reserve, Math.min(defaults.reserveTokens, Math.floor(capacity.window / 4)));
-      assert.equal(capacity.keep_recent, Math.min(defaults.keepRecentTokens, Math.floor(capacity.window / 3)));
+      // Pi owns the compaction budget; Tessera must not scale it to the window.
+      assert.equal(capacity.reserve, defaults.reserveTokens);
+      assert.equal(capacity.keep_recent, defaults.keepRecentTokens);
       assert.equal(capacity.compaction_enabled, defaults.enabled);
       assert.ok(!events.some((event) => event.type === "closeout" || event.type === "compaction_start"));
     } finally {
@@ -1771,7 +1795,7 @@ test("persisted Execute session recovers once with reads only, unique usage and 
   f.config.closeout_seconds = 5;
   f.model.post("/v1/chat/completions", async (req, reply) => {
     if (++calls === 1) return reply.code(402).send({ error: { message: "original request failed" } });
-    assertTaskRequest(req.body, ["read_graph", "read_evidence", "read_workspace"]);
+    assertTaskRequest(req.body, ["read_graph", "read_evidence", "read_workspace", "query_traffic"]);
     if (calls === 2)
       return streamFixture(
         reply,
@@ -1920,9 +1944,15 @@ test("time closeout stops a running command but still accepts the final result",
     const graph = f.store.get(f.graph.project.id);
     assert.ok(graph.steps[0].executed_at, "the Step records the final result");
     assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
-    const rows = graph.evidence.filter((e) => e.source_path?.includes("processes"));
-    assert.equal(rows.length, 1, "the stopped command log is archived");
     assert.ok(processId);
+    assert.ok(
+      existsSync(join(f.dir, "runs", f.job.worker, "processes", processId + ".log")),
+      "the stopped command log stays in the project workspace",
+    );
+    assert.ok(
+      !graph.evidence.some((e) => e.source_path?.includes("processes")),
+      "a process log is not Evidence unless explicitly saved and cited",
+    );
     const metadata = JSON.parse(
       readFileSync(join(f.dir, "runs", f.job.worker, "processes", processId + ".json"), "utf8"),
     );
@@ -2214,13 +2244,18 @@ test("unlimited shell policy preserves omitted and model-selected timeouts", asy
     assert.equal(Object.hasOwn(tools[0].args, "timeout"), false);
     assert.equal(tools[1].args.timeout, 300);
     assert.ok(tools.every((event) => !event.isError));
+    assert.equal(
+      f.store.get(f.graph.project.id).evidence.length,
+      0,
+      "tool results stay in the Run's tools.ndjson and are not Evidence by themselves",
+    );
     assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
   } finally {
     await f.close();
   }
 });
 
-test("Execute can poll a yielded Pi shell process and archives its complete original log", async () => {
+test("Execute can poll a yielded Pi shell process and keeps its complete original log in the workspace", async () => {
   const f = await sdkFixture();
   let calls = 0,
     processId = "";
@@ -2267,7 +2302,15 @@ test("Execute can poll a yielded Pi shell process and archives its complete orig
     assert.equal(calls, 3);
     const graph = f.store.get(f.graph.project.id);
     assert.match(graph.steps[0].summary!, /进程原始输出/);
-    assert.ok(graph.evidence.some((e) => e.source_path?.endsWith(`${processId}.log`)));
+    assert.match(graph.steps[0].summary!, /runs\/.*processes\/.*\.log/);
+    assert.ok(
+      existsSync(join(f.dir, "runs", f.job.worker, "processes", processId + ".log")),
+      "the complete process log stays in the project workspace",
+    );
+    assert.ok(
+      !graph.evidence.some((e) => e.source_path?.endsWith(`${processId}.log`)),
+      "shell process logs are project files, not Evidence",
+    );
     assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
   } finally {
     await f.close();
@@ -2303,8 +2346,13 @@ test("Execute final submission stops unfinished commands without completing the 
     const graph = f.store.get(f.graph.project.id);
     assert.equal(graph.steps[0].concluded_at, null);
     assert.equal(f.store.runs(f.graph.project.id)[0].status, "needs_attention");
-    const rows = graph.evidence.filter((e) => e.source_path?.includes("processes"));
-    assert.equal(rows.length, 1);
+    const logs = readdirSync(join(f.dir, "runs", f.job.worker, "processes")).filter((name) => name.endsWith(".log"));
+    assert.equal(logs.length, 1, "the stopped command log stays in the project workspace");
+    assert.equal(
+      graph.evidence.filter((e) => e.source_path?.includes("processes")).length,
+      0,
+      "process logs are not automatically archived as Evidence",
+    );
   } finally {
     await f.close();
   }

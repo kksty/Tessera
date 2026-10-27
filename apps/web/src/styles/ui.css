@@ -16,8 +16,12 @@
   font-weight: 500;
   white-space: nowrap;
   box-shadow: var(--shadow-1);
-  transition: background var(--fast), border-color var(--fast), color var(--fast),
-    box-shadow var(--fast), transform var(--fast);
+  transition:
+    background var(--fast),
+    border-color var(--fast),
+    color var(--fast),
+    box-shadow var(--fast),
+    transform var(--fast);
 }
 
 .button:hover {
@@ -35,7 +39,9 @@
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
   border-color: transparent;
   color: #fff;
-  box-shadow: 0 1px 2px rgba(46, 40, 160, 0.28), 0 8px 20px -12px rgba(70, 64, 224, 0.7),
+  box-shadow:
+    0 1px 2px rgba(46, 40, 160, 0.28),
+    0 8px 20px -12px rgba(70, 64, 224, 0.7),
     inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
@@ -43,7 +49,9 @@
   background: linear-gradient(135deg, var(--accent-strong) 0%, var(--accent) 100%);
   border-color: transparent;
   color: #fff;
-  box-shadow: 0 2px 4px rgba(46, 40, 160, 0.24), 0 12px 24px -12px rgba(70, 64, 224, 0.75);
+  box-shadow:
+    0 2px 4px rgba(46, 40, 160, 0.24),
+    0 12px 24px -12px rgba(70, 64, 224, 0.75);
 }
 
 /* 深色主题下亮紫色需要深色文字才能保证对比度。 */
@@ -122,7 +130,9 @@
   border-radius: var(--r-sm);
   color: var(--ink-3);
   flex: none;
-  transition: background var(--fast), color var(--fast);
+  transition:
+    background var(--fast),
+    color var(--fast);
 }
 
 .icon-button:hover {
@@ -152,6 +162,11 @@
 .field-hint {
   font-size: var(--f-xs);
   color: var(--ink-4);
+  line-height: 1.5;
+}
+
+.field .field-error {
+  font-size: var(--f-xs);
   line-height: 1.5;
 }
 
@@ -462,7 +477,10 @@
   flex-direction: column;
   gap: 1px;
   position: relative;
-  transition: background var(--fast), border-color var(--fast), box-shadow var(--fast),
+  transition:
+    background var(--fast),
+    border-color var(--fast),
+    box-shadow var(--fast),
     transform var(--fast);
 }
 
@@ -794,7 +812,10 @@ button.kpi:hover {
   font-size: var(--f-sm);
   color: var(--ink-3);
   white-space: nowrap;
-  transition: background var(--fast), color var(--fast), box-shadow var(--fast);
+  transition:
+    background var(--fast),
+    color var(--fast),
+    box-shadow var(--fast);
 }
 
 .segmented button:hover {
@@ -1068,6 +1089,8 @@ button.kpi:hover {
   place-items: center;
   padding: 24px;
   overflow: auto;
+  /* 抽屉里也会打开弹窗：弹窗必须盖在抽屉（110）之上。 */
+  z-index: 120;
 }
 
 .modal {
@@ -1231,12 +1254,7 @@ button.kpi:hover {
 .skeleton {
   max-width: 100%;
   border-radius: 6px;
-  background: linear-gradient(
-    90deg,
-    var(--surface-3) 25%,
-    var(--surface-2) 37%,
-    var(--surface-3) 63%
-  );
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 37%, var(--surface-3) 63%);
   background-size: 400% 100%;
   animation: shimmer 1.4s ease infinite;
 }
@@ -1325,7 +1343,10 @@ button.kpi:hover {
   font-size: var(--f-xs);
   min-width: 200px;
   box-shadow: var(--shadow-1);
-  transition: border-color var(--fast), color var(--fast), background var(--fast),
+  transition:
+    border-color var(--fast),
+    color var(--fast),
+    background var(--fast),
     box-shadow var(--fast);
 }
 
@@ -1611,6 +1632,19 @@ button.kpi:hover {
 .step-property .field-label {
   display: block;
   margin-bottom: 3px;
+}
+
+/* 人工补测试域：下拉选域，下面写细节；只用于分组与统计，不改任务版本。 */
+.step-domain {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.step-domain select,
+.step-domain input {
+  width: 100%;
+  min-width: 0;
 }
 
 .meta-list {

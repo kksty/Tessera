@@ -18,6 +18,10 @@ export async function workerConfig(job: Job, config: DispatchConfig, secret: str
     api: metadata.api,
     provider: metadata.provider === "tessera" ? "custom" : metadata.provider,
     base_url: metadata.base_url,
+    // Resolve catalog capacity once, so the Runner starts from the same window the
+    // settings page and Dispatcher showed instead of re-deriving a different fallback.
+    context_window: metadata.context_window,
+    max_output_tokens: metadata.max_output_tokens,
     // Pi uses this marker to select Anthropic OAuth wire conventions. It is not an upstream credential.
     api_key: model.api_key.includes("sk-ant-oat")
       ? `sk-ant-oat-${token}`

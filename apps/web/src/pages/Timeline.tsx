@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import { ArrowUpRight, History, RefreshCw, Search } from "lucide-react";
 import { EmptyState, PageHeader, Segmented } from "../components/ui.js";
 import { fmt, locateRecord, useWorkspace } from "../workspace.js";
-import { projectActivity, type ActivityRow } from "../project-activity.js";
+import { projectActivity, kindLabel, type ActivityRow } from "../project-activity.js";
+import { domainStats, type DomainStats } from "../graph-summary.js";
 import { blackboardIndexAt } from "../replay.js";
 import { useViewState } from "../view-state.js";
 import { TasksPage } from "./Tasks.js";
@@ -42,6 +43,7 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
   const category: Category = categoryOptions.some(([key]) => key === savedCategory) ? savedCategory : "all";
 
   const rows = useMemo(() => projectActivity(ws.events, graph, all), [ws.events, graph, all]);
+  const stats = useMemo(() => domainStats(graph), [graph]);
   const needle = query.trim().toLowerCase();
   const filtered = useMemo(
     () =>
@@ -49,7 +51,7 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
         (row) =>
           (category === "all" || row.category === category) &&
           (!needle ||
-            `${row.title} ${row.detail} ${row.actor} ${row.reason} ${row.kind} ${row.targets.join(" ")}`
+            `${row.title} ${row.detail} ${row.actor} ${row.reason} ${kindLabel(row.kind)} ${row.targets.join(" ")}`
               .toLowerCase()
               .includes(needle)),
       ),
@@ -125,6 +127,8 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
         <Segmented ariaLabel="时间线视图" value={view} onChange={setView} options={viewOptions} />
       </div>
 
+      {stats.total > 0 && <DomainCoverage stats={stats} />}
+
       {view === "tasks" ? (
         <TasksPage embedded />
       ) : (
@@ -180,7 +184,7 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
                       <span>{row.actor}</span>
                       {all && (
                         <span className="mono">
-                          {row.kind} · 版本 {ws.events[row.index]?.revision ?? "—"}
+                          {kindLabel(row.kind)} · 版本 {ws.events[row.index]?.revision ?? "—"}
                         </span>
                       )}
                     </div>
@@ -249,6 +253,47 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
           )}
         </>
       )}
+    </section>
+  );
+}
+
+/** 项目日志里的测试域覆盖条：任务按 test_domain 统计，空域保留 0 条以便看出缺口。 */
+function DomainCoverage({ stats }: { stats: DomainStats }) {
+  const percent = (value: number) => `${Math.round(value * 100)}%`;
+  return (
+    <section className="timeline-domains" aria-label="测试域覆盖">
+      <div className="timeline-domains-head">
+        <strong>测试域覆盖</strong>
+        <span>
+          任务 {stats.total} · 已分类 {stats.classified}（{percent(stats.classified / stats.total)}）· 未分类{" "}
+          {stats.unclassified}（{percent(stats.otherRatio)}）· 核心域 {stats.used}/{stats.coreTotal}
+          {stats.crossDomain > 0 && <span title="输入事实来自其他测试域的任务数">· 跨域 {stats.crossDomain}</span>}
+        </span>
+      </div>
+      <div className="timeline-domain-grid">
+        {stats.domains.map((domain) => (
+          <div
+            className="timeline-domain"
+            key={domain.key}
+            data-domain={domain.key}
+            data-empty={domain.steps ? undefined : "true"}
+            title={`${domain.label}：任务 ${domain.steps} · 事实 ${domain.facts} · 发现 ${domain.findings}`}
+          >
+            <span className="timeline-domain-label">{domain.label}</span>
+            <span className="timeline-domain-track" aria-hidden="true">
+              <i
+                className="timeline-domain-fill"
+                style={{ width: domain.steps ? `${Math.max(domain.share * 100, 2)}%` : "0%" }}
+              />
+            </span>
+            <span className="timeline-domain-count mono">{domain.steps}</span>
+          </div>
+        ))}
+      </div>
+      <p className="timeline-domains-note">
+        只统计未删除、未丢弃的任务{stats.discarded ? `（另有 ${stats.discarded} 个已丢弃任务未计入）` : ""}
+        ；事实与发现按生产任务继承测试域，未分类即没有填 test_domain 的旧任务。
+      </p>
     </section>
   );
 }

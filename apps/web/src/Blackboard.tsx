@@ -1,16 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import dagre from "cytoscape-dagre";
-import {
-  Download,
-  GitBranch,
-  Maximize,
-  Minus,
-  Network,
-  Plus,
-  Route,
-  Sparkles,
-} from "lucide-react";
+import { Boxes, Download, GitBranch, Maximize, Minus, Network, Plus, Route, Sparkles } from "lucide-react";
 import { graphMotionEnabled, installGraphMotion } from "./graph-motion.js";
 import { writePreference } from "./preferences.js";
 import type { Graph } from "../../../packages/protocol/src/index.js";
@@ -19,13 +10,8 @@ import { activeGraph } from "../../../packages/protocol/src/node-lifecycle.js";
 import { applyLayout, layoutOptions, localPrefs, raiseToReadableZoom } from "./layouts.js";
 import { boardViewports, type BoardViewport } from "./view-state.js";
 import { coldNodes, isColdNode } from "./coldness.js";
-import {
-  chainElements,
-  SCOPE_FULL,
-  scopeSeeds,
-  scopeSize,
-  type GraphScope,
-} from "./graph-scope.js";
+import { chainElements, SCOPE_FULL, scopeSeeds, scopeSize, type GraphScope } from "./graph-scope.js";
+import { domainNodeId, domainSummaryElements, summaryElements, TYPE_LABEL } from "./graph-summary.js";
 
 cytoscape.use(dagre);
 
@@ -93,18 +79,6 @@ function fitNodeLabel(text: string, maxWidth: number, maxLines: number) {
   }
   return { label: lines.join("\n"), lines: lines.length || 1 };
 }
-/** 节点类型 → 范围提示里的说法 */
-const TYPE_LABEL: Record<string, string> = {
-  origin: "起点",
-  scope: "范围",
-  goal: "目标",
-  subgoal: "子目标",
-  fact: "事实",
-  finding: "发现",
-  step: "任务",
-  hint: "提示",
-  navigation: "交接",
-};
 /** 滚轮一格（deltaY ≈ 100）的缩放倍率；触控板的小 delta 按比例缩小。 */
 const WHEEL_STEP = 1.35;
 const MAX_VIEWPORTS = 48;
@@ -176,6 +150,11 @@ function readPalette(): Palette {
       "border-color": c("--info"),
       color: c("--info"),
     },
+    summary: {
+      "background-color": c("--surface-2"),
+      "border-color": c("--border-strong"),
+      color: c("--text"),
+    },
     edge: {
       "line-color": c("--border-strong"),
       "target-arrow-color": c("--border-strong"),
@@ -236,6 +215,25 @@ function applyPalette(c: Core) {
     .style({ ...p.stepDone, "border-style": "solid" })
     .selector('node[type="step"][expanded=1]')
     .style({ color: p.node.color })
+    // 汇总节点：虚线框表示「这是一类节点的合并」，边框色沿用该类节点，数量写在标签里。
+    .selector('node[type="summary"]')
+    .style({ ...p.summary, "font-weight": 600, "border-style": "dashed", "border-width": 1.5 })
+    .selector('node[type="summary"][groupType="origin"]')
+    .style({ "border-color": p.origin["border-color"] })
+    .selector('node[type="summary"][groupType="goal"]')
+    .style({ "border-color": p.goal["border-color"] })
+    .selector('node[type="summary"][groupType="subgoal"]')
+    .style({ "border-color": p.subgoal["border-color"] })
+    .selector('node[type="summary"][groupType="scope"]')
+    .style({ "border-color": p.scopeNode["border-color"] })
+    .selector('node[type="summary"][groupType="fact"]')
+    .style({ "border-color": p.fact["border-color"] })
+    .selector('node[type="summary"][groupType="step"]')
+    .style({ "border-color": p.step["border-color"] })
+    .selector('node[type="summary"][groupType="finding"]')
+    .style({ "border-color": p.finding["border-color"] })
+    .selector('node[type="summary"][groupType="hint"]')
+    .style({ "border-color": p.subgoal["border-color"] })
     .selector("edge")
     .style({ ...p.edge, "text-background-opacity": 0.9 })
     .selector('edge[status="concluded"]')
@@ -243,7 +241,11 @@ function applyPalette(c: Core) {
     .selector('edge[status="running"]')
     .style({ ...p.running, "text-background-color": p.edge["text-background-color"] })
     .selector('edge[status="finding"]')
-    .style({ "line-color": p.finding["border-color"], "target-arrow-color": p.finding["border-color"], color: p.finding["border-color"] })
+    .style({
+      "line-color": p.finding["border-color"],
+      "target-arrow-color": p.finding["border-color"],
+      color: p.finding["border-color"],
+    })
     .selector('edge[status="scope-approval"]')
     .style(p.scope)
     .selector('edge[status="concluded"][target="goal"]')
@@ -271,11 +273,14 @@ function applyPalette(c: Core) {
 export function graphElements(g: Graph, graphId: string, expandSteps = false): ElementDefinition[] {
   g = activeGraph(g);
   const relations = resolveGraphRelations(g);
-  const ancestry = walkRelations(relations, [...g.steps, ...g.facts, ...g.findings]
-    .filter(record => record.graph_id === graphId).map(record => record.id), "sources");
-  const steps = g.steps.filter(s => s.graph_id === graphId || ancestry.depths.has(s.id));
-  const outputs = (id: string) => (relations.downstream.get(id) ?? [])
-    .filter(edge => edge.kind === "fact_production").map(edge => edge.target);
+  const ancestry = walkRelations(
+    relations,
+    [...g.steps, ...g.facts, ...g.findings].filter((record) => record.graph_id === graphId).map((record) => record.id),
+    "sources",
+  );
+  const steps = g.steps.filter((s) => s.graph_id === graphId || ancestry.depths.has(s.id));
+  const outputs = (id: string) =>
+    (relations.downstream.get(id) ?? []).filter((edge) => edge.kind === "fact_production").map((edge) => edge.target);
   /* 范围节点：人工批准一个子域名/站点时写入的事实（带 asset_id），它没有生产者——
      它来自人的授权，不是某次探索的结论。挂在 origin 下作为「范围」节点，而不是假装它是发现。 */
   const produced = new Set([...relations.facts].filter(([, source]) => source.producers.length).map(([id]) => id));
@@ -287,13 +292,15 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
   // 项目“继续评估”复位根目标后，黑板必须跟着复位。
   const achieved = g.goals.find((v) => v.id === "goal")?.state === "satisfied";
   const nodes: ElementDefinition[] = [
-    ...g.hints.filter(h => !h.withdrawn_at).map(h => ({
-      data: { id: h.id, label: `${h.id} · ${h.content}`, type: "hint", state: "active" },
-    })),
+    ...g.hints
+      .filter((h) => !h.withdrawn_at)
+      .map((h) => ({
+        data: { id: h.id, label: `${h.id} · ${h.content}`, type: "hint", state: "active" },
+      })),
     ...facts.map((f) => ({
       data: {
         id: f.id,
-        label: f.id === "origin" ? `Origin\n${f.description}` : f.description,
+        label: f.id === "origin" ? `起点\n${f.description}` : f.description,
         type: f.id === "origin" ? "origin" : scopeFact(f) ? "scope" : "fact",
         state: f.status || "observation",
         cold: isColdNode(g, f) ? "yes" : "no",
@@ -304,19 +311,14 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
       .map((v) => ({
         data: {
           id: v.id,
-          label: v.id === "goal" ? `Goal\n${v.description}` : v.description,
+          label: v.id === "goal" ? `目标\n${v.description}` : v.description,
           type: v.id === "goal" ? "goal" : "subgoal",
           // 未达成前目标不连任何线：用边框虚实表达「还没达成」，而不是画一条虚线假装因果。
           state: v.id === "goal" ? (achieved ? "achieved" : "open") : v.state,
         },
       })),
     ...steps
-      .filter(
-        (s) =>
-          expandSteps || !s.concluded_at ||
-          s.discarded ||
-          (!outputs(s.id).length && s.to !== "goal"),
-      )
+      .filter((s) => expandSteps || !s.concluded_at || s.discarded || (!outputs(s.id).length && s.to !== "goal"))
       .map((s) => ({
         data: {
           id: s.id,
@@ -353,21 +355,11 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
     const maxWidth = NODE_TEXT_WIDTH[type] || 112;
     const fitted = fitNodeLabel(text, maxWidth, NODE_MAX_LINES);
     node.data.label = fitted.label;
-    node.data.height = Math.max(
-      NODE_MIN_HEIGHT,
-      fitted.lines * NODE_LINE_HEIGHT + NODE_TEXT_PADDING,
-    );
+    node.data.height = Math.max(NODE_MIN_HEIGHT, fitted.lines * NODE_LINE_HEIGHT + NODE_TEXT_PADDING);
   }
   const present = new Set(nodes.map((n) => String(n.data.id))),
     edges: ElementDefinition[] = [];
-  const connect = (
-    source: string,
-    target: string,
-    status: string,
-    stepId?: string,
-    label = "",
-    type = "flow",
-  ) => {
+  const connect = (source: string, target: string, status: string, stepId?: string, label = "", type = "flow") => {
     if (source !== target && present.has(source) && present.has(target))
       edges.push({
         data: {
@@ -383,28 +375,16 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
   };
   for (const s of steps) {
     const factIds = outputs(s.id);
-    const status = s.discarded
-      ? "discarded"
-      : s.concluded_at
-        ? "concluded"
-        : s.worker
-          ? "running"
-          : "open";
+    const status = s.discarded ? "discarded" : s.concluded_at ? "concluded" : s.worker ? "running" : "open";
     for (const hintId of s.hint_ids || []) {
       const targets = present.has(s.id) ? [s.id] : s.to === "goal" ? ["goal"] : factIds;
       for (const target of targets) connect(hintId, target, "hint", s.id, "提示关联", `hint-${hintId}`);
     }
-    if (
-      !expandSteps && s.concluded_at &&
-      !s.discarded &&
-      (factIds.length || s.to === "goal")
-    ) {
+    if (!expandSteps && s.concluded_at && !s.discarded && (factIds.length || s.to === "goal")) {
       for (const source of s.from)
-        for (const target of s.to === "goal" ? ["goal"] : factIds)
-          connect(source, target, "concluded", s.id, s.id);
+        for (const target of s.to === "goal" ? ["goal"] : factIds) connect(source, target, "concluded", s.id, s.id);
     } else {
-      for (const source of s.from)
-        connect(source, s.id, status, s.id, expandSteps ? "" : s.id);
+      for (const source of s.from) connect(source, s.id, status, s.id, expandSteps ? "" : s.id);
       for (const target of factIds) connect(s.id, target, status, s.id);
       // 只有真正达成目标的 Step 才连到 Goal。未达成的方向只画到它自己的 Step 为止，
       // 不再用虚线连向 Goal —— 虚线会让「还没发生的事」看起来像一条因果证据。
@@ -416,8 +396,9 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
       if (edge.kind === "finding_source") connect(edge.source, f.id, "finding", undefined, "来源事实", "finding-link");
       if (edge.kind === "finding_production") {
         if (present.has(edge.source)) connect(edge.source, f.id, "finding", undefined, "产出发现", "finding-link");
-        else for (const source of g.steps.find(s => s.id === edge.source)?.from ?? [])
-          connect(source, f.id, "finding", edge.source, "产出发现", "finding-link");
+        else
+          for (const source of g.steps.find((s) => s.id === edge.source)?.from ?? [])
+            connect(source, f.id, "finding", edge.source, "产出发现", "finding-link");
       }
     }
   }
@@ -429,8 +410,7 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
 
 /** 发现链路只在当前活动图上展开真实任务节点；目标意向线不冒充发现的因果证据。 */
 export function discoveryElements(graph: Graph): ElementDefinition[] {
-  return graphElements(graph, "main", true)
-    .filter(element => element.data.type !== "goal-link");
+  return graphElements(graph, "main", true).filter((element) => element.data.type !== "goal-link");
 }
 
 function rememberViewport(key: string, viewport: BoardViewport) {
@@ -480,21 +460,35 @@ export function Blackboard({
   // 初次渲染就要用对布局：否则「挂载时已经是链路视图」会先按偏好布局跑一遍，
   // 再被自动切换打断，节点位置与缓存视角对不上，往返页面就丢视角。
   const initialScoped = scopeSeeds(scope).length > 0;
-  const [layout, setLayout] = useState(() =>
-    initialScoped ? "dagre_tb" : localPrefs().layout_mode,
-  ),
+  const [layout, setLayout] = useState(() => (initialScoped ? "dagre_tb" : localPrefs().layout_mode)),
     layoutRef = useRef(layout);
   layoutRef.current = layout;
   const [layoutError, setLayoutError] = useState("");
   const [motion, setMotion] = useState(graphMotionEnabled);
   // 0 = 完整链路（一路追到起点与结论）；1–3 = 只追这么多跳
   const [hops, setHops] = useState(SCOPE_FULL);
+  // 汇总视图：按测试域（默认）或按节点类型合并成少量框；展开一个组时恢复原节点。
+  const [summary, setSummary] = useState(false);
+  const [summaryMode, setSummaryMode] = useState<"domain" | "type">("domain");
+  const [expanded, setExpanded] = useState<string[]>([]);
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const layoutSequence = useRef(0), interactionAt = useRef(0), layingOut = useRef(false);
+  const layoutSequence = useRef(0),
+    interactionAt = useRef(0),
+    layingOut = useRef(false);
   const motionRef = useRef(motion);
   motionRef.current = motion;
   // 链路视图要「看到整条线」，所以不做聚焦居中，只做适应窗口
   const scopeActive = useRef(false);
+  const summaryRef = useRef(false);
+  const expandedRef = useRef<string[]>([]);
+  const groupTap = useRef<(type: string) => void>(() => {});
+  groupTap.current = (type) => {
+    if (!type) {
+      setExpanded([]);
+      return;
+    }
+    setExpanded((prev) => (prev.includes(type) ? prev.filter((value) => value !== type) : [...prev, type]));
+  };
 
   /** 画布上真正要画的东西：全图，或「只看这条链路」。
    *  主视图里点选只做选中，不改变范围 —— 范围只由显式 jump（发现 / 证据 / 回放 / 详情面板）决定。
@@ -503,30 +497,47 @@ export function Blackboard({
   const seedsKey = (scope?.ids ?? []).join(",");
   useEffect(() => setHops(SCOPE_FULL), [seedsKey]);
   const seeds = useMemo(() => scopeSeeds(scope), [seedsKey]);
-  const elements = useMemo(() => {
+  const scoped = seeds.length > 0;
+  const summaryOn = summary && !scoped;
+  summaryRef.current = summaryOn;
+  expandedRef.current = expanded;
+  const baseElements = useMemo(() => {
     const all = seeds.length ? discoveryElements(graph) : graphElements(graph, graphId);
     return seeds.length ? chainElements(all, seeds, hops) : all;
   }, [graph, graphId, seeds, hops]);
+  const elements = useMemo(
+    () =>
+      summaryOn
+        ? summaryMode === "domain"
+          ? domainSummaryElements(baseElements, graph, expanded)
+          : summaryElements(baseElements, expanded)
+        : baseElements,
+    [baseElements, summaryOn, summaryMode, graph, expanded],
+  );
+  // 换图或进出链路视图时收起分组，避免把上一个视图的展开状态带过来。
+  useEffect(() => setExpanded([]), [graphId, scoped]);
   const elementSignature = useMemo(
-    () => elements.map((el) => `${el.data.id}:${el.data.source || ""}:${el.data.target || ""}`).sort().join(","),
+    () =>
+      elements
+        .map((el) => `${el.data.id}:${el.data.source || ""}:${el.data.target || ""}`)
+        .sort()
+        .join(","),
     [elements],
   );
   const counts = useMemo(() => scopeSize(elements), [elements]);
-  const scoped = seeds.length > 0;
   scopeActive.current = scoped;
   const typeOf = (id: string) =>
-    TYPE_LABEL[
-      String(
-        (elements.find((el) => String(el.data.id) === id)?.data as { type?: string })?.type || "",
-      )
-    ] || "";
+    TYPE_LABEL[String((elements.find((el) => String(el.data.id) === id)?.data as { type?: string })?.type || "")] || "";
   const scopeLabel = scope?.label || (seeds[0] ? `${typeOf(seeds[0])} ${seeds[0]}`.trim() : "");
   const scopeSignature = scoped ? `${hops}:${[...seeds].sort().join("|")}` : "all";
-  const viewportKey = `${graph.project.id}:${graphId}:${replaying ? "history" : "live"}:${scopeSignature}:nodes-v3`;
+  // 展开/收起分组会改变整张图的规模，必须换视角键并重新 fit；否则新增节点会落在当前视野之外。
+  const summarySignature = summaryOn ? `summary:${summaryMode}:${[...expanded].sort().join("+") || "all"}` : "full";
+  const viewportKey = `${graph.project.id}:${graphId}:${replaying ? "history" : "live"}:${scopeSignature}:${summarySignature}:nodes-v3`;
   const lastViewportKey = useRef("");
   const lastElements = useRef<string | null>(null);
   const restoreViewport = useRef<BoardViewport | undefined>(undefined);
-  const appliedFocus = useRef(0), focusRef = useRef(focus);
+  const appliedFocus = useRef(0),
+    focusRef = useRef(focus);
   focusRef.current = focus;
 
   function saveViewport() {
@@ -544,19 +555,29 @@ export function Blackboard({
     });
   }
   function applyFocus() {
-    const c = cy.current, target = focusRef.current;
+    const c = cy.current,
+      target = focusRef.current;
     if (!c || !target || target.seq <= appliedFocus.current || !container.current?.dataset.layoutReady) return;
-    const node = c.getElementById(target.id).union(c.edges().filter(e => e.data("step_id") === target.id));
+    const node = c.getElementById(target.id).union(c.edges().filter((e) => e.data("step_id") === target.id));
     if (!node.length) return;
     appliedFocus.current = target.seq;
     c.stop();
-    if (node.nodes().length) c.animate({ center: { eles: node }, zoom: Math.max(0.85, Math.min(1.4, c.zoom())), duration: 220, easing: "ease-out" });
+    if (node.nodes().length)
+      c.animate({
+        center: { eles: node },
+        zoom: Math.max(0.85, Math.min(1.4, c.zoom())),
+        duration: 220,
+        easing: "ease-out",
+      });
     else c.animate({ fit: { eles: node.connectedNodes(), padding: 80 }, duration: 220, easing: "ease-out" });
   }
 
   function restoreCamera(c: Core, saved: BoardViewport) {
-    if (saved.width !== undefined && saved.height !== undefined &&
-      (Math.abs(saved.width - c.width()) > 24 || Math.abs(saved.height - c.height()) > 24)) {
+    if (
+      saved.width !== undefined &&
+      saved.height !== undefined &&
+      (Math.abs(saved.width - c.width()) > 24 || Math.abs(saved.height - c.height()) > 24)
+    ) {
       c.fit(undefined, 65);
       raiseToReadableZoom(c);
     } else {
@@ -669,7 +690,41 @@ export function Blackboard({
         },
         {
           selector: 'node[type="step"][expanded=1]',
-          style: { shape: "round-rectangle", width: 196, height: "data(height)", "font-size": 13, "font-weight": 500, "border-style": "solid", "border-width": 1, "corner-radius": 6, "text-max-width": 168 },
+          style: {
+            shape: "round-rectangle",
+            width: 196,
+            height: "data(height)",
+            "font-size": 13,
+            "font-weight": 500,
+            "border-style": "solid",
+            "border-width": 1,
+            "corner-radius": 6,
+            "text-max-width": 168,
+          },
+        },
+        {
+          // 汇总节点比普通节点宽：一行写类型和数量，有组内连线时第二行说明。
+          selector: 'node[type="summary"]',
+          style: {
+            shape: "round-rectangle",
+            width: 188,
+            height: "data(height)",
+            "font-size": 13,
+            "font-weight": 600,
+            "text-max-width": 164,
+            "border-width": 1.5,
+            "border-style": "dashed",
+            "corner-radius": 9,
+          },
+        },
+        {
+          // 测试域框要放下「任务 / 事实 / 发现」和 post 的前缀分布，比类型框更宽。
+          selector: 'node[type="summary"][summaryKind]',
+          style: { width: 196, "text-max-width": "172px", "border-width": 2 },
+        },
+        {
+          selector: 'node[type="summary"][summaryKind="focus"]',
+          style: { width: 180, "text-max-width": "156px", "border-width": 1 },
         },
         { selector: 'node[state="discarded"],node[state="disputed"]', style: { opacity: 0.55 } },
         {
@@ -701,6 +756,11 @@ export function Blackboard({
           selector: 'edge[type="flow"]',
           // 低倍率下先收起流程边的长说明，只保留提示/范围/发现等短标记；放大后自然出现。
           style: { "min-zoomed-font-size": 7 },
+        },
+        {
+          selector: 'edge[type="summary"]',
+          // 合并后的边只表达「两类节点之间有多少联系」，数量就是标签。
+          style: { width: 1.8, "font-weight": 600 },
         },
         {
           selector: 'edge[status="concluded"]',
@@ -749,21 +809,36 @@ export function Blackboard({
     const themeObserver = new MutationObserver(() => applyPalette(c));
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     const stopMotion = installGraphMotion(c, () => motionRef.current, particles.current || undefined);
-    c.on("pan zoom grab drag free", () => { if (!layingOut.current) interactionAt.current = performance.now(); });
-    const refreshFonts = () => { if (!c.destroyed()) c.style().update(); };
+    c.on("pan zoom grab drag free", () => {
+      if (!layingOut.current) interactionAt.current = performance.now();
+    });
+    const refreshFonts = () => {
+      if (!c.destroyed()) c.style().update();
+    };
     void document.fonts.ready.then(refreshFonts);
-    c.on("tap", "node", (e) => callback.current(e.target.id(), !!e.originalEvent?.shiftKey));
+    c.on("tap", "node", (e) => {
+      const group = e.target.data("groupType");
+      if (group && summaryRef.current) {
+        groupTap.current(String(group));
+        return;
+      }
+      callback.current(e.target.id(), !!e.originalEvent?.shiftKey);
+    });
     c.on("dbltap", "node", (e) => inspectCallback.current?.(e.target.id()));
     c.on("tap", "edge", (e) => {
       if (e.target.data("step_id")) callback.current(e.target.data("step_id"));
     });
     c.on("tap", (e) => {
-      if (e.target === c) callback.current(null);
+      if (e.target === c) {
+        // 汇总视图里点空白先收起分组，再清空选中；不改变画布范围。
+        if (summaryRef.current && expandedRef.current.length) groupTap.current("");
+        callback.current(null);
+      }
     });
 
     /** 一格滚轮 = 一个明确的倍率，并锚定在指针位置。 */
     const onWheel = (event: WheelEvent) => {
-      if (c.destroyed() || event.ctrlKey === false && event.metaKey) return;
+      if (c.destroyed() || (event.ctrlKey === false && event.metaKey)) return;
       event.preventDefault();
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
       const pixels = event.deltaY * unit;
@@ -785,7 +860,10 @@ export function Blackboard({
         c.resize();
         if (viewportWidth !== window.innerWidth) {
           viewportWidth = window.innerWidth;
-          if (c.nodes().length) { c.fit(undefined, 65); raiseToReadableZoom(c); }
+          if (c.nodes().length) {
+            c.fit(undefined, 65);
+            raiseToReadableZoom(c);
+          }
         }
       }, 60);
     });
@@ -819,8 +897,10 @@ export function Blackboard({
           restoreCamera(c, restoreViewport.current);
           restoreViewport.current = undefined;
         }
-        if (scopeActive.current) { c.fit(undefined, 65); raiseToReadableZoom(c); }
-        else applyFocus();
+        if (scopeActive.current) {
+          c.fit(undefined, 65);
+          raiseToReadableZoom(c);
+        } else applyFocus();
       }
     } catch (e) {
       setLayoutError(`布局加载失败：${(e as Error).message}`);
@@ -833,7 +913,10 @@ export function Blackboard({
     const c = cy.current;
     if (!c) return;
     const switched = lastViewportKey.current !== viewportKey;
-    if (switched) { saveViewport(); lastViewportKey.current = viewportKey; }
+    if (switched) {
+      saveViewport();
+      lastViewportKey.current = viewportKey;
+    }
     const saved = switched ? boardViewports.get(viewportKey) : undefined;
     const ids = new Set(elements.map((e) => e.data.id));
     // 用内容签名判断「画布内容是否真的变了」：数组引用变而内容没变时不该重新布局
@@ -859,12 +942,23 @@ export function Blackboard({
       if (container.current) container.current.dataset.layoutReady = "";
       if (saved) {
         appliedFocus.current = saved.focusSeq;
-        c.nodes().forEach((n) => { if (saved.positions[n.id()]) n.position(saved.positions[n.id()]); });
+        c.nodes().forEach((n) => {
+          if (saved.positions[n.id()]) n.position(saved.positions[n.id()]);
+        });
         restoreCamera(c, saved);
-        if (saved.layout === layoutRef.current && saved.elementSignature === elementSignature && c.nodes().toArray().every((n) => !!saved.positions[n.id()])) {
+        if (
+          saved.layout === layoutRef.current &&
+          saved.elementSignature === elementSignature &&
+          c
+            .nodes()
+            .toArray()
+            .every((n) => !!saved.positions[n.id()])
+        ) {
           if (container.current) container.current.dataset.layoutReady = layoutRef.current;
-          if (scopeActive.current) { c.fit(undefined, 65); raiseToReadableZoom(c); }
-          else applyFocus();
+          if (scopeActive.current) {
+            c.fit(undefined, 65);
+            raiseToReadableZoom(c);
+          } else applyFocus();
           c.resize();
           return;
         }
@@ -915,7 +1009,9 @@ export function Blackboard({
     c.elements().removeClass("selected selected-fact");
     for (const id of new Set([...selectedNodes, ...(selected ? [selected] : [])])) {
       c.getElementById(id).addClass("selected");
-      c.edges().filter(e => e.data("step_id") === id).addClass("selected");
+      c.edges()
+        .filter((e) => e.data("step_id") === id)
+        .addClass("selected");
     }
     for (const id of selectedFacts) c.getElementById(id).addClass("selected-fact");
   }, [selected, selectedNodes, selectedFacts, elements]);
@@ -924,8 +1020,12 @@ export function Blackboard({
     const c = cy.current;
     if (!c) return;
     const a = document.createElement("a");
-    a.href = c.png({ bg: getComputedStyle(document.documentElement).getPropertyValue("--map-bg").trim(), full: true, scale: 2 });
-    a.download = `${graph.project.id}-${graphId}.png`;
+    a.href = c.png({
+      bg: getComputedStyle(document.documentElement).getPropertyValue("--map-bg").trim(),
+      full: true,
+      scale: 2,
+    });
+    a.download = `${graph.project.id}-${graphId}${summaryOn ? `-${summaryMode}` : ""}.png`;
     a.click();
   }
 
@@ -942,8 +1042,14 @@ export function Blackboard({
         <div className="graph-scope">
           <Route size={12} />
           <strong title={scopeLabel}>{scopeLabel}</strong>
-          <em>{counts.nodes} 节点 · {counts.edges} 连线</em>
-          <span className="graph-scope-note">{seeds.some(id => graph.steps.some(s => s.id === id)) ? "从起点到任务及其直接产出 · 不展开后续分支" : "从起点沿因果向上追溯 · 可继续点选链路内的节点"}</span>
+          <em>
+            {counts.nodes} 节点 · {counts.edges} 连线
+          </em>
+          <span className="graph-scope-note">
+            {seeds.some((id) => graph.steps.some((s) => s.id === id))
+              ? "从起点到任务及其直接产出 · 不展开后续分支"
+              : "从起点沿因果向上追溯 · 可继续点选链路内的节点"}
+          </span>
           <select
             aria-label="链路深度"
             value={hops}
@@ -952,88 +1058,145 @@ export function Blackboard({
               setHops(next);
             }}
           >
-            {([[SCOPE_FULL, "完整链路"], [1, "1 跳"], [2, "2 跳"], [3, "3 跳"]] as const).map(
-              ([value, text]) => (
-                <option key={value} value={value}>{text}</option>
-              ),
-            )}
+            {(
+              [
+                [SCOPE_FULL, "完整链路"],
+                [1, "1 跳"],
+                [2, "2 跳"],
+                [3, "3 跳"],
+              ] as const
+            ).map(([value, text]) => (
+              <option key={value} value={value}>
+                {text}
+              </option>
+            ))}
           </select>
-          <button onClick={() => { onClearScope?.(); callback.current(null); }}>显示全图</button>
+          <button
+            onClick={() => {
+              onClearScope?.();
+              callback.current(null);
+            }}
+          >
+            显示全图
+          </button>
         </div>
       )}
       <div className="graph-stage">
-      <div className="graph-canvas" ref={container} data-scope={scoped ? "chain" : "all"} aria-label="FGS 黑板图" />
-      <canvas ref={particles} className="graph-particles" aria-hidden="true" />
-      {deciding && <><div className={`graph-decision-scan${motion ? " animated" : ""}`} aria-hidden="true" /><span className="graph-decision-state" role="status">Decide · 正在统筹决策</span></>}
-      <div className="graph-layout">
-        <select
-          aria-label="图布局"
-          value={layout}
-          onChange={(e) => {
-            setLayout(e.target.value);
-            // 链路视图里的临时选择不写回本地偏好
-            if (scopedRef.current) return;
-            const prefs = localPrefs();
-            localStorage.setItem(
-              "tessera.localPrefs",
-              JSON.stringify({ ...prefs, layout_mode: e.target.value }),
-            );
-          }}
-        >
-          {layoutOptions.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        {layoutError && <span role="alert">{layoutError}</span>}
-      </div>
-      <div className="graph-toolbar">
-        <button aria-label="放大黑板" title="放大" onClick={() => zoomBy(WHEEL_STEP)}>
-          <Plus size={15} />
-        </button>
-        <button aria-label="缩小黑板" title="缩小" onClick={() => zoomBy(1 / WHEEL_STEP)}>
-          <Minus size={15} />
-        </button>
-        <button aria-label="适应黑板" title="适应窗口" onClick={() => cy.current?.fit(undefined, 65)}>
-          <Maximize size={15} />
-        </button>
-        <button aria-label="自动整理黑板" title="按层级整理节点与连线" onClick={() => void layoutGraph()}>
-          <Network size={15} />
-        </button>
-        <button aria-label="导出黑板图片" title="导出 PNG" onClick={download}>
-          <Download size={15} />
-        </button>
-        <button
-          aria-label={motion ? "关闭黑板动效" : "开启黑板动效"}
-          title={motion ? "关闭动效" : "开启动效"}
-          aria-pressed={motion}
-          onClick={() => {
-            const next = !motion;
-            setMotion(next);
-            writePreference("tessera.graphMotion", next ? "on" : "off");
-            if (!next) cy.current?.elements().removeStyle("underlay-opacity line-dash-offset");
-          }}
-        >
-          <Sparkles size={15} />
-        </button>
-      </div>
-      <div className="graph-legend">
-        <span className="legend origin">起点 Origin</span>
-        <span className="legend scope">范围 Scope</span>
-        <span className="legend fact">事实 Fact</span>
-        <span className="legend step">任务 Step</span>
-        <span className="legend goal">目标 Goal</span>
-        <span className="legend finding">发现 Finding</span>
-        {coldNodes(graph).length > 0 && <span className="legend cold" title="超出热节点上限">冷 {coldNodes(graph).length}</span>}
-        <span className="quiet">Shift + 左键多选</span>
-      </div>
-      {!graph.steps.length && (
-        <div className="graph-empty">
-          <GitBranch size={20} />
-          <span>从 Origin 到 Goal · 等待探索路径</span>
+        <div className="graph-canvas" ref={container} data-scope={scoped ? "chain" : "all"} aria-label="FGS 黑板图" />
+        <canvas ref={particles} className="graph-particles" aria-hidden="true" />
+        {deciding && (
+          <>
+            <div className={`graph-decision-scan${motion ? " animated" : ""}`} aria-hidden="true" />
+            <span className="graph-decision-state" role="status">
+              正在统筹下一步
+            </span>
+          </>
+        )}
+        <div className="graph-layout">
+          <select
+            aria-label="图布局"
+            value={layout}
+            onChange={(e) => {
+              setLayout(e.target.value);
+              // 链路视图里的临时选择不写回本地偏好
+              if (scopedRef.current) return;
+              const prefs = localPrefs();
+              localStorage.setItem("tessera.localPrefs", JSON.stringify({ ...prefs, layout_mode: e.target.value }));
+            }}
+          >
+            {layoutOptions.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {summaryOn && (
+            <select
+              aria-label="汇总方式"
+              value={summaryMode}
+              onChange={(e) => {
+                setSummaryMode(e.target.value === "type" ? "type" : "domain");
+                setExpanded([]);
+              }}
+            >
+              <option value="domain">按测试域</option>
+              <option value="type">按节点类型</option>
+            </select>
+          )}
+          {layoutError && <span role="alert">{layoutError}</span>}
         </div>
-      )}
+        <div className="graph-toolbar">
+          <button aria-label="放大黑板" title="放大" onClick={() => zoomBy(WHEEL_STEP)}>
+            <Plus size={15} />
+          </button>
+          <button aria-label="缩小黑板" title="缩小" onClick={() => zoomBy(1 / WHEEL_STEP)}>
+            <Minus size={15} />
+          </button>
+          <button aria-label="适应黑板" title="适应窗口" onClick={() => cy.current?.fit(undefined, 65)}>
+            <Maximize size={15} />
+          </button>
+          <button aria-label="自动整理黑板" title="按层级整理节点与连线" onClick={() => void layoutGraph()}>
+            <Network size={15} />
+          </button>
+          <button
+            aria-label={summaryOn ? "退出汇总" : "按测试域汇总"}
+            title={
+              scoped ? "链路视图下不汇总" : summaryOn ? "退出汇总，显示全部节点" : "按测试域汇总：只保留域之间的连线"
+            }
+            aria-pressed={summaryOn}
+            disabled={scoped}
+            onClick={() => {
+              setSummary((value) => !value);
+              setExpanded([]);
+            }}
+          >
+            <Boxes size={15} />
+          </button>
+          <button aria-label="导出黑板图片" title="导出 PNG" onClick={download}>
+            <Download size={15} />
+          </button>
+          <button
+            aria-label={motion ? "关闭黑板动效" : "开启黑板动效"}
+            title={motion ? "关闭动效" : "开启动效"}
+            aria-pressed={motion}
+            onClick={() => {
+              const next = !motion;
+              setMotion(next);
+              writePreference("tessera.graphMotion", next ? "on" : "off");
+              if (!next) cy.current?.elements().removeStyle("underlay-opacity line-dash-offset");
+            }}
+          >
+            <Sparkles size={15} />
+          </button>
+        </div>
+        <div className="graph-legend">
+          <span className="legend origin">起点</span>
+          <span className="legend scope">范围</span>
+          <span className="legend fact">事实</span>
+          <span className="legend step">任务</span>
+          <span className="legend goal">目标</span>
+          <span className="legend finding">发现</span>
+          {coldNodes(graph).length > 0 && (
+            <span className="legend cold" title="超出热节点上限">
+              冷 {coldNodes(graph).length}
+            </span>
+          )}
+          {summaryOn && (
+            <span className="quiet">
+              {summaryMode === "type" ? "按类型汇总" : "按测试域汇总"}：点框展开 · 点空白收起
+            </span>
+          )}
+          {summaryOn && summaryMode === "domain" && expanded.includes(domainNodeId("post")) && (
+            <span className="quiet">后渗透已按 focus 前缀展开</span>
+          )}
+          <span className="quiet">按住 Shift 左键多选</span>
+        </div>
+        {!graph.steps.length && (
+          <div className="graph-empty">
+            <GitBranch size={20} />
+            <span>从起点到目标 · 等待探索路径</span>
+          </div>
+        )}
       </div>
     </div>
   );

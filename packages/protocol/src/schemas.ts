@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TEST_DOMAINS } from "./domains.js";
 
 export const MAX_TEXT_LENGTH = 65536;
 export const MAX_EVIDENCE_CONTENT = 20_000_000;
@@ -14,6 +15,10 @@ export const bookmarkInputSchema = z
   .strict()
   .refine((v) => v.withdraw || (!!v.reason && !!v.revisit_when), "Active bookmarks require reason and revisit_when");
 const text = z.string().trim().min(1).max(MAX_TEXT_LENGTH);
+/** 测试域枚举与中文说法在 domains.ts（无 zod 依赖，前端可安全引用）。 */
+export const testDomainSchema = z.enum(TEST_DOMAINS);
+/** 域内细节，≤20 字；后渗透使用「提权：SUID」这类固定前缀。 */
+export const stepFocusSchema = z.string().trim().min(1).max(20);
 /** A Fact's conclusion is its own field: required, complete and never truncated by projections. */
 export const MAX_CONCLUSION_LENGTH = 120;
 export const factStatusSchema = z.enum(["observed", "not_observed", "disputed"]);
@@ -103,6 +108,8 @@ export const findingSchema = z
     description: text,
     evidence: z.string().max(MAX_TEXT_LENGTH).optional(),
     evidence_ids: z.array(text).max(10000).optional(),
+    /** Exact HTTP flows (recording-proxy ids) that produced this claim. */
+    traffic_ids: z.array(z.string().trim().min(1).max(160)).max(50).optional(),
     from: z.array(text).max(10000).optional(),
     status: z.enum(["candidate", "confirmed", "rejected"]).optional(),
     asset_id: text.optional(),
@@ -233,6 +240,13 @@ const decisionFields = {
         /** One falsifiable security property, not merely an activity list. */
         property: text.optional(),
         method_hint: text.optional(),
+        /** 测试域：固定枚举，不确定选 other；站点细节写 focus，不新造顶层分类。 */
+        test_domain: testDomainSchema
+          .optional()
+          .describe(
+            "测试域：recon 资产/信息搜集，entry 入口/前端，auth 认证/会话，access 授权，inject 注入，file 文件，config 配置/传输，logic 业务逻辑，post 后渗透，other 其他",
+          ),
+        focus: stepFocusSchema.optional().describe("可选，域内细节，如 提权：SUID"),
         priority: z.number().int().default(0),
         asset_id: text.optional(),
         goal_id: text.optional(),
@@ -246,6 +260,8 @@ const decisionFields = {
       z.object({
         id: text,
         priority: z.number().int().optional(),
+        test_domain: testDomainSchema.optional(),
+        focus: stepFocusSchema.optional(),
         discard: z.boolean().default(false),
         reason: text.optional(),
         expected_version: z.number().int().positive().optional(),

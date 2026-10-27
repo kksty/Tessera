@@ -35,19 +35,41 @@ type FileEntry = {
   modified_at: string;
 };
 
-/** GET /workspace 的原样返回：files + truncated。 */
-type Listing = { path: string; files: FileEntry[]; truncated?: boolean };
+/** GET /workspace 的原样返回：files + truncated；stats 覆盖当前目录的整个子树，truncated 表示统计达到预算。 */
+type ListingStats = { files: number; directories: number; size: number; truncated?: boolean };
+type Listing = { path: string; files: FileEntry[]; truncated?: boolean; stats?: ListingStats };
 /** GET /workspace/content?preview=1 的原样返回：content 为 base64。 */
 type ContentPayload = { path: string; content: string; size: number; truncated?: boolean };
 
 const PREVIEW_LIMIT_LABEL = "128 KiB";
 
-const extensionOf = (name: string) =>
-  name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+const extensionOf = (name: string) => (name.includes(".") ? name.split(".").pop()!.toLowerCase() : "");
 
 const CODE_EXTENSIONS = new Set([
-  "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "sh", "bash", "zsh", "ps1", "rb",
-  "go", "rs", "java", "php", "lua", "sql", "yaml", "yml", "toml", "ini", "conf", "xml",
+  "js",
+  "mjs",
+  "cjs",
+  "ts",
+  "tsx",
+  "jsx",
+  "py",
+  "sh",
+  "bash",
+  "zsh",
+  "ps1",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "php",
+  "lua",
+  "sql",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "conf",
+  "xml",
 ]);
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"]);
 const ARCHIVE_EXTENSIONS = new Set(["zip", "tar", "gz", "tgz", "7z", "rar", "bz2", "xz"]);
@@ -61,7 +83,8 @@ function fileVisual(entry: Pick<FileEntry, "name" | "kind">) {
   const extension = extensionOf(entry.name);
   if (IMAGE_EXTENSIONS.has(extension)) return { icon: <FileImage size={16} />, tone: "image", label: "图片" };
   if (ARCHIVE_EXTENSIONS.has(extension)) return { icon: <FileArchive size={16} />, tone: "archive", label: "归档" };
-  if (extension === "json" || extension === "ndjson") return { icon: <Braces size={16} />, tone: "data", label: "数据" };
+  if (extension === "json" || extension === "ndjson")
+    return { icon: <Braces size={16} />, tone: "data", label: "数据" };
   if (isMarkdown(entry.name)) return { icon: <FileText size={16} />, tone: "markdown", label: "Markdown" };
   if (CODE_EXTENSIONS.has(extension)) return { icon: <FileCode size={16} />, tone: "code", label: "代码" };
   if (TEXT_EXTENSIONS.has(extension)) return { icon: <FileText size={16} />, tone: "text", label: "文本" };
@@ -106,10 +129,7 @@ export function FilesPage() {
   const running = project.status === "active";
 
   const [folder, setFolder] = useViewState(`${projectId}:files:folder`, ".");
-  const [selectedPath, setSelectedPath] = useViewState<string | null>(
-    `${projectId}:files:selected`,
-    null,
-  );
+  const [selectedPath, setSelectedPath] = useViewState<string | null>(`${projectId}:files:selected`, null);
   const [listing, setListing] = useState<Listing | null>(null);
   const [listError, setListError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -140,10 +160,7 @@ export function FilesPage() {
   }, [projectId, folder, revision]);
 
   const files = listing?.files ?? [];
-  const selected = useMemo(
-    () => files.find((entry) => entry.path === selectedPath) ?? null,
-    [files, selectedPath],
-  );
+  const selected = useMemo(() => files.find((entry) => entry.path === selectedPath) ?? null, [files, selectedPath]);
 
   // 预览状态带上所属路径：切换文件时不会先闪出上一个文件的内容。
   useEffect(() => {
@@ -153,9 +170,7 @@ export function FilesPage() {
     }
     let active = true;
     setPreview({ status: "loading", path: selected.path });
-    void api<ContentPayload>(
-      path(projectId, `/workspace/content?preview=1&path=${encodeURIComponent(selected.path)}`),
-    )
+    void api<ContentPayload>(path(projectId, `/workspace/content?preview=1&path=${encodeURIComponent(selected.path)}`))
       .then((data) => {
         if (!active) return;
         const decoded = decodeBase64(data.content);
@@ -182,12 +197,16 @@ export function FilesPage() {
 
   const segments = folder === "." ? [] : folder.split("/");
   const currentPath = folder === "." ? "/workspace" : `/workspace/${folder}`;
-  const fileCount = files.filter((entry) => entry.kind !== "directory").length;
-  const totalSize = files.reduce(
-    (sum, entry) => sum + (entry.kind === "directory" ? 0 : entry.size),
-    0,
-  );
+  const currentFiles = files.filter((entry) => entry.kind !== "directory").length;
+  const currentFolders = files.filter((entry) => entry.kind === "directory").length;
+  const currentSize = files.reduce((sum, entry) => sum + (entry.kind === "directory" ? 0 : entry.size), 0);
+  // Stats cover the whole subtree; fall back to the visible rows for older servers.
+  const fileTotal = listing?.stats?.files ?? currentFiles;
+  const folderTotal = listing?.stats?.directories ?? currentFolders;
+  const totalSize = listing?.stats?.size ?? currentSize;
   const truncated = !!listing?.truncated;
+  const statsPartial = !!listing?.stats?.truncated;
+  const statsNote = statsPartial ? "（已达统计上限）" : "";
   const previewOpen = !!selected;
   const selectedVisual = selected ? fileVisual(selected) : null;
   const state = preview && selected && preview.path === selected.path ? preview : null;
@@ -225,7 +244,7 @@ export function FilesPage() {
       <PageHeader
         eyebrow="PROJECT / WORKSPACE"
         title="项目文件"
-        description="项目容器内共享的持久卷，只读预览与删除；归档证据在证据页独立保留。"
+        description="项目容器内共享的持久卷，只读预览与删除；工具输出、进程日志和临时文件都在这里，只有被黑板引用的原件进入证据页。"
         actions={
           <>
             {running && (
@@ -234,13 +253,7 @@ export function FilesPage() {
                 项目运行中 · 删除需谨慎
               </span>
             )}
-            <button
-              type="button"
-              className="button"
-              disabled={loading}
-              onClick={refresh}
-              title="重新读取当前目录"
-            >
+            <button type="button" className="button" disabled={loading} onClick={refresh} title="重新读取当前目录">
               <RefreshCw size={14} className={loading ? "spin" : undefined} />
               刷新
             </button>
@@ -250,21 +263,21 @@ export function FilesPage() {
 
       <div className="kpi-grid">
         <Kpi
-          label="条目"
-          value={files.length}
-          note="当前目录"
-          icon={<FolderOpen size={15} />}
+          label="文件"
+          value={fileTotal}
+          note={listing?.stats ? `当前目录 ${currentFiles} 个 · 含子目录${statsNote}` : "当前目录"}
+          icon={<FileText size={15} />}
         />
         <Kpi
-          label="文件"
-          value={fileCount}
-          note="不含文件夹"
-          icon={<FileText size={15} />}
+          label="文件夹"
+          value={folderTotal}
+          note={listing?.stats ? `当前目录 ${currentFolders} 个 · 含子目录${statsNote}` : "当前目录"}
+          icon={<FolderOpen size={15} />}
         />
         <Kpi
           label="占用"
           value={fmtBytes(totalSize)}
-          note="当前目录可见文件"
+          note={listing?.stats ? `含子目录总大小${statsNote}` : "当前目录可见文件"}
           icon={<HardDrive size={15} />}
         />
         <Kpi
@@ -305,9 +318,7 @@ export function FilesPage() {
           })}
         </nav>
         <span className="spacer" />
-        <span className="toolbar-hint">
-          {files.length} 项 · 刷新以读取最新写入
-        </span>
+        <span className="toolbar-hint">{files.length} 项 · 刷新以读取最新写入</span>
       </div>
 
       {listError && (
@@ -346,17 +357,11 @@ export function FilesPage() {
                         key={entry.path}
                         className="clickable"
                         data-active={selectedPath === entry.path ? "true" : undefined}
-                        onClick={() =>
-                          isFolder ? openFolder(entry.path) : setSelectedPath(entry.path)
-                        }
+                        onClick={() => (isFolder ? openFolder(entry.path) : setSelectedPath(entry.path))}
                       >
                         <td>
                           <span className="files-cell-name">
-                            <span
-                              className="files-icon"
-                              data-kind={visual.tone}
-                              aria-hidden="true"
-                            >
+                            <span className="files-icon" data-kind={visual.tone} aria-hidden="true">
                               {visual.icon}
                             </span>
                             <button
@@ -371,20 +376,13 @@ export function FilesPage() {
                             >
                               {entry.name}
                             </button>
-                            {entry.kind === "symlink" && (
-                              <span className="tag files-symlink">符号链接</span>
-                            )}
+                            {entry.kind === "symlink" && <span className="tag files-symlink">符号链接</span>}
                           </span>
                         </td>
-                        <td className="num quiet">
-                          {isFolder ? "—" : fmtBytes(entry.size)}
-                        </td>
+                        <td className="num quiet">{isFolder ? "—" : fmtBytes(entry.size)}</td>
                         <td className="quiet files-time">{fmt(entry.modified_at)}</td>
                         <td>
-                          <div
-                            className="files-actions"
-                            onClick={(event) => event.stopPropagation()}
-                          >
+                          <div className="files-actions" onClick={(event) => event.stopPropagation()}>
                             {entry.kind === "file" && (
                               <a
                                 className="icon-button"
@@ -428,11 +426,7 @@ export function FilesPage() {
                 />
               )}
 
-              {truncated && (
-                <p className="files-truncated">
-                  当前目录只显示前 5000 项，进入子目录可继续浏览。
-                </p>
-              )}
+              {truncated && <p className="files-truncated">当前目录只显示前 5000 项，进入子目录可继续浏览。</p>}
             </>
           )}
         </div>
@@ -441,11 +435,7 @@ export function FilesPage() {
           <aside className="files-preview" aria-label="文件预览">
             <header className="files-preview-head">
               <div className="files-preview-ident">
-                <span
-                  className="files-icon"
-                  data-kind={selectedVisual?.tone || "binary"}
-                  aria-hidden="true"
-                >
+                <span className="files-icon" data-kind={selectedVisual?.tone || "binary"} aria-hidden="true">
                   {selectedVisual?.icon}
                 </span>
                 <div>
@@ -503,9 +493,7 @@ export function FilesPage() {
                     <pre className="files-preview-pre">{state.text || "（文件内容为空）"}</pre>
                   )}
                   {state.truncated && (
-                    <p className="files-truncation-note">
-                      仅预览前 {PREVIEW_LIMIT_LABEL}，下载可获取完整文件。
-                    </p>
+                    <p className="files-truncation-note">仅预览前 {PREVIEW_LIMIT_LABEL}，下载可获取完整文件。</p>
                   )}
                 </>
               )}
@@ -530,11 +518,7 @@ export function FilesPage() {
               <button type="button" className="button ghost" disabled={ws.busy} onClick={closeRemove}>
                 取消
               </button>
-              <button
-                type="submit"
-                className="button danger"
-                disabled={!confirmed || ws.busy}
-              >
+              <button type="submit" className="button danger" disabled={!confirmed || ws.busy}>
                 {ws.busy ? "删除中…" : "永久删除"}
               </button>
             </>
@@ -542,16 +526,10 @@ export function FilesPage() {
         >
           <p className="files-modal-path">/workspace/{remove.path}</p>
           <p className="files-modal-copy">
-            {remove.kind === "directory"
-              ? "该文件夹及其全部内容将被永久删除。"
-              : "该文件将被永久删除。"}
+            {remove.kind === "directory" ? "该文件夹及其全部内容将被永久删除。" : "该文件将被永久删除。"}
             已归档证据保留，工作区文件无法由此页面恢复。
           </p>
-          {running && (
-            <p className="banner warn files-modal-warn">
-              项目正在运行，删除可能影响执行中的任务。
-            </p>
-          )}
+          {running && <p className="banner warn files-modal-warn">项目正在运行，删除可能影响执行中的任务。</p>}
           <label className="files-confirm">
             <input
               type="checkbox"

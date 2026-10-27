@@ -210,7 +210,7 @@ export function peekCold(
 }
 
 export function readGraphChange(ctx: HistoryContext, id: string, seq: number, offset = 0, limit = 4000) {
-  ctx.get(id);
+  const graph = ctx.get(id);
   if (
     !Number.isSafeInteger(seq) ||
     seq < 1 ||
@@ -223,7 +223,17 @@ export function readGraphChange(ctx: HistoryContext, id: string, seq: number, of
     fail(422, "Invalid event page");
   const row = ctx.db.prepare("SELECT * FROM platform_event_history WHERE project_id=? AND seq=?").get(id, seq);
   if (!row) return fail(404, "Event not found in project");
-  const content = JSON.stringify({ ...row, data: JSON.parse(String(row.data)) });
+  // The same scrub as the change list: an event must not republish a deleted
+  // node's body just because it was recorded before the deletion.
+  const event = workEventFilter(graph)({
+    seq: Number(row.seq),
+    revision: Number(row.revision),
+    project_id: String(row.project_id),
+    kind: String(row.kind),
+    data: JSON.parse(String(row.data)),
+    created_at: String(row.created_at),
+  } as Event);
+  const content = JSON.stringify(event);
   return {
     event_seq: seq,
     revision: Number(row.revision),

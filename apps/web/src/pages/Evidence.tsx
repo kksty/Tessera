@@ -1,13 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Braces,
-  Download,
-  FileText,
-  RefreshCw,
-  Route,
-  Search,
-  X,
-} from "lucide-react";
+import { Braces, Download, FileText, RefreshCw, Route, Search, X } from "lucide-react";
 import type { Evidence } from "../../../../packages/protocol/src/index.js";
 import { path } from "../api.js";
 import { EmptyState, PageHeader, Skeleton } from "../components/ui.js";
@@ -22,13 +14,7 @@ const MAX_CHARS = 150_000;
 const JSON_LIMIT = 200_000;
 
 const mimeLabel = (mime: string) =>
-  mime.startsWith("image/")
-    ? "图片"
-    : mime.includes("json")
-      ? "JSON"
-      : mime.startsWith("text/")
-        ? "文本"
-        : "二进制";
+  mime.startsWith("image/") ? "图片" : mime.includes("json") ? "JSON" : mime.startsWith("text/") ? "文本" : "二进制";
 
 const shortMime = (mime: string) => {
   const [, subtype] = mime.split("/");
@@ -42,10 +28,7 @@ export function EvidencePage() {
   const preview = ws.evidencePreview;
   const item = preview?.item;
   const [query, setQuery] = useViewState(`${graph.project.id}:evidence:query`, "");
-  const [savedId, setSavedId] = useViewState<string | null>(
-    `${graph.project.id}:evidence:selected`,
-    null,
-  );
+  const [savedId, setSavedId] = useViewState<string | null>(`${graph.project.id}:evidence:selected`, null);
   const [content, setContent] = useState("");
   const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -93,9 +76,7 @@ export function EvidencePage() {
     setLoadError("");
     void (async () => {
       try {
-        const response = await fetch(
-          "/api" + path(projectId, `/evidence/${encodeURIComponent(itemId)}/content`),
-        );
+        const response = await fetch("/api" + path(projectId, `/evidence/${encodeURIComponent(itemId)}/content`));
         if (!response.ok) throw new Error(`读取证据内容失败（HTTP ${response.status}）`);
         const raw = await response.text();
         if (token !== generation.current) return;
@@ -113,15 +94,11 @@ export function EvidencePage() {
   }, [itemId, isImage, projectId]);
 
   const needle = query.trim().toLowerCase();
-  const stepById = useMemo(
-    () => new Map(graph.steps.map((value) => [value.id, value])),
-    [graph.steps],
-  );
+  const stepById = useMemo(() => new Map(graph.steps.map((value) => [value.id, value])), [graph.steps]);
   const archives = useMemo(
     () =>
       [...graph.evidence].sort(
-        (left, right) =>
-          right.created_at.localeCompare(left.created_at) || right.id.localeCompare(left.id),
+        (left, right) => right.created_at.localeCompare(left.created_at) || right.id.localeCompare(left.id),
       ),
     [graph.evidence],
   );
@@ -149,13 +126,9 @@ export function EvidencePage() {
 
   const displayText = pretty && parsedJson !== null ? JSON.stringify(parsedJson, null, 2) : content;
   const lines = displayText ? displayText.split("\n").length : 0;
-  const contentHref = item
-    ? "/api" + path(projectId, `/evidence/${encodeURIComponent(item.id)}/content`)
-    : "";
+  const contentHref = item ? "/api" + path(projectId, `/evidence/${encodeURIComponent(item.id)}/content`) : "";
   const scope = item ? scopeForEvidence(graph, item.id) : null;
-  const asset = item?.asset_id
-    ? graph.assets.find((value) => value.id === item.asset_id)
-    : undefined;
+  const asset = item?.asset_id ? graph.assets.find((value) => value.id === item.asset_id) : undefined;
   const step = item?.step_id ? stepById.get(item.step_id) : undefined;
 
   return (
@@ -163,11 +136,11 @@ export function EvidencePage() {
       <PageHeader
         eyebrow="EVIDENCE / ARCHIVE"
         title="证据"
-        description="工具输出、请求响应与文件的只读归档：正文按 SHA-256 固定，摘要只用于探索。"
+        description="被黑板引用的原始文件只读归档：正文按 SHA-256 固定，未引用的工具输出与进程日志留在项目文件。"
         actions={
           <>
             <span className="evidence-pill">
-              匹配 {matched.length} / 归档 {graph.evidence.length}
+              匹配 {matched.length} / 引用 {graph.evidence.length}
             </span>
             <button
               type="button"
@@ -198,7 +171,9 @@ export function EvidencePage() {
             清空
           </button>
         )}
-        <span className="toolbar-hint">只读归档 · 原始内容按 SHA-256 固定</span>
+        <span className="toolbar-hint">
+          只读归档 · 只列出被 Fact / Finding / Review / 资产 / Lead / 完成记录引用的原件
+        </span>
       </div>
 
       {graph.evidence.length ? (
@@ -225,9 +200,7 @@ export function EvidencePage() {
                     <span className="evidence-item-meta mono">
                       <span className="evidence-item-id">{entry.id}</span>
                       {entry.step_id && (
-                        <span title={step ? `任务：${step.description}` : "任务已不在当前图中"}>
-                          {entry.step_id}
-                        </span>
+                        <span title={step ? `任务：${step.description}` : "任务已不在当前图中"}>{entry.step_id}</span>
                       )}
                       <span className="evidence-item-kind">{mimeLabel(entry.mime_type)}</span>
                       <span>{fmtBytes(entry.size)}</span>
@@ -271,8 +244,8 @@ export function EvidencePage() {
                       disabled={!scope || scope.ids.length === 0}
                       title={
                         scope && scope.ids.length
-                          ? `只看引用了这条证据的 ${scope.ids.length} 个观测与结论`
-                          : "还没有观测或结论引用这条证据"
+                          ? `只看引用了这条证据的 ${scope.ids.length} 个黑板节点`
+                          : "由资产或线索引用；黑板没有可展开的节点"
                       }
                       onClick={() => {
                         if (scope) ws.openInGraph(scope);
@@ -318,10 +291,7 @@ export function EvidencePage() {
                   </div>
                   <div>
                     <dt>任务</dt>
-                    <dd
-                      className="mono"
-                      title={step && item.step_id ? `任务：${step.description}` : undefined}
-                    >
+                    <dd className="mono" title={step && item.step_id ? `任务：${step.description}` : undefined}>
                       {item.step_id || "—"}
                     </dd>
                   </div>
@@ -333,7 +303,7 @@ export function EvidencePage() {
                   </div>
                   <div>
                     <dt>引用</dt>
-                    <dd>{scope && scope.ids.length ? `${scope.ids.length} 个节点` : "暂无引用"}</dd>
+                    <dd>{scope && scope.ids.length ? `${scope.ids.length} 个黑板节点` : "由资产或线索引用"}</dd>
                   </div>
                   <div>
                     <dt>索引</dt>
@@ -409,8 +379,8 @@ export function EvidencePage() {
       ) : (
         <EmptyState
           icon={<FileText size={20} />}
-          title="还没有证据"
-          desc="先运行 Execute：工具输出、HTTP 请求响应、截图与脚本会按 SHA-256 归档到这里。"
+          title="还没有被引用的证据"
+          desc="执行时用 save_evidence 归档会被 Fact/Finding 引用的原件；工具输出、进程日志与临时文件留在项目文件。"
         />
       )}
     </section>

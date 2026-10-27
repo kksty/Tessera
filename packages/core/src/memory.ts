@@ -233,6 +233,13 @@ export interface MemoryRecordPage {
   deletion?: NodeDeletion;
 }
 
+/** Current records never carry revision snapshots or deletion audit metadata. */
+function currentRecord(record: Record<string, unknown> & { id: string }) {
+  if (record.edits === undefined && record.restored === undefined) return record;
+  const { edits: _edits, restored: _restored, ...current } = record;
+  return current;
+}
+
 /** Raw record JSON is explicitly paged, including large arrays and descriptions. */
 export function readMemoryRecord(
   graph: Graph,
@@ -255,7 +262,7 @@ export function readMemoryRecord(
       content: JSON.stringify({
         id,
         status: "deleted",
-        message: "节点已删除；原文仅在显式历史中读取",
+        message: "节点已删除；原文与旧版本仅供操作员，任务内不可读取",
         history_ref: ref.history_ref,
       }),
       next_offset: null,
@@ -263,7 +270,7 @@ export function readMemoryRecord(
   if (!history) graph = activeGraph(graph);
   const found = records(graph).find((item) => item.record.id === id);
   if (!found) return { error: "Record not found", snapshot_revision: graph.revision };
-  const text = JSON.stringify(found.record);
+  const text = JSON.stringify(history ? found.record : currentRecord(found.record));
   const record_hash = createHash("sha256").update(text).digest("hex");
   if (expectedHash && expectedHash !== record_hash)
     return { error: "Record changed; restart at offset 0", snapshot_revision: graph.revision, record_hash };

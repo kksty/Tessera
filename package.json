@@ -27,6 +27,7 @@
     "m6": "tsx scripts/m6/run.mjs",
     "m6:resume": "tsx scripts/m6/resume.mjs",
     "test:usage-browser": "tsx scripts/checks/usage-browser.ts",
+    "test:tools-browser": "tsx scripts/checks/tools-browser.ts",
     "test:capacity-real-model": "tsx scripts/checks/capacity-model.ts",
     "test:capacity-runner-real": "tsx scripts/checks/capacity-runner.ts",
     "test:result-format-probe": "tsx scripts/checks/result-format.ts",

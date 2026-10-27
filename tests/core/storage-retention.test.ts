@@ -55,6 +55,14 @@ test("retention compresses old history/diagnostics/evidence without breaking ret
       encoding: "utf8",
       mime_type: "text/plain",
     });
+    store.mutate(id, "fixture.retention-proof", true, (graph) => {
+      graph.facts.push({
+        id: "f-retention-proof",
+        description: "Searchable evidence is cited by a Fact",
+        graph_id: "main",
+        evidence_ids: [proof.id],
+      });
+    });
     const job = store.claim(id, "worker", 0)!;
     const diagnostics = new DiagnosticRecords(store.db),
       event = { id: randomUUID(), at: new Date().toISOString(), type: "run_end" as const, data: {} };

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { api, path } from "../api.js";
 import { Blackboard } from "../Blackboard.js";
-import { WorkbenchTools, QuickSidebar } from "../WorkbenchTools.js";
+import { WorkbenchTools, QuickSidebar, type QuickTab } from "../WorkbenchTools.js";
 import { Drawer, Modal } from "../components/ui.js";
 import { NodeDetail } from "../components/NodeDetail.js";
 import { DeletedNodeHistory } from "../components/NodeHistory.js";
@@ -20,12 +20,14 @@ import { CooldownControls } from "../components/CooldownControls.js";
 import { localPrefs } from "../layouts.js";
 import { changedIds, replayBoard } from "../replay.js";
 import { eventTargets } from "../graph-scope.js";
-import { fmt, locateRecord, readableError, useWorkspace } from "../workspace.js";
+import { locateRecord, readableError, useWorkspace } from "../workspace.js";
+import { boardTimelineText } from "../board-timeline.js";
 
 export function BoardPage() {
   const [manualOpen, setManualOpen] = useState(false);
   const [inspectOpen, setInspectOpen] = useState(false);
   const [panelHidden, setPanelHidden] = useState(() => localStorage.getItem("tessera.boardPanelHidden") === "true");
+  const [quickTab, setQuickTab] = useState<QuickTab | null>(null);
   const ws = useWorkspace();
   useEffect(() => {
     if (!ws.node) setInspectOpen(false);
@@ -77,8 +79,10 @@ export function BoardPage() {
           </button>
         </div>
         {manualOpen && (
-          <Drawer label="人工干预" title="人工干预" onClose={() => setManualOpen(false)}>
-            <p className="manual-help">日常探索由模型推进。需要手工接管时，在黑板上选择任务或事实，再使用以下操作。</p>
+          <Drawer label="人工干预" title="人工干预" width={500} onClose={() => setManualOpen(false)}>
+            <p className="manual-help">
+              日常探索由模型推进。手动操作会写入工作图并留下事件记录，执行权仍由调度器管理；先选中任务或事实，再选择动作。
+            </p>
             <WorkbenchTools
               graph={graph}
               selectedFacts={ws.selectedFacts}
@@ -99,7 +103,10 @@ export function BoardPage() {
           focus={ws.focus}
           scope={ws.graphScope}
           onClearScope={ws.clearGraphScope}
-          onSelect={ws.selectNode}
+          onSelect={(nodeId, additive) => {
+            setQuickTab(null);
+            ws.selectNode(nodeId, additive);
+          }}
           onInspect={(nodeId) => {
             if (!panelHidden) return;
             // 双击只打开详情弹窗，不改变视角；画布保持用户当前的缩放与平移。
@@ -162,7 +169,7 @@ export function BoardPage() {
       </section>
 
       <aside
-        className="detail-panel"
+        className={`detail-panel${quickTab ? " quick-open" : ""}`}
         hidden={panelHidden}
         style={{ "--detail-panel-width": ws.panelWidth + "px" } as React.CSSProperties}
       >
@@ -183,38 +190,47 @@ export function BoardPage() {
         <QuickSidebar
           graph={visible}
           selectedId={ws.selected}
+          tab={quickTab}
+          onTabChange={setQuickTab}
           onSelect={(nid) => {
             locateRecord(ws, nid);
           }}
         />
-        <div className="detail-tabs">
-          <button className={ws.historyTab === "detail" ? "active" : ""} onClick={() => ws.setHistoryTab("detail")}>
-            详情
-          </button>
-          <button className={ws.historyTab === "history" ? "active" : ""} onClick={() => ws.setHistoryTab("history")}>
-            黑板时间线 <span>{ws.boardEvents.length}</span>
-          </button>
-        </div>
-
-        {ws.historyTab === "detail" ? (
-          node ? (
-            <NodeDetail />
-          ) : (
-            <div className="detail-empty">
-              <GitBranch size={30} />
-              <h3>每一步，都有依据</h3>
-              <p>点击节点查看事实、目标、探索结果和证据。</p>
-              <div className="root-goal">
-                <small>当前目标</small>
-                <p>{graph.goals.find((g) => g.id === "goal")?.description}</p>
-              </div>
-              {graph.project.last_error && (
-                <div className="last-error">最近执行问题：{readableError(graph.project.last_error)}</div>
-              )}
+        {!quickTab && (
+          <>
+            <div className="detail-tabs">
+              <button className={ws.historyTab === "detail" ? "active" : ""} onClick={() => ws.setHistoryTab("detail")}>
+                详情
+              </button>
+              <button
+                className={ws.historyTab === "history" ? "active" : ""}
+                onClick={() => ws.setHistoryTab("history")}
+              >
+                黑板时间线 <span>{ws.boardEvents.length}</span>
+              </button>
             </div>
-          )
-        ) : (
-          <Timeline />
+
+            {ws.historyTab === "detail" ? (
+              node ? (
+                <NodeDetail />
+              ) : (
+                <div className="detail-empty">
+                  <GitBranch size={30} />
+                  <h3>每一步，都有依据</h3>
+                  <p>点击节点查看事实、目标、探索结果和证据。</p>
+                  <div className="root-goal">
+                    <small>当前目标</small>
+                    <p>{graph.goals.find((g) => g.id === "goal")?.description}</p>
+                  </div>
+                  {graph.project.last_error && (
+                    <div className="last-error">最近执行问题：{readableError(graph.project.last_error)}</div>
+                  )}
+                </div>
+              )
+            ) : (
+              <Timeline />
+            )}
+          </>
         )}
       </aside>
       {inspectOpen && node && (
@@ -287,48 +303,92 @@ function HintBar() {
   );
 }
 
+function localDayKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function localDayLabel(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+  const key = localDayKey(date);
+  if (key === localDayKey(now)) return "今天";
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (key === localDayKey(yesterday)) return "昨天";
+  const prefix = date.getFullYear() === now.getFullYear() ? "" : `${date.getFullYear()} 年 `;
+  return `${prefix}${date.getMonth() + 1} 月 ${date.getDate()} 日 · ${date.toLocaleDateString("zh-CN", { weekday: "short" })}`;
+}
+
+function localClock(value: string) {
+  return new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
 function Timeline() {
   const ws = useWorkspace();
   const graph = ws.graph!;
+  const items = ws.boardEvents.map((event, index) => ({ event, index, ...boardTimelineText(event, graph) })).reverse();
+  const groups: { key: string; label: string; items: typeof items }[] = [];
+  for (const item of items) {
+    const key = localDayKey(new Date(item.event.created_at));
+    const last = groups.at(-1);
+    if (last?.key === key) last.items.push(item);
+    else groups.push({ key, label: localDayLabel(item.event.created_at), items: [item] });
+  }
   return (
-    <div className="timeline">
-      <button
-        className="timeline-replay"
-        onClick={() => {
-          ws.setReplayIndex(0);
-          ws.setPlaying(true);
-        }}
-      >
-        <Play size={13} />
-        回放黑板历史
-      </button>
-      {ws.boardEvents
-        .slice()
-        .reverse()
-        .map((e) => (
-          <button
-            className="timeline-event"
-            key={e.seq}
-            onClick={() => {
-              const index = ws.boardEvents.indexOf(e);
-              ws.setReplayIndex(index);
-              const snapshot = replayBoard(ws.events, ws.boardEvents, index) || graph;
-              const target = eventTargets(snapshot, e)[0] || null;
-              // 回放一条事件只「定位到它改动的节点」；画布保持总视图，不切链路。
-              ws.setSelected(target);
-              if (target)
-                ws.setFocus({
-                  id: target,
-                  seq: (ws.focus?.seq ?? 0) + 1,
-                });
-            }}
-          >
-            <span className="timeline-event-dot" />
-            <small>{fmt(e.created_at)}</small>
-            <strong>{e.kind}</strong>
-            <span>图版本 {e.revision}</span>
-          </button>
-        ))}
+    <div className="board-timeline">
+      <div className="board-timeline-toolbar">
+        <button
+          className="board-timeline-replay"
+          onClick={() => {
+            ws.setReplayIndex(0);
+            ws.setPlaying(true);
+          }}
+        >
+          <Play size={12} />
+          回放全过程
+        </button>
+        <span className="board-timeline-total">{ws.boardEvents.length} 次图变化</span>
+      </div>
+      {groups.map((group) => (
+        <section className="board-timeline-group" key={group.key} aria-label={group.label}>
+          <h3 className="board-timeline-date">
+            {group.label}
+            <span>{group.items.length} 次</span>
+          </h3>
+          <ol className="board-timeline-list">
+            {group.items.map(({ event, index, title, detail }) => (
+              <li key={event.seq}>
+                <button
+                  className="board-timeline-event"
+                  aria-current={ws.replayIndex === index ? "step" : undefined}
+                  title={`第 ${event.revision} 次图更新`}
+                  onClick={() => {
+                    ws.setReplayIndex(index);
+                    const snapshot = replayBoard(ws.events, ws.boardEvents, index) || graph;
+                    const target = eventTargets(snapshot, event)[0] || null;
+                    // 回放一条事件只「定位到它改动的节点」；画布保持总视图，不切链路。
+                    ws.setSelected(target);
+                    if (target)
+                      ws.setFocus({
+                        id: target,
+                        seq: (ws.focus?.seq ?? 0) + 1,
+                      });
+                  }}
+                >
+                  <span className="board-timeline-dot" aria-hidden="true" />
+                  <span className="board-timeline-body">
+                    <span className="board-timeline-title">{title}</span>
+                    {detail && <span className="board-timeline-detail">{detail}</span>}
+                  </span>
+                  <time className="board-timeline-time" dateTime={event.created_at}>
+                    {localClock(event.created_at)}
+                  </time>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
+      {!groups.length && <p className="board-timeline-empty">还没有会改变画面的历史。</p>}
     </div>
   );
 }

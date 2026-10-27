@@ -49,6 +49,8 @@ import type {
 import { ExecutionRecords, digest } from "./execution.js";
 import { normalizeFindingIdentity } from "../../protocol/src/finding-identity.js";
 import { TrafficRecords } from "./traffic.js";
+import { resendTraffic as resendCapturedTraffic } from "./traffic-resend.js";
+import type { FindingTraffic } from "../../protocol/src/traffic.js";
 import type { ChangesQuery } from "./memory-changes.js";
 import { memoryKinds } from "./memory.js";
 import { conclusionFrom } from "./projection.js";
@@ -394,7 +396,9 @@ export class Store {
         reopenLeadsForStep(g, previousRetest.id);
       }
       if (body.action === "delete") {
-        const plan = planNodeDeletions(g, [{ id: findingId, reason: body.reason, cascade: "none" }]);
+        const plan = planNodeDeletions(g, [{ id: findingId, reason: body.reason, cascade: "none" }], {
+          protectApproved: false,
+        });
         applyNodeDeletions(
           g,
           plan,
@@ -415,6 +419,7 @@ export class Store {
         by: body.creator,
         at: now(),
         version: finding.version + 1,
+        ...(body.action === "retest" ? { baseline_evidence_ids: [...new Set(finding.evidence_ids)] } : {}),
       };
       Object.assign(finding, {
         version: feedback.version,
@@ -551,6 +556,24 @@ export class Store {
       return finding;
     });
   }
+  /**
+   * Operator undo for a Finding hidden by a deletion. Deletion only sets the
+   * tombstone: evidence, reviews, leases and frozen reports were never removed,
+   * so clearing it revives the same ID, version and history. Facts, Steps and
+   * subgoals stay deleted; their originals remain readable from history.
+   */
+  restoreFinding(id: string, findingId: string, by: string) {
+    return this.mutate(id, "finding.restored", false, (g) => {
+      const finding = g.findings.find((f) => f.id === findingId) || fail(404, "Finding not found");
+      const deletion = finding.deleted ?? fail(409, "发现未处于删除状态。");
+      if (finding.merged_into) fail(409, "已合并的发现不能恢复；请恢复它的合并目标。");
+      finding.restored = { at: now(), by: by.trim() || "human", deletion };
+      finding.deleted = undefined;
+      g.node_lifecycle_version = 1;
+      g.project.pool_revision = (g.project.pool_revision ?? 0) + 1;
+      return finding;
+    });
+  }
   private checkHumanFeedback(g: Graph, finding: Finding, evidenceIds: string[]) {
     const feedback = finding.human_feedback;
     if (!feedback) return;
@@ -567,7 +590,9 @@ export class Store {
       ...g.facts.filter((f) => !f.deleted && retest.fact_ids.includes(f.id)).flatMap((f) => f.evidence_ids),
     ]);
     const previous = new Set(
-      finding.edits?.find((edit) => edit.version === feedback.version - 1)?.previous.evidence_ids ?? [],
+      feedback.baseline_evidence_ids ??
+        finding.edits?.find((edit) => edit.version === feedback.version - 1)?.previous.evidence_ids ??
+        [],
     );
     if (!evidenceIds.some((id) => fresh.has(id) && !previous.has(id)))
       fail(422, "人工重测通过审核需引用此次重测的新原始证据。");
@@ -1263,6 +1288,8 @@ export class Store {
       description: string;
       property?: string;
       method_hint?: string;
+      test_domain?: Step["test_domain"];
+      focus?: string;
       priority?: number;
       asset_id?: string;
       goal_id?: string;
@@ -1330,6 +1357,9 @@ export class Store {
         duplicate.lead_ids = [...new Set([...(duplicate.lead_ids ?? []), ...input.lead_ids])];
         duplicate.version = (duplicate.version ?? 1) + 1;
       }
+      // 分类是标签而不是工作变更：重复计划只补空缺，不改版本。
+      if (input.test_domain && !duplicate.test_domain) duplicate.test_domain = input.test_domain;
+      if (input.focus && !duplicate.focus) duplicate.focus = input.focus;
       return duplicate;
     }
     const step: Step = {
@@ -1483,6 +1513,22 @@ export class Store {
       );
     if (withdrawn)
       fail(409, `Finding ${withdrawn.id} withdrawn; use restore:true on that ID with revised supporting material`);
+    if (input.traffic_ids) {
+      // A Finding may only cite HTTP flows that exist in this project. Missing or
+      // non-HTTP ids would render as dead links in the operator UI. Normalize
+      // before the replay check below: the stored list is already deduped and
+      // filtered, so comparing a raw retry against it would turn an identical
+      // delivery (e.g. one citing a flow the recorder has not uploaded yet) into a
+      // new Finding version or duplicate.
+      const unique = [...new Set(input.traffic_ids)];
+      input = {
+        ...input,
+        traffic_ids: unique.filter((id) => {
+          const record = this.traffic.get(g.project.id, id);
+          return !!record && (record.capture_kind ?? "http") === "http";
+        }),
+      };
+    }
     // Incremental submit + final Execute output may repeat the same delivery with
     // a fresh transport key. Reuse it without undoing Review's authoritative grade.
     // Changed deliveries from different Steps still go to Decide for semantic merge.
@@ -1495,12 +1541,20 @@ export class Store {
           f.identity &&
           f.status !== "rejected" &&
           digest(normalizeFindingIdentity(f.identity)) === key &&
-          ["title", "description", "evidence", "impact", "reproduction", "remediation", "asset_id", "kind"].every(
-            (field) => {
-              const proposed = input[field as keyof typeof input];
-              return proposed === undefined || digest(proposed) === digest(f[field as keyof Finding]);
-            },
-          ) &&
+          [
+            "title",
+            "description",
+            "evidence",
+            "impact",
+            "reproduction",
+            "remediation",
+            "asset_id",
+            "kind",
+            "traffic_ids",
+          ].every((field) => {
+            const proposed = input[field as keyof typeof input];
+            return proposed === undefined || digest(proposed) === digest(f[field as keyof Finding]);
+          }) &&
           (input.evidence_ids ?? []).every((id) => f.evidence_ids.includes(id)) &&
           (input.from ?? []).every((id) => f.from.includes(id)),
       );
@@ -1519,12 +1573,15 @@ export class Store {
         : undefined;
     const old = input.id ? g.findings.find((f) => f.id === input.id) || fail(404, "Finding not found") : repeated;
     if (old?.deleted) fail(409, "Finding deleted; cannot update or restore it");
-    if (repeated)
+    if (repeated) {
+      const traffic = [...new Set([...(repeated.traffic_ids ?? []), ...(input.traffic_ids ?? [])])];
       input = {
         ...input,
         from: [...new Set([...repeated.from, ...(input.from ?? [])])],
         evidence_ids: [...new Set([...repeated.evidence_ids, ...(input.evidence_ids ?? [])])],
+        ...(traffic.length ? { traffic_ids: traffic } : {}),
       };
+    }
     if (old?.merged_into) fail(409, `Finding merged into ${old.merged_into}; revise the target instead`);
     if (old?.withdrawn_at)
       fail(
@@ -1766,6 +1823,59 @@ export class Store {
       const step = this.openStep(g, stepId, worker);
       return this.stepFinding(g, step, input);
     });
+  }
+  /**
+   * Traffic attached to a Finding: explicit capture ids first, then a best-effort
+   * match from the producing Step/Run and the Finding's entry surface.
+   */
+  findingTraffic(id: string, findingId: string): FindingTraffic {
+    const g = this.get(id);
+    const finding = g.findings.find((item) => item.id === findingId) || fail(404, "Finding not found");
+    const linked = finding.traffic_ids?.length ? this.traffic.byIds(id, finding.traffic_ids) : [];
+    if (linked.length) return { source: "linked", records: linked };
+    const step = g.steps.find((item) => item.id === (finding.step_id || finding.revision_step_id));
+    const suggested = this.traffic.suggest(
+      id,
+      finding.step_id || finding.revision_step_id,
+      step?.run_id,
+      finding.identity,
+      12,
+    );
+    return { source: suggested.length ? "suggested" : "none", records: suggested };
+  }
+  /**
+   * 人工补分类。测试域是标签而不是工作变更：不检查版本、不推进规划水位，
+   * 也不限制任务状态（已完成的项目仍可整理分类用于统计）。
+   * `test_domain: null` 或空 focus 表示清除。
+   */
+  classifyStep(id: string, stepId: string, body: { test_domain?: Step["test_domain"] | null; focus?: string }) {
+    return this.mutate(id, "step.classified", false, (g) => {
+      const s = g.steps.find((step) => step.id === stepId) || fail(404, "Step not found");
+      if (s.deleted) fail(409, "Step deleted; cannot classify it");
+      if (body.test_domain !== undefined) s.test_domain = body.test_domain ?? undefined;
+      if (body.focus !== undefined) {
+        const focus = body.focus.trim();
+        s.focus = focus || undefined;
+      }
+      return s;
+    });
+  }
+  /** Operator-triggered replay of one captured HTTP request; the response is transient. */
+  async resendTraffic(id: string, flowId: string, edited?: string) {
+    const graph = this.get(id);
+    if (graph.project.deletion) fail(409, "项目正在删除，仅允许查看或重试删除");
+    const result = await resendCapturedTraffic(this.traffic, id, flowId, edited);
+    // Audit only a small action record; the request/response bytes are not stored.
+    this.audit(id, "traffic.resend", {
+      source_flow_id: flowId,
+      method: result.method,
+      url: result.url,
+      status: result.status,
+      duration_ms: result.duration_ms,
+      edited: edited !== undefined,
+      archived: false,
+    });
+    return result;
   }
   updateStep(
     id: string,
@@ -2980,6 +3090,9 @@ export class Store {
       creator: string;
       claim?: boolean;
       asset_id?: string;
+      /** 人工建单时可以直接补分类；不填就是「未分类」。 */
+      test_domain?: Step["test_domain"];
+      focus?: string;
     },
   ) {
     return this.mutate(id, "step.declared", true, (g) => {

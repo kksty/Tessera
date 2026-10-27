@@ -10,6 +10,7 @@ import { InlineText, RichText, splitLead } from "./RichText.js";
 import { prettyText } from "../text.js";
 import { GraphReference } from "./NodeHistory.js";
 import { FindingActions } from "./FindingActions.js";
+import { FindingTrafficPanel, hasHttpTrafficHint } from "./FindingTraffic.js";
 import {
   findingKind,
   confirmedVulnerability,
@@ -345,6 +346,8 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
               </section>
             </div>
           )}
+
+          {hasHttpTrafficHint(f) && <FindingTrafficPanel finding={f} />}
 
           {(conditions.length > 0 ||
             steps.length > 0 ||
