@@ -11,19 +11,14 @@ import { applyLayout, layoutOptions, localPrefs, raiseToReadableZoom } from "./l
 import { boardViewports, type BoardViewport } from "./view-state.js";
 import { coldNodes, isColdNode } from "./coldness.js";
 import { chainElements, SCOPE_FULL, scopeSeeds, scopeSize, type GraphScope } from "./graph-scope.js";
-import { domainNodeId, domainSummaryElements, summaryElements, TYPE_LABEL } from "./graph-summary.js";
+import { domainSummaryElements, summaryElements, TYPE_LABEL } from "./graph-summary.js";
+import { fitNodeLabel, NODE_LINE_HEIGHT, NODE_MIN_HEIGHT, NODE_TEXT_PADDING } from "./label-fit.js";
 
 cytoscape.use(dagre);
 
 const FONT =
   '"Geist", "Source Sans 3", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
 
-/**
- * 节点文字的排版预算必须和画布样式的 text-max-width 一致。
- * 之前按「22 个宽度单位」估算行数，实际 13px 中文每行只能放 8–9 个字，
- * 长标签因此比节点框高，文字从框底漏出去。这里按实际字宽逐字换行，
- * 并把放不下的部分截断，节点高度再据此计算。
- */
 const NODE_TEXT_WIDTH: Record<string, number> = {
   origin: 132,
   goal: 148,
@@ -34,51 +29,8 @@ const NODE_TEXT_WIDTH: Record<string, number> = {
   hint: 132,
   step: 168,
 };
-const NODE_LINE_HEIGHT = 16;
-const NODE_TEXT_PADDING = 18;
-const NODE_MIN_HEIGHT = 46;
 const NODE_MAX_LINES = 6;
 
-const glyphWidth = (char: string) => (char.codePointAt(0)! > 255 ? 13.2 : 7.4);
-
-/** 按字符宽度换行；超过行数上限时截断并补省略号，保证文字不会溢出节点。 */
-function fitNodeLabel(text: string, maxWidth: number, maxLines: number) {
-  const chars = Array.from(text);
-  const lines: string[] = [];
-  let current = "";
-  let width = 0;
-  let index = 0;
-  while (index < chars.length) {
-    const char = chars[index];
-    if (char === "\n") {
-      lines.push(current);
-      current = "";
-      width = 0;
-      index += 1;
-      if (lines.length >= maxLines) break;
-      continue;
-    }
-    const charWidth = glyphWidth(char);
-    if (width + charWidth > maxWidth && current) {
-      lines.push(current);
-      current = "";
-      width = 0;
-      if (lines.length >= maxLines) break;
-      continue;
-    }
-    current += char;
-    width += charWidth;
-    index += 1;
-  }
-  if (lines.length < maxLines && (current || !lines.length)) lines.push(current);
-
-  const truncated = index < chars.length;
-  if (truncated && lines.length) {
-    const last = Array.from(lines[lines.length - 1]);
-    lines[lines.length - 1] = `${last.slice(0, Math.max(0, last.length - 1)).join("")}…`;
-  }
-  return { label: lines.join("\n"), lines: lines.length || 1 };
-}
 /** 滚轮一格（deltaY ≈ 100）的缩放倍率；触控板的小 delta 按比例缩小。 */
 const WHEEL_STEP = 1.35;
 const MAX_VIEWPORTS = 48;
@@ -149,6 +101,11 @@ function readPalette(): Palette {
       "background-color": c("--bg-elev"),
       "border-color": c("--info"),
       color: c("--info"),
+    },
+    frame: {
+      "background-color": c("--surface-4"),
+      "border-color": c("--line-strong"),
+      color: c("--text"),
     },
     summary: {
       "background-color": c("--surface-2"),
@@ -234,8 +191,59 @@ function applyPalette(c: Core) {
     .style({ "border-color": p.finding["border-color"] })
     .selector('node[type="summary"][groupType="hint"]')
     .style({ "border-color": p.subgoal["border-color"] })
+    // 测试域卡片：框本身不接收点击，真实节点才可选中；标题居中靠上，给框里的节点留出空间。
+    .selector('node[type="summary"][frame=1]')
+    .style({
+      ...p.frame,
+      width: "data(width)",
+      height: "data(height)",
+      "text-max-width": "data(labelWidth)",
+      // cytoscape 的 text-valign: top 会把标签放到框外；这里用居中 + 每张卡自己的
+      // 负偏移，把标题块挪到框内预留的 header 区域。
+      "text-valign": "center",
+      "text-halign": "center",
+      "text-margin-y": (el: any) => Number(el.data("labelOffsetY")) || 0,
+      "font-size": 16.5,
+      "line-height": 1.35,
+      // 域标题是缩略图里唯一还能读的层级；比节点文字多保留一点可读缩放范围。
+      "min-zoomed-font-size": 4,
+      "background-opacity": 0.65,
+      "border-width": 2.5,
+      "border-style": "dashed",
+      "corner-radius": "10px",
+      "z-index": 0,
+      events: "no",
+    })
+    // 框里的真实节点用紧凑卡片，不再按任务圆圈或长事实框绘制。
+    .selector("node[grouped=1]")
+    .style({
+      shape: "round-rectangle",
+      width: 168,
+      height: "data(height)",
+      "font-size": 12.5,
+      "font-weight": 400,
+      "text-max-width": "148px",
+      "border-width": 1,
+      "border-style": "solid",
+      "corner-radius": "6px",
+      "z-index": 1,
+    })
     .selector("edge")
     .style({ ...p.edge, "text-background-opacity": 0.9 })
+    .selector('edge[type="summary"]')
+    .style({
+      width: 1.8,
+      "font-size": 14,
+      // 域分框初始缩略到整图可见；字号不够大时「N 条关联」会被 min-zoomed-font-size 整块藏掉。
+      "min-zoomed-font-size": 4,
+      "font-weight": 600,
+      // 汇总边常是竖直的，autorotate 会把「N 条关联」竖排；总览层统一横排。
+      "text-rotation": "none",
+      // 两个汇总框之间可能同时有正向和反向关联；弯曲方向相反，标签才不会叠在一起。
+      "curve-style": "unbundled-bezier",
+      "control-point-distances": 72,
+      "control-point-weights": 0.5,
+    })
     .selector('edge[status="concluded"]')
     .style(p.concluded)
     .selector('edge[status="running"]')
@@ -467,8 +475,9 @@ export function Blackboard({
   const [motion, setMotion] = useState(graphMotionEnabled);
   // 0 = 完整链路（一路追到起点与结论）；1–3 = 只追这么多跳
   const [hops, setHops] = useState(SCOPE_FULL);
-  // 汇总视图：按测试域（默认）或按节点类型合并成少量框；展开一个组时恢复原节点。
-  const [summary, setSummary] = useState(false);
+  // 汇总视图：按测试域分框（默认，大图先看域）或按节点类型合并成少量框；
+  // 类型视图可展开一个组恢复原节点，域视图本身就把真实节点放在框里。
+  const [summary, setSummary] = useState(() => graph.steps.length + graph.facts.length + graph.findings.length > 40);
   const [summaryMode, setSummaryMode] = useState<"domain" | "type">("domain");
   const [expanded, setExpanded] = useState<string[]>([]);
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -480,6 +489,10 @@ export function Blackboard({
   // 链路视图要「看到整条线」，所以不做聚焦居中，只做适应窗口
   const scopeActive = useRef(false);
   const summaryRef = useRef(false);
+  const summaryModeRef = useRef(summaryMode);
+  summaryModeRef.current = summaryMode;
+  /** 域分框的整图通常比视口大；这里以「看全所有域」为先，不强行抬到可读字号。 */
+  const domainBoard = () => summaryRef.current && summaryModeRef.current === "domain";
   const expandedRef = useRef<string[]>([]);
   const groupTap = useRef<(type: string) => void>(() => {});
   groupTap.current = (type) => {
@@ -509,7 +522,7 @@ export function Blackboard({
     () =>
       summaryOn
         ? summaryMode === "domain"
-          ? domainSummaryElements(baseElements, graph, expanded)
+          ? domainSummaryElements(baseElements, graph)
           : summaryElements(baseElements, expanded)
         : baseElements,
     [baseElements, summaryOn, summaryMode, graph, expanded],
@@ -532,7 +545,7 @@ export function Blackboard({
   const scopeSignature = scoped ? `${hops}:${[...seeds].sort().join("|")}` : "all";
   // 展开/收起分组会改变整张图的规模，必须换视角键并重新 fit；否则新增节点会落在当前视野之外。
   const summarySignature = summaryOn ? `summary:${summaryMode}:${[...expanded].sort().join("+") || "all"}` : "full";
-  const viewportKey = `${graph.project.id}:${graphId}:${replaying ? "history" : "live"}:${scopeSignature}:${summarySignature}:nodes-v3`;
+  const viewportKey = `${graph.project.id}:${graphId}:${replaying ? "history" : "live"}:${scopeSignature}:${summarySignature}:nodes-v4`;
   const lastViewportKey = useRef("");
   const lastElements = useRef<string | null>(null);
   const restoreViewport = useRef<BoardViewport | undefined>(undefined);
@@ -549,7 +562,8 @@ export function Blackboard({
       height: c.height(),
       pan: { ...c.pan() },
       positions: Object.fromEntries(c.nodes().map((n) => [n.id(), { ...n.position() }])),
-      layout: layoutRef.current,
+      // 域分框使用固定位置，缓存键必须和实际布局一致；否则往返页面会被误判为换布局。
+      layout: domainBoard() ? "preset" : layoutRef.current,
       focusSeq: appliedFocus.current,
       elementSignature: lastElements.current ?? "",
     });
@@ -579,7 +593,7 @@ export function Blackboard({
       (Math.abs(saved.width - c.width()) > 24 || Math.abs(saved.height - c.height()) > 24)
     ) {
       c.fit(undefined, 65);
-      raiseToReadableZoom(c);
+      if (!domainBoard()) raiseToReadableZoom(c);
     } else {
       c.zoom(saved.zoom);
       c.pan(saved.pan);
@@ -817,6 +831,8 @@ export function Blackboard({
     };
     void document.fonts.ready.then(refreshFonts);
     c.on("tap", "node", (e) => {
+      // 域框只是容器，不是图里的节点；点框不选中、不打开详情。
+      if (e.target.data("frame")) return;
       const group = e.target.data("groupType");
       if (group && summaryRef.current) {
         groupTap.current(String(group));
@@ -824,7 +840,11 @@ export function Blackboard({
       }
       callback.current(e.target.id(), !!e.originalEvent?.shiftKey);
     });
-    c.on("dbltap", "node", (e) => inspectCallback.current?.(e.target.id()));
+    c.on("dbltap", "node", (e) => {
+      // 域框不是可查看节点；双击框不应把容器 id 当成节点打开详情。
+      if (e.target.data("frame")) return;
+      inspectCallback.current?.(e.target.id());
+    });
     c.on("tap", "edge", (e) => {
       if (e.target.data("step_id")) callback.current(e.target.data("step_id"));
     });
@@ -862,7 +882,7 @@ export function Blackboard({
           viewportWidth = window.innerWidth;
           if (c.nodes().length) {
             c.fit(undefined, 65);
-            raiseToReadableZoom(c);
+            if (!domainBoard()) raiseToReadableZoom(c);
           }
         }
       }, 60);
@@ -885,14 +905,21 @@ export function Blackboard({
   async function layoutGraph(mode = layoutRef.current, fit = true) {
     const c = cy.current;
     if (!c) return;
+    // 域分框的坐标由 domainSummaryElements 直接给出，不能再交给分层算法重排；
+    // 否则框和框里的节点会被拆开，正是用户看到的「整理连线后布局错乱」。
+    const effective = domainBoard() ? "preset" : mode;
     setLayoutError("");
     if (container.current) container.current.dataset.layoutReady = "";
     try {
       const seq = ++layoutSequence.current;
       layingOut.current = true;
-      await applyLayout(c, mode, fit, () => seq === layoutSequence.current);
+      await applyLayout(c, effective, fit, () => seq === layoutSequence.current);
+      // 类型汇总只有几个框，fit 会把它们放大到 1.5 倍以上，字号和边标签反而糊成一团。
+      if (!domainBoard() && summaryRef.current && c.zoom() > 1) {
+        c.zoom({ level: 1, renderedPosition: { x: c.width() / 2, y: c.height() / 2 } });
+      }
       if (container.current && mode === layoutRef.current && seq === layoutSequence.current) {
-        container.current.dataset.layoutReady = layoutRef.current;
+        container.current.dataset.layoutReady = effective;
         if (restoreViewport.current) {
           restoreCamera(c, restoreViewport.current);
           restoreViewport.current = undefined;
@@ -918,19 +945,30 @@ export function Blackboard({
       lastViewportKey.current = viewportKey;
     }
     const saved = switched ? boardViewports.get(viewportKey) : undefined;
-    const ids = new Set(elements.map((e) => e.data.id));
+    // cytoscape 逐条 add 时，边要求两端已存在；先把节点全部放进去，再放边，
+    // 并过滤任何指向未知节点的边。按测试域展开曾因「边排在未归组节点之前」整页崩溃。
+    const nodeDefinitions = elements.filter((el) => typeof el.data.source !== "string");
+    const edgeDefinitions = elements.filter((el) => typeof el.data.source === "string");
+    const ids = new Set(nodeDefinitions.map((el) => String(el.data.id)));
+    const safeEdges = edgeDefinitions.filter(
+      (el) => ids.has(String(el.data.source)) && ids.has(String(el.data.target)),
+    );
+    const keepIds = new Set([...ids, ...safeEdges.map((el) => String(el.data.id))]);
     // 用内容签名判断「画布内容是否真的变了」：数组引用变而内容没变时不该重新布局
     let changed = lastElements.current !== elementSignature || switched;
     c.batch(() => {
       for (const el of c.elements().toArray())
-        if (!ids.has(el.id())) {
+        if (!keepIds.has(el.id())) {
           el.remove();
           changed = true;
         }
-      for (const el of elements) {
+      for (const el of [...nodeDefinitions, ...safeEdges]) {
         const existing = c.getElementById(String(el.data.id));
-        if (existing.length) existing.data(el.data);
-        else {
+        if (existing.length) {
+          existing.data(el.data);
+          // 域分框重排后，已有节点也要更新坐标；只更新 data 会让新卡片和旧位置错开。
+          if ((el as any).position) existing.position((el as any).position);
+        } else {
           c.add(el);
           changed = true;
         }
@@ -947,14 +985,14 @@ export function Blackboard({
         });
         restoreCamera(c, saved);
         if (
-          saved.layout === layoutRef.current &&
+          saved.layout === (domainBoard() ? "preset" : layoutRef.current) &&
           saved.elementSignature === elementSignature &&
           c
             .nodes()
             .toArray()
             .every((n) => !!saved.positions[n.id()])
         ) {
-          if (container.current) container.current.dataset.layoutReady = layoutRef.current;
+          if (container.current) container.current.dataset.layoutReady = saved.layout;
           if (scopeActive.current) {
             c.fit(undefined, 65);
             raiseToReadableZoom(c);
@@ -1096,6 +1134,8 @@ export function Blackboard({
           <select
             aria-label="图布局"
             value={layout}
+            disabled={summaryOn && summaryMode === "domain"}
+            title={summaryOn && summaryMode === "domain" ? "测试域分框使用固定卡片布局，退出分框后可切换" : undefined}
             onChange={(e) => {
               setLayout(e.target.value);
               // 链路视图里的临时选择不写回本地偏好
@@ -1119,7 +1159,7 @@ export function Blackboard({
                 setExpanded([]);
               }}
             >
-              <option value="domain">按测试域</option>
+              <option value="domain">按测试域分框</option>
               <option value="type">按节点类型</option>
             </select>
           )}
@@ -1135,13 +1175,21 @@ export function Blackboard({
           <button aria-label="适应黑板" title="适应窗口" onClick={() => cy.current?.fit(undefined, 65)}>
             <Maximize size={15} />
           </button>
-          <button aria-label="自动整理黑板" title="按层级整理节点与连线" onClick={() => void layoutGraph()}>
+          <button
+            aria-label="自动整理黑板"
+            title={summaryOn && summaryMode === "domain" ? "重新排列测试域卡片" : "按层级整理节点与连线"}
+            onClick={() => void layoutGraph()}
+          >
             <Network size={15} />
           </button>
           <button
             aria-label={summaryOn ? "退出汇总" : "按测试域汇总"}
             title={
-              scoped ? "链路视图下不汇总" : summaryOn ? "退出汇总，显示全部节点" : "按测试域汇总：只保留域之间的连线"
+              scoped
+                ? "链路视图下不汇总"
+                : summaryOn
+                  ? "退出汇总，显示全部节点"
+                  : "按测试域分框：每个域一个大框，框内是所属节点"
             }
             aria-pressed={summaryOn}
             disabled={scoped}
@@ -1183,11 +1231,10 @@ export function Blackboard({
           )}
           {summaryOn && (
             <span className="quiet">
-              {summaryMode === "type" ? "按类型汇总" : "按测试域汇总"}：点框展开 · 点空白收起
+              {summaryMode === "type"
+                ? "按类型汇总：点框展开 · 点空白收起"
+                : "按测试域分框：框内是所属节点 · 框间数字是跨域关联条数"}
             </span>
-          )}
-          {summaryOn && summaryMode === "domain" && expanded.includes(domainNodeId("post")) && (
-            <span className="quiet">后渗透已按 focus 前缀展开</span>
           )}
           <span className="quiet">按住 Shift 左键多选</span>
         </div>

@@ -1692,3 +1692,32 @@ button.kpi:hover {
   overflow: auto;
   color: var(--ink-2);
 }
+
+/* 证据抽屉里的 Markdown 渲染：与 .export-preview 保持同一张纸。 */
+.evidence-drawer-doc {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  max-height: 52vh;
+  overflow: auto;
+}
+
+.evidence-drawer-doc .rich-text {
+  font-size: var(--f-xs);
+  line-height: 1.7;
+}
+
+.evidence-drawer-doc .rich-text > * + * {
+  margin-top: 8px;
+}
+
+.evidence-drawer-doc .rich-text h3 {
+  font-size: var(--f-sm);
+  color: var(--ink);
+}
+
+.evidence-drawer-doc .rich-text h4 {
+  font-size: var(--f-xs);
+  color: var(--ink);
+}

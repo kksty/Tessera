@@ -33,6 +33,82 @@
   min-width: 300px;
 }
 
+/* 全局开关：关闭后所有证据一律显示未渲染原文。 */
+.evidence-render-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 3px 9px 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: var(--f-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.evidence-render-switch:hover {
+  border-color: var(--line-strong);
+  color: var(--ink-2);
+}
+
+.evidence-render-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.evidence-switch-track {
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  transition:
+    background var(--fast),
+    border-color var(--fast);
+}
+
+.evidence-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  transition:
+    transform var(--fast),
+    background var(--fast);
+}
+
+.evidence-render-switch input:checked + .evidence-switch-track {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.evidence-render-switch input:checked + .evidence-switch-track::after {
+  transform: translateX(11px);
+  background: var(--accent);
+}
+
+.evidence-render-switch input:focus-visible + .evidence-switch-track {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 3px var(--accent);
+}
+
 /* ---------- 两栏：索引 + 阅读器 ---------- */
 .evidence-layout {
   display: grid;
@@ -343,6 +419,45 @@
   tab-size: 2;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Markdown 渲染：与原始 <pre> 共用同一张纸，长文在纸内滚动。 */
+.evidence-doc {
+  max-height: 62vh;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.evidence-doc .rich-text {
+  font-size: var(--f-sm);
+  line-height: 1.75;
+}
+
+.evidence-doc .rich-text > * + * {
+  margin-top: 10px;
+}
+
+.evidence-doc .rich-text h3 {
+  font-size: var(--f-md);
+  color: var(--ink);
+}
+
+.evidence-doc .rich-text h4 {
+  font-size: var(--f-base);
+  color: var(--ink);
+}
+
+.evidence-doc .rich-text table {
+  width: 100%;
+}
+
+.evidence-render-note {
+  color: var(--ink-4);
+  font-size: var(--f-xs);
+  line-height: 1.6;
 }
 
 .evidence-loading {

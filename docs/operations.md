@@ -40,6 +40,25 @@ Shell 和看门狗使用显式环境白名单，只传递路径、语言、代�
 
 备份保留代数和异地存放由部署方确定；未完成隔离恢复演练前不要删除旧代次。应用内删除项目不会删除外部备份或模型服务已经保存的数据。
 
+## 单项目完整备份与恢复
+
+除整卷维护备份外，应用本身支持把**一个项目**打包带走并在另一个实例继续工作：
+
+- 导出：项目页「更多项目操作 → 导出完整备份（含日志）」，或登录后 `GET /api/projects/PROJECT_ID/bundle`，得到 `<项目ID>-bundle.zip`。
+- 导入：项目页「导入项目」上传该 ZIP，或 `POST /api/projects/import`（`content-type: application/zip`，请求体为 ZIP）。
+
+ZIP 内包含 `manifest.json`（条目 SHA-256、计数、缺失原件警告）、`graph.json`（全部节点）、`events-*.ndjson`、`diagnostics-*.ndjson`、`runs-*.ndjson`、`run-models-*.ndjson`、`request-usage-*.ndjson`、`receipts-*.ndjson`、`submissions-*.ndjson`、`plans-*.ndjson`、`pools-*.ndjson`、`reports-*.ndjson`、`traffic-*.ndjson`、`traffic-status.json`、`traffic-bodies/*` 与 `evidence/*`。归档过的事件、诊断和证据在导出时解压为可读条目，导入后不需要原数据库即可查看历史。
+
+导入规则：
+
+- 保留原项目 ID；目标实例已有同 ID 项目、墓碑记录或遗留证据目录时拒绝导入，不覆盖现有数据。
+- 导入前校验每个条目的清单校验和，以及证据原件的大小与 SHA-256；任一失败都不会写入记录。缺少原件的证据在导出时写入 `manifest.json` 的 `warnings` / `missing_evidence`，导入后该证据仍不可读，其余数据照常恢复。
+- 导出时仍在运行的 Run 在导入后标记为 `interrupted`，悬空租约、重试计时和工作区卷前缀被清理；`active` 项目可直接继续领取任务。旧的 `/workspace` 卷不在备份内，新的 Run 会使用目标实例的新工作区，因此中断 Run 的会话不能续跑。
+- 导入大小上限由 `TESSERA_IMPORT_MAX_BYTES` 控制（默认 4 GiB），解压后总量上限由 `TESSERA_IMPORT_MAX_UNCOMPRESSED_BYTES` 控制（默认 64 GiB）；临时文件放在 `TESSERA_BUNDLE_TMP` 或平台目录下的 `bundle-tmp/`。导出使用独立只读连接和单一事务快照，导入先完整解包并校验后再写入；两者都是维护操作，期间控制面响应可能变慢。
+- 备份是 ZIP32：单个压缩包上限 4 GiB（单条目未压缩上限 2 GiB）。更大的项目请按上面的整卷一致性备份迁移，或先拆分/清理项目证据。
+
+项目级备份不替代上面的整卷一致性备份：它不包含平台设置、模型密钥、登录凭据、其他项目和 Docker 工作区卷。需要连同工作区会话一起迁移时，仍按整卷备份流程处理。
+
 ## 数据目录与命名卷
 
 `/data` **始终是 Docker 命名卷**（默认 `tessera-data`），不再支持宿主机目录挂载。2026-10-26 实测：Windows bind mount（9p/grpc-fuse）下 SQLite 写放大可达 15–90 倍，全图读取 92–160 ms（卷内 6–8 ms），20 MB 提交 6.8 s（卷内 77 ms），长尾会把 `POST /jobs/claim` 推到 40–56 s，并最终造成页级损坏；迁移后已弃用目录模式。
@@ -74,14 +93,14 @@ node scripts/ops/verify-data-volume.mjs datas/tessera/tessera.db datas/tessera/e
 
 所有控制面调用的超时集中在 `packages/protocol/src/timeouts.ts`，原则是 **lease > heartbeat 最坏情况 > 服务端 p99.9**，且 commit/usage/diagnostics 不阻塞 Run：
 
-| 项 | 默认值 | 说明 |
-| --- | ---: | --- |
-| lease（Decide/Execute/Review） | 180 s | 死 Worker 最多约 150 s 回收（heartbeat 15 s × 3 + 超时） |
-| heartbeat | 15 s 间隔 / 45 s 超时 | 连续 3 次失败才放弃 Run |
-| claim / release | 90 s / 30 s | 覆盖控制面长尾，仍小于 lease |
-| commit | 30 s，3 次，退避 0.5/1 s | 覆盖 decisions p99 24.5 s |
-| usage / diagnostics | 30 s / 15 s | 先写本地 ndjson，后台串行上传；失败继续重试，不永久关闭 |
-| 模型中继 | 600 s | `TESSERA_MODEL_TIMEOUT_MS` 可调 |
+| 项                             |                   默认值 | 说明                                                     |
+| ------------------------------ | -----------------------: | -------------------------------------------------------- |
+| lease（Decide/Execute/Review） |                    180 s | 死 Worker 最多约 150 s 回收（heartbeat 15 s × 3 + 超时） |
+| heartbeat                      |    15 s 间隔 / 45 s 超时 | 连续 3 次失败才放弃 Run                                  |
+| claim / release                |              90 s / 30 s | 覆盖控制面长尾，仍小于 lease                             |
+| commit                         | 30 s，3 次，退避 0.5/1 s | 覆盖 decisions p99 24.5 s                                |
+| usage / diagnostics            |              30 s / 15 s | 先写本地 ndjson，后台串行上传；失败继续重试，不永久关闭  |
+| 模型中继                       |                    600 s | `TESSERA_MODEL_TIMEOUT_MS` 可调                          |
 
 `TESSERA_LEASE_SECONDS` 只作为首次初始化 `platform_settings` 的默认值；设置页的 `intent_timeout/reason_timeout` 优先，且不允许低于 30 s。旧库中仍是历史默认值 120/120 时，启动会一次性提升到 180/180（`platform_meta.lease_default_180` 记录该迁移）。
 
@@ -89,11 +108,11 @@ Dispatcher 为每次 claim 生成 `claim_id`。claim 超时或异常时它 fire-
 
 Run 结束时写入 `failure_kind`：
 
-| 类别 | 匹配 | 处理 |
-| --- | --- | --- |
-| `model` | 现有模型错误识别 | 计入 `model_failures`，按原规则退避并在连续 3 次后暂停 |
+| 类别             | 匹配                                                                                     | 处理                                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `model`          | 现有模型错误识别                                                                         | 计入 `model_failures`，按原规则退避并在连续 3 次后暂停                                   |
 | `infrastructure` | lease expired、claim abandoned、诊断投递失败、连接 reset/refused、超时（且不是模型错误） | 计入 `infra_failures`，5 s→300 s 退避，**不增加 job_failures、不暂停项目**，到期自动重试 |
-| `unknown` | 其他 | 保留 3 次业务失败暂停规则 |
+| `unknown`        | 其他                                                                                     | 保留 3 次业务失败暂停规则                                                                |
 
 项目上同时记录 `last_failure_kind`、`infra_failures`、`infra_retry_at`；项目页对基础设施故障显示“控制面故障，第 N 次退避重试”，运行记录显示模型/基础设施/目标徽标。execute 已放出外部动作时仍升级为 `needs_attention`（安全属性不变），但不再因此停止整个项目。
 

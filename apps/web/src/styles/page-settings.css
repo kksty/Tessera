@@ -30,7 +30,8 @@
   background: var(--bg);
 }
 
-/* .content 有 28px 上内边距，吸顶时用同色条补上这段缝隙，避免卡片从导航上方露出来。 */
+/* .content 有上内边距，吸顶时用同色条补上这段缝隙，避免卡片从导航上方露出来。
+   只在导航真正吸顶时显示；否则它会压住页头的模型状态行。 */
 .settings-nav::before {
   content: "";
   position: absolute;
@@ -40,6 +41,11 @@
   height: 28px;
   background: var(--bg);
   pointer-events: none;
+  display: none;
+}
+
+.settings-nav[data-stuck="true"]::before {
+  display: block;
 }
 
 .settings-nav button {

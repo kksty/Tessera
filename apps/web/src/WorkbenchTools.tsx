@@ -15,6 +15,7 @@ import {
   Play,
   RotateCcw,
   Download,
+  Archive,
   User,
 } from "lucide-react";
 import type { Graph, ProjectSummary } from "../../../packages/protocol/src/index.js";
@@ -230,12 +231,25 @@ export function ProjectExtras({
     setCopied(document.execCommand("copy"));
     input.remove();
   }
+  function downloadBundle() {
+    const anchor = document.createElement("a");
+    anchor.href = `/api${path(project.id, "/bundle")}`;
+    anchor.download = `${project.id}-bundle.zip`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
   return (
     <div className="project-extras">
       {compact && (
         <ActionMenu
           label="更多项目操作"
           actions={[
+            {
+              label: "导出完整备份（含日志）",
+              icon: <Archive size={15} aria-hidden="true" />,
+              onSelect: downloadBundle,
+            },
             {
               label: "导出项目数据",
               icon: <Download size={15} aria-hidden="true" />,
@@ -341,6 +355,19 @@ export function ProjectExtras({
                 </span>
               ))}
             </pre>
+            <p className="quiet">
+              需要带走整份项目（图、运行日志、诊断、流量正文与证据原件）时，使用完整备份；备份可在「项目」页重新导入并继续工作。单个备份上限
+              4 GiB，更大的项目请使用整卷备份。
+            </p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setModal(null)}>
+                关闭
+              </button>
+              <button type="button" className="primary" onClick={downloadBundle}>
+                <Archive size={14} />
+                下载完整备份
+              </button>
+            </div>
           </div>
         </Overlay>
       )}

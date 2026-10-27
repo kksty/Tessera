@@ -142,14 +142,14 @@ export interface Step {
   last_referenced_round?: number;
   last_read_round?: number;
   cooldown_override?: CooldownOverride;
-  /** Human rewrites keep the replaced text; see TextEdit. */
+  /** Rewrites keep the replaced text; `editor` records whether a human or a Decide merge wrote it. */
   edits?: TextEdit[];
 }
-/** A human rewrite of a model-owned text field. The replaced text is kept, never discarded. */
+/** A rewrite of a model-owned text field. `editor` identifies the author ("human" for an operator rewrite, the worker id for a Decide merge); the replaced text is kept, never discarded. */
 export interface TextEdit {
   at: string;
   editor: string;
-  field: "description";
+  field: "description" | "property" | "method_hint";
   from: string;
 }
 export type FindingIdentity = z.infer<typeof findingIdentitySchema>;

@@ -40,7 +40,14 @@ export interface DecisionContext {
   mutate<T>(id: string, kind: string, observation: boolean, fn: (graph: Graph) => T): T;
   active(graph: Graph): void;
   validateSubmission(id: string, runId: string, body: { worker?: string }, kind: "decide"): unknown;
-  insertStep(graph: Graph, input: StepInput, creator: string, graphId?: string): Step;
+  insertStep(
+    graph: Graph,
+    input: StepInput,
+    creator: string,
+    graphId?: string,
+    archival?: boolean,
+    options?: { mergeNearDuplicates?: boolean },
+  ): Step;
   checkStepVersion(step: Step, expected?: number): void;
   applyAssetStates(graph: Graph, states: z.infer<typeof decideSchema>["assets"]): void;
   endRun(graph: Graph, worker: string, status: Run["status"], error?: string, runId?: string): void;
@@ -363,15 +370,22 @@ export function submitDecisionBatch(
       return { ...savedPlan, plan_id: body.plan_id, committed: true, reused: true };
     }
     const targetGraph = body.graph_id;
-    // Plan only appends Steps. Asset cooling/warming is a settlement mutation:
-    // a settle conflict must not leave the graph half-changed.
+    // Plan appends Steps, or folds a near-duplicate into an already-open one.
+    // Asset cooling/warming is a settlement mutation: a settle conflict must not
+    // leave the graph half-changed.
     const requestedIds = new Set(body.delete_nodes.map((node) => node.id));
-    const steps = body.steps.map((s) => {
-      const step = ctx.insertStep(g, s, body.worker, targetGraph);
-      if (deletion.ids.has(step.id) || requestedIds.has(step.id))
-        fail(422, "New plan conflicts with a node selected for deletion");
-      return step.id;
-    });
+    const steps = [
+      ...new Set(
+        body.steps.map((s) => {
+          // Near-duplicates of an already-open Step are merged into that Step
+          // instead of creating a second queue entry for the same investigation.
+          const step = ctx.insertStep(g, s, body.worker, targetGraph, false, { mergeNearDuplicates: true });
+          if (deletion.ids.has(step.id) || requestedIds.has(step.id))
+            fail(422, "New plan conflicts with a node selected for deletion");
+          return step.id;
+        }),
+      ),
+    ];
     const plan: DecisionPlanResult = {
       plan_id: `plan_${randomUUID()}`,
       steps,
@@ -483,6 +497,76 @@ export function submitDecisionBatch(
         continue;
       }
       if (!checkVersion("update", step, input.expected_version)) continue;
+      // Content rewrites are only safe before the Step starts: an executed Step's
+      // wording is the question that was answered, and a running one already acted.
+      // A resend of the identical text is a no-op, not a rewrite.
+      const currentFrom = new Set(step.from);
+      const nextFrom = input.from ? [...new Set(input.from)] : undefined;
+      const fromChanged =
+        nextFrom !== undefined && (nextFrom.length !== currentFrom.size || nextFrom.some((id) => !currentFrom.has(id)));
+      const rewriting =
+        (input.description !== undefined && input.description.trim() !== step.description) ||
+        (input.property !== undefined && input.property.trim() !== (step.property ?? "")) ||
+        (input.method_hint !== undefined && input.method_hint.trim() !== (step.method_hint ?? "")) ||
+        fromChanged;
+      if (rewriting) {
+        if (step.concluded_at || step.discarded) {
+          result.conflicts.push({
+            kind: "update",
+            id: input.id,
+            reason: "已结束的任务不能改写描述/属性/来源；请重开或新建任务",
+          });
+          continue;
+        }
+        if (step.worker) {
+          result.conflicts.push({
+            kind: "update",
+            id: input.id,
+            reason: "任务正在执行，结束或停止后才能改写描述/属性/来源",
+          });
+          continue;
+        }
+        if (step.blocked_run_id) {
+          result.conflicts.push({
+            kind: "update",
+            id: input.id,
+            reason: "任务等待人工检查，确认重试或重开后才能改写描述/属性/来源",
+          });
+          continue;
+        }
+        if (step.executed_at) {
+          result.conflicts.push({
+            kind: "update",
+            id: input.id,
+            reason: "任务已执行，不能改写原问题；请关闭并重开后再改写，或新建任务",
+          });
+          continue;
+        }
+      }
+      if (input.from) {
+        const invalid = input.from.filter(
+          (fid) => fid !== "goal" && !g.facts.some((fact) => fact.id === fid && !fact.deleted),
+        );
+        if (invalid.length) {
+          result.conflicts.push({
+            kind: "update",
+            id: input.id,
+            reason: `Invalid source fact ${invalid.map((fid) => `${fid}${ctx.sourceHint(g, fid)}`).join(", ")}`,
+          });
+          continue;
+        }
+        const unapproved = stepAssets(g, { asset_id: step.asset_id, from: input.from }).filter(
+          (assetId) => !g.assets.some((asset) => asset.id === assetId && asset.approval === "approved"),
+        );
+        if (unapproved.length) {
+          result.conflicts.push({
+            kind: "update",
+            id: input.id,
+            reason: `Asset must be approved before testing: ${unapproved.join(", ")}`,
+          });
+          continue;
+        }
+      }
       if (input.discard && step.concluded_at) {
         result.conflicts.push({ kind: "update", id: input.id, reason: "Step is already concluded" });
         continue;
@@ -689,9 +773,59 @@ export function submitDecisionBatch(
     }
     applyLeadDispositions(g, body);
     for (const { input, step } of updates) {
-      if (input.priority !== undefined) {
-        if (step.priority !== input.priority) step.version = versionOf(step) + 1;
+      let bump = false;
+      if (input.from !== undefined) {
+        const from = [...new Set(input.from)];
+        const current = new Set(step.from);
+        if (from.length !== step.from.length || from.some((id) => !current.has(id))) {
+          step.from = from;
+          bump = true;
+        }
+      }
+      if (input.description !== undefined) {
+        const text = input.description.trim();
+        if (text !== step.description) {
+          (step.edits ??= []).push({
+            at: now(),
+            editor: body.worker,
+            field: "description",
+            from: step.description,
+          });
+          step.description = text;
+          bump = true;
+        }
+      }
+      if (input.property !== undefined) {
+        const text = input.property.trim();
+        if (text !== (step.property ?? "")) {
+          if (step.property)
+            (step.edits ??= []).push({
+              at: now(),
+              editor: body.worker,
+              field: "property",
+              from: step.property,
+            });
+          step.property = text || undefined;
+          bump = true;
+        }
+      }
+      if (input.method_hint !== undefined) {
+        const text = input.method_hint.trim();
+        if (text !== (step.method_hint ?? "")) {
+          if (step.method_hint)
+            (step.edits ??= []).push({
+              at: now(),
+              editor: body.worker,
+              field: "method_hint",
+              from: step.method_hint,
+            });
+          step.method_hint = text || undefined;
+          bump = true;
+        }
+      }
+      if (input.priority !== undefined && step.priority !== input.priority) {
         step.priority = input.priority;
+        bump = true;
       }
       // 测试域与 focus 只是分类标签：补齐旧 Step 时不改 version，也不触发重新规划。
       if (input.test_domain && step.test_domain !== input.test_domain) step.test_domain = input.test_domain;
@@ -705,11 +839,12 @@ export function submitDecisionBatch(
         step.discarded = true;
         step.concluded_at = now();
         step.worker = null;
-        step.version = versionOf(step) + 1;
+        bump = true;
         if (input.reason) step.discard_reason = input.reason;
         // A discarded Step no longer answers its leads.
         reopenLeadsForStep(g, step.id);
       }
+      if (bump) step.version = versionOf(step) + 1;
       result.updated.push(step.id);
     }
     for (const { input, step } of closes) {

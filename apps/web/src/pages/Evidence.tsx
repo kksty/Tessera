@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Braces, Download, FileText, RefreshCw, Route, Search, X } from "lucide-react";
+import { Braces, Download, FileText, Heading, RefreshCw, Route, Search, X } from "lucide-react";
 import type { Evidence } from "../../../../packages/protocol/src/index.js";
 import { path } from "../api.js";
+import { RichText } from "../components/RichText.js";
 import { EmptyState, PageHeader, Skeleton } from "../components/ui.js";
 import { scopeForEvidence } from "../graph-scope.js";
 import { fmt, fmtBytes, fromNow } from "../format.js";
+import { isMarkdownEvidence } from "../markdown.js";
 import { useWorkspace } from "../workspace.js";
 import { useViewState } from "../view-state.js";
 
@@ -34,6 +36,8 @@ export function EvidencePage() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [pretty, setPretty] = useState(true);
+  /** auto：按正文判定；raw / rendered：读者在本页显式选择。 */
+  const [mode, setMode] = useState<"auto" | "raw" | "rendered">("auto");
   const generation = useRef(0);
 
   const select = (next: Evidence) => {
@@ -61,6 +65,7 @@ export function EvidencePage() {
 
   useEffect(() => {
     setPretty(true);
+    setMode("auto");
   }, [itemId]);
 
   useEffect(() => {
@@ -124,6 +129,12 @@ export function EvidencePage() {
     }
   }, [content]);
 
+  // 显式 MIME / 扩展名优先；.txt 与进程日志再按「两级标题 + 空行」识别文档。
+  const detectedMarkdown = useMemo(() => (item ? isMarkdownEvidence(item, content) : false), [item, content]);
+  const markdownReady = !isImage && !loading && parsedJson === null && !!content;
+  const renderMarkdown =
+    ws.markdownRendering && markdownReady && (mode === "auto" ? detectedMarkdown : mode === "rendered");
+
   const displayText = pretty && parsedJson !== null ? JSON.stringify(parsedJson, null, 2) : content;
   const lines = displayText ? displayText.split("\n").length : 0;
   const contentHref = item ? "/api" + path(projectId, `/evidence/${encodeURIComponent(item.id)}/content`) : "";
@@ -174,6 +185,16 @@ export function EvidencePage() {
         <span className="toolbar-hint">
           只读归档 · 只列出被 Fact / Finding / Review / 资产 / Lead / 完成记录引用的原件
         </span>
+        <label className="evidence-render-switch" title="关闭后所有证据一律显示未渲染原文">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={ws.markdownRendering}
+            onChange={(event) => ws.setMarkdownRendering(event.target.checked)}
+          />
+          <span className="evidence-switch-track" aria-hidden="true" />
+          <span className="evidence-switch-label">Markdown 渲染</span>
+        </label>
       </div>
 
       {graph.evidence.length ? (
@@ -319,13 +340,25 @@ export function EvidencePage() {
                   </div>
                 </dl>
 
-                <section className="evidence-content" aria-label="原始内容">
+                <section className="evidence-content" aria-label={renderMarkdown ? "Markdown 渲染" : "原始内容"}>
                   <header className="evidence-content-head">
-                    <h3>原始内容</h3>
+                    <h3>{renderMarkdown ? "Markdown 渲染" : "原始内容"}</h3>
                     <div className="evidence-content-tools">
                       <span className="mono">
                         {isImage ? fmtBytes(item.size) : `${lines} 行 · ${fmtBytes(item.size)}`}
                       </span>
+                      {ws.markdownRendering && markdownReady && (
+                        <button
+                          type="button"
+                          className="button subtle small"
+                          aria-pressed={renderMarkdown}
+                          title={renderMarkdown ? "显示未排版的原文" : "把这段正文按 Markdown 排版"}
+                          onClick={() => setMode(renderMarkdown ? "raw" : "rendered")}
+                        >
+                          <Heading size={12} aria-hidden="true" />
+                          {renderMarkdown ? "查看原文" : "渲染此条"}
+                        </button>
+                      )}
                       {parsedJson !== null && (
                         <button
                           type="button"
@@ -362,6 +395,15 @@ export function EvidencePage() {
                     <div className="evidence-loading">
                       <Skeleton rows={6} />
                     </div>
+                  ) : renderMarkdown ? (
+                    <>
+                      <div className="evidence-doc">
+                        <RichText text={content} preserveLines />
+                      </div>
+                      <p className="evidence-render-note">
+                        Markdown 渲染只改变阅读排版；哈希、检索与下载始终对应原始字节。
+                      </p>
+                    </>
                   ) : (
                     <pre className="evidence-pre">{displayText || "（空内容）"}</pre>
                   )}

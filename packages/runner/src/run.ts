@@ -671,7 +671,7 @@ async function runJobInternal(
       tool(
         "submit_decisions",
         "Submit decisions in one call, or in bounded parts under the same Decide run: new steps, priority updates, closes, reopens, finding_merges, finding_updates, delete_nodes, goals or complete. " +
-          "New Steps belong in steps[] with from/description/property; updates[] only addresses existing Step ids and every entry needs id. " +
+          "New Steps belong in steps[] with from/description/property; updates[] only addresses existing Step ids and every entry needs id. An unstarted Step can be refined in place through updates description/property/method_hint/from; a near-duplicate of an open Step is merged into it instead of creating a second Step. " +
           "Large settlements can be sent in ordered parts with more:true: plan and Step settlement first, then finding_merges/finding_updates, and finish with complete or the last settlement without more. A part with more:true is applied and keeps the run open; only the final part ends it. A completion cannot carry more. " +
           "The runtime also splits an oversized single call into ordered parts automatically, but that cannot undo model output already generated. " +
           "delete_nodes takes [{id,reason,cascade:'none'|'downstream'}]; default none deletes only the listed IDs, downstream deletes ALL reachable dependents even if they have other retained sources, and never shared Evidence or assets alone. " +
@@ -681,7 +681,7 @@ async function runJobInternal(
           "withdraw:true withdraws a Finding; restore:true with changes restores a withdrawn ID as a new version for review. An operator-approved current version cannot be withdrawn or merged away as a source; the operator must withdraw the approval first. " +
           "hint_ids on a Step carries an active Hint; hint_notes records advice and does not close it. complete stays rejected until a human confirms every open Hint in the hint panel. " +
           "complete.coverage accounts for every coverage_surfaces entry: tested requires evidence_ids, waived requires a reason, na means it is not a testable surface. Omitted surfaces reject the settlement and name the missing entries. " +
-          "Open leads block completion: lead_ids on a new Step or lead_dispositions with waiver_reason. " +
+          "Open leads block completion: lead_ids on a new Step, lead_dispositions.step_id on an existing Step, or lead_dispositions with waiver_reason. " +
           "Review planning_issues block completion too: complete.review_issues accounts for each with its review_id and zero-based issue_index. addressed requires a Step executed and concluded after that Review; waived requires a reason, and IDOR / authorization / PII issues can only be waived by the operator. " +
           "A successful final settlement ends the Decide run and blocks further tool calls. " +
           "New Steps are planned first and are never rolled back by a settlement conflict. Pass expected_version (the v shown in the entry) for every update/close/reopen. " +
@@ -1633,13 +1633,16 @@ async function runJobInternal(
     } else if (job.kind === "review") await submit(`/findings/${job.finding_id}/review`, review!, true);
     else {
       const data = execution!;
+      // `read_only` is an operator directive, not a model decision: a normal Run
+      // that echoed it must still commit its observations instead of tripping the
+      // server's read-only guard, and only recovery may skip marking the Step.
+      data.read_only = !!recoverySession;
       // A read-only recovery session may not smuggle new observations through its
       // final payload; only the summary of what was already recorded is writable.
       if (recoverySession) {
         data.facts = [];
         data.findings = [];
         data.leads = [];
-        data.read_only = true;
         data.summary += "\n只读恢复：未写入新事实、发现或线索，也不把 Step 记为已执行；仅根据已有材料收尾。";
       }
       if (processes) {

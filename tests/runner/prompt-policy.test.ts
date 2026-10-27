@@ -28,5 +28,7 @@ test("任务提示词不规定何时删除或使用工具，只保留数据契�
   // 保留的是可验证的字段与协议契约，而不是取舍建议。
   assert.match(decide, /coverage_surfaces/);
   assert.match(decide, /hint_ids/);
+  assert.match(decide, /合并到已有 Step/, "Decide must know that a near-duplicate is merged");
+  assert.match(decide, /lead_dispositions[^。]*step_id/, "an existing Step may carry a lead");
   assert.match(execute, /traffic_ids/);
 });

@@ -262,6 +262,12 @@ const decisionFields = {
         priority: z.number().int().optional(),
         test_domain: testDomainSchema.optional(),
         focus: stepFocusSchema.optional(),
+        /** In-place refinement of an unstarted Step; avoids a duplicate Step for a better wording. */
+        description: text.optional(),
+        property: text.optional(),
+        method_hint: text.optional(),
+        /** Re-ground an unstarted Step in the Facts that actually support it. */
+        from: z.array(text).min(1).optional(),
         discard: z.boolean().default(false),
         reason: text.optional(),
         expected_version: z.number().int().positive().optional(),

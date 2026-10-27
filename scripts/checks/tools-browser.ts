@@ -112,6 +112,12 @@ try {
   await page.goto(`${app.listeningOrigin}/#/projects/${projectId}/overview`);
   const card = page.locator("#overview-tools");
   await card.waitFor();
+  const order = await page.evaluate(() =>
+    Array.from(document.querySelectorAll(".project-overview-grid, .split-grid, #overview-tools")).map(
+      (element) => element.id || element.className.split(" ")[0],
+    ),
+  );
+  assert.deepEqual(order, ["project-overview-grid", "split-grid", "overview-tools"]);
   await card.getByText("bash", { exact: true }).waitFor();
   const totals = card.locator(".tool-leaderboard-totals");
   assert.match(await totals.innerText(), /16\s*次调用/);

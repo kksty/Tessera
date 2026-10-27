@@ -1,7 +1,20 @@
 import Fastify, { LogController } from "fastify";
 import staticFiles from "@fastify/static";
-import { closeSync, createReadStream, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { resolve, dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { pipeline } from "node:stream/promises";
 import { z, ZodError } from "zod";
 import { stringify } from "yaml";
 import { Store, DomainError } from "../../../packages/core/src/store.js";
@@ -41,6 +54,7 @@ import { internalToken, projectToken, validInternalToken } from "../../../packag
 import { readWorkspaceSecret, workspaceSignature } from "../../../packages/protocol/src/workspace-auth.js";
 import { OperatorAuth, clearedCookie, cookieValue, operatorAuthFile, sessionCookie } from "./operator-auth.js";
 import { Reports } from "../../../packages/core/src/reports.js";
+import { bundleTempRoot, exportProjectBundle, importProjectBundle } from "../../../packages/core/src/bundle.js";
 import { trafficRecordSchema, trafficStatusSchema } from "../../../packages/protocol/src/traffic.js";
 import { DiagnosticRecords, diagnosticSchema, diagnosticBuild } from "../../../packages/core/src/diagnostics.js";
 import { controlPlane } from "../../../packages/core/src/control-plane.js";
@@ -75,6 +89,11 @@ export function buildApp(
     bodyLimit: 24 * 1024 * 1024,
   });
   requestLogging(app, () => [workerToken, runtime.value.model.api_key, runtime.value.review_model?.api_key || ""]);
+  // Project bundles are streamed ZIPs, not JSON: keep the request stream intact so
+  // a multi-gigabyte import never has to sit in the Fastify body buffer.
+  app.addContentTypeParser(["application/zip", "application/octet-stream"], (_request, payload, done) => {
+    done(null, payload);
+  });
   registerModelRelay(app, store, runtime, workerToken);
   // Review scope is a persisted platform setting; mirror it into the store so
   // submission, revision and scheduling all apply the same rule.
@@ -239,6 +258,70 @@ export function buildApp(
         const graph = store.create(createProjectSchema.parse(req.body), runtime.value.volume_prefix);
         if (!runtime.value.model.id || !runtime.value.model.base_url) store.status(graph.project.id, "stopped");
         reply.code(201).send(store.get(graph.project.id));
+      });
+      // A project bundle is the whole project: graph, events, diagnostics, Runs,
+      // receipts, reports, traffic bodies and evidence originals. Archived entries
+      // are inflated during export so the archive is readable without this database.
+      api.get<{ Params: { id: string } }>("/projects/:id/bundle", async (req, reply) => {
+        operatorCheck(req);
+        store.get(req.params.id);
+        const directory = bundleTempRoot(store);
+        mkdirSync(directory, { recursive: true });
+        const file = join(directory, `export-${req.params.id}-${randomUUID()}.zip`);
+        try {
+          const manifest = await exportProjectBundle(store, req.params.id, file);
+          reply.header("Content-Disposition", `attachment; filename="${req.params.id}-bundle.zip"`);
+          reply.header("X-Content-Type-Options", "nosniff");
+          reply.header("X-Tessera-Bundle-Warnings", String(manifest.warnings.length));
+          reply.header("X-Tessera-Bundle-Evidence-Missing", String(manifest.missing_evidence.length));
+          const stream = createReadStream(file);
+          const cleanup = () => rmSync(file, { force: true });
+          stream.once("close", cleanup);
+          stream.once("error", cleanup);
+          return reply.type("application/zip").send(stream);
+        } catch (error) {
+          rmSync(file, { force: true });
+          throw error;
+        }
+      });
+      api.post("/projects/import", async (req, reply) => {
+        operatorCheck(req);
+        const upload = req.body as unknown as NodeJS.ReadableStream | undefined;
+        if (!upload || typeof (upload as any)[Symbol.asyncIterator] !== "function")
+          throw new DomainError(415, "请上传 ZIP 格式的项目备份文件");
+        const configured = Number(process.env.TESSERA_IMPORT_MAX_BYTES || 4 * 1024 * 1024 * 1024);
+        const limit = Number.isFinite(configured) && configured > 0 ? configured : 4 * 1024 * 1024 * 1024;
+        const directory = bundleTempRoot(store);
+        mkdirSync(directory, { recursive: true });
+        const file = join(directory, `upload-${randomUUID()}.zip`);
+        let received = 0;
+        try {
+          await pipeline(async function* () {
+            for await (const chunk of upload as AsyncIterable<Buffer>) {
+              received += chunk.length;
+              if (received > limit) throw new DomainError(413, "备份文件超过导入大小上限（TESSERA_IMPORT_MAX_BYTES）");
+              yield chunk;
+            }
+          }, createWriteStream(file));
+        } catch (error) {
+          rmSync(file, { force: true });
+          if (error instanceof DomainError) throw error;
+          throw new DomainError(400, "备份文件上传失败");
+        }
+        try {
+          if (!received) throw new DomainError(422, "备份文件为空");
+          const result = await importProjectBundle(store, file);
+          // Same rule as project creation: an active project without a model would
+          // only fail claims. Keep it stopped until the operator configures one.
+          if (result.status === "active" && (!runtime.value.model.id || !runtime.value.model.base_url)) {
+            store.status(result.project_id, "stopped");
+            result.status = "stopped";
+          }
+          reply.code(201);
+          return result;
+        } finally {
+          rmSync(file, { force: true });
+        }
       });
       api.get<{ Params: { id: string } }>("/projects/:id", (req) => {
         projectReadCheck(req, req.params.id);

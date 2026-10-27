@@ -1,17 +1,9 @@
 import { useMemo } from "react";
-import {
-  ArrowRight,
-  FolderKanban,
-  Pause,
-  Plus,
-  Search,
-  ShieldAlert,
-  ShieldCheck,
-  Clock3,
-} from "lucide-react";
+import { ArrowRight, FolderKanban, Pause, Plus, Search, ShieldAlert, ShieldCheck, Clock3 } from "lucide-react";
 import type { ProjectSummary } from "../../../../packages/protocol/src/index.js";
 import { fromNow } from "../format.js";
 import { Card, EmptyState, Kpi, PageHeader, Segmented, StatusPill } from "../components/ui.js";
+import { ImportProject } from "../components/ImportProject.js";
 import { ProjectExtras } from "../WorkbenchTools.js";
 import { api, path } from "../api.js";
 import { useWorkspace } from "../workspace.js";
@@ -40,7 +32,10 @@ const numCell = (value: number, suffix?: string) => (
 export function ProjectsPage() {
   const ws = useWorkspace();
   const { projects } = ws;
-  const [filter, setFilter] = useViewState<"all" | "active" | "stopped" | "completed">("workspace:projects:filter", "all");
+  const [filter, setFilter] = useViewState<"all" | "active" | "stopped" | "completed">(
+    "workspace:projects:filter",
+    "all",
+  );
   const [query, setQuery] = useViewState("workspace:projects:query", "");
 
   const filtered = useMemo(() => {
@@ -54,10 +49,7 @@ export function ProjectsPage() {
 
   const count = (status: string) =>
     status === "all" ? projects.length : projects.filter((project) => project.status === status).length;
-  const totalConfirmed = projects.reduce(
-    (sum, project) => sum + (project.confirmed_finding_count ?? 0),
-    0,
-  );
+  const totalConfirmed = projects.reduce((sum, project) => sum + (project.confirmed_finding_count ?? 0), 0);
   const totalFindings = projects.reduce((sum, project) => sum + project.finding_count, 0);
   const totalPending = ws.reviewFindings.length;
   const totalPendingAssets = projects.reduce((sum, project) => sum + project.pending_asset_count, 0);
@@ -70,6 +62,7 @@ export function ProjectsPage() {
         description="每个项目是一张可回查的探索图：任务、路径、证据与结论都留在里面。"
         actions={
           <>
+            <ImportProject />
             <button
               type="button"
               className="button ghost"
@@ -79,9 +72,7 @@ export function ProjectsPage() {
                   Promise.all(
                     projects
                       .filter((project) => project.status === "active")
-                      .map((project) =>
-                        api(path(project.id, "/status"), { status: "stopped" }, "PUT"),
-                      ),
+                      .map((project) => api(path(project.id, "/status"), { status: "stopped" }, "PUT")),
                   ),
                 )
               }
@@ -138,12 +129,14 @@ export function ProjectsPage() {
           ariaLabel="项目筛选"
           value={filter}
           onChange={setFilter}
-          options={[
-            ["all", `全部 ${count("all")}`],
-            ["active", `运行中 ${count("active")}`],
-            ["stopped", `已暂停 ${count("stopped")}`],
-            ["completed", `已完成 ${count("completed")}`],
-          ] as const}
+          options={
+            [
+              ["all", `全部 ${count("all")}`],
+              ["active", `运行中 ${count("active")}`],
+              ["stopped", `已暂停 ${count("stopped")}`],
+              ["completed", `已完成 ${count("completed")}`],
+            ] as const
+          }
         />
         <label className="search-input">
           <Search size={14} aria-hidden="true" />
@@ -199,9 +192,16 @@ export function ProjectsPage() {
                     </span>
                   </td>
                   <td className="projects-status-cell">
-                    <StatusPill value={project.status} label={project.search_state === "reviewing" ? "搜索结束、审核中" : undefined} />
+                    <StatusPill
+                      value={project.status}
+                      label={project.search_state === "reviewing" ? "搜索结束、审核中" : undefined}
+                    />
                   </td>
-                  <td className="num" data-label="已确认" data-zero={(project.confirmed_finding_count ?? 0) === 0 || undefined}>
+                  <td
+                    className="num"
+                    data-label="已确认"
+                    data-zero={(project.confirmed_finding_count ?? 0) === 0 || undefined}
+                  >
                     {project.confirmed_finding_count ?? 0}
                     {project.finding_count > (project.confirmed_finding_count ?? 0) && (
                       <span className="cell-sub">共 {project.finding_count} 条发现</span>
@@ -240,7 +240,14 @@ export function ProjectsPage() {
             title="没有匹配的项目"
             desc="调整筛选条件或搜索关键词。"
             action={
-              <button type="button" className="button" onClick={() => { setFilter("all"); setQuery(""); }}>
+              <button
+                type="button"
+                className="button"
+                onClick={() => {
+                  setFilter("all");
+                  setQuery("");
+                }}
+              >
                 清除筛选
               </button>
             }

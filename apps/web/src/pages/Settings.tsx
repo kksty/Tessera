@@ -131,6 +131,7 @@ export function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionKey>("model");
   const saveRef = useRef<() => void>(() => {});
   const spyPause = useRef(0);
+  const navRef = useRef<HTMLElement>(null);
   const selectedLogProject = ws.projects.some((project) => project.id === logProject)
     ? logProject
     : ws.projects[0]?.id || "";
@@ -294,8 +295,16 @@ export function SettingsPage() {
     let frame = 0;
     const measure = () => {
       frame = 0;
+      // 只有导航真正吸顶时才补上 .content 的上内边距；否则这块背景会盖住
+      // 页头的模型状态行，表现为标签被裁掉一半。
+      const nav = navRef.current;
+      if (nav) {
+        const paddingTop = Number.parseFloat(getComputedStyle(root).paddingTop) || 0;
+        const stuck = nav.getBoundingClientRect().top <= root.getBoundingClientRect().top + paddingTop + 0.5;
+        nav.dataset.stuck = stuck ? "true" : "false";
+      }
       if (Date.now() < spyPause.current) return;
-      const navHeight = document.querySelector<HTMLElement>(".settings-nav")?.getBoundingClientRect().height ?? 0;
+      const navHeight = nav?.getBoundingClientRect().height ?? 0;
       const threshold = root.getBoundingClientRect().top + navHeight + 32;
       let current: SectionKey = SECTIONS[0][0];
       for (const [key] of SECTIONS) {
@@ -380,7 +389,7 @@ export function SettingsPage() {
         }
       />
 
-      <nav className="settings-nav" aria-label="设置分区">
+      <nav className="settings-nav" aria-label="设置分区" ref={navRef}>
         {SECTIONS.map(([key, label]) => (
           <button
             key={key}

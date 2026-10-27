@@ -12,11 +12,13 @@ import { api, path, ApiError } from "./api.js";
 import { authLogout, type Session } from "./auth.js";
 import { brand } from "./brand.js";
 import { CommandPalette } from "./components/CommandPalette.js";
+import { RichText } from "./components/RichText.js";
 import { Drawer, Modal, Toast } from "./components/ui.js";
 import { Sidebar, Topbar } from "./components/Shell.js";
 import { ProjectExtras } from "./WorkbenchTools.js";
 import { ProjectUsage } from "./components/ProjectUsage.js";
 import { localPrefs } from "./layouts.js";
+import { isMarkdownEvidence } from "./markdown.js";
 import { readPreference, writePreference } from "./preferences.js";
 import { SecurityOverviewPage } from "./pages/SecurityOverview.js";
 import { AllFindingsPage } from "./pages/AllFindings.js";
@@ -118,6 +120,13 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   const [theme, setThemeState] = useState<"light" | "dark">(() =>
     readPreference("tessera.theme") === "dark" ? "dark" : "light",
   );
+  const [markdownRendering, setMarkdownRenderingState] = useState(
+    () => readPreference("tessera.evidenceMarkdown") !== "false",
+  );
+  const setMarkdownRendering = (value: boolean) => {
+    setMarkdownRenderingState(value);
+    writePreference("tessera.evidenceMarkdown", String(value));
+  };
   const [collapsed, setCollapsed] = useState(() => readPreference("tessera.sidebarCollapsed") === "true");
   const [mobileNav, setMobileNav] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -835,6 +844,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     reviewFindings,
     config,
     theme,
+    markdownRendering,
     selected: selectedValue,
     selectedNodes,
     selectedFacts,
@@ -899,6 +909,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     clearFocusFinding: () => setFocusFinding(null),
     setPaletteOpen,
     setTheme: setThemeState,
+    setMarkdownRendering,
   };
 
   const logout = () => {
@@ -1094,6 +1105,12 @@ export function App({ session, setSession }: { session: Session; setSession: (se
                 alt={evidencePreview.item.title}
                 src={`/api${path(id!, `/evidence/${evidencePreview.item.id}/content`)}`}
               />
+            ) : markdownRendering &&
+              evidencePreview.text &&
+              isMarkdownEvidence(evidencePreview.item, evidencePreview.text) ? (
+              <div className="evidence-drawer-doc">
+                <RichText text={evidencePreview.text} preserveLines />
+              </div>
             ) : (
               <pre className="export-preview">{evidencePreview.text || "读取中…"}</pre>
             )}

@@ -512,6 +512,94 @@ async function checkCausalProvenance(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
+async function checkBoardSummary(page: Page) {
+  // 独立小项目：保留一个未关闭任务，验证域框里的任务仍是圆圈「?」，
+  // 同时不改变主用例项目的待办/菜单状态。
+  const summaryId = store.create(
+    createProjectSchema.parse({
+      title: "黑板域分框圆圈验收",
+      origin: "https://example.test",
+      goal: "验证域框内任务仍用圆圈表示",
+    }),
+  ).project.id;
+  const summaryStep = store.manualStep(summaryId, {
+    from: ["origin"],
+    description: "保持开放的任务圆圈",
+    creator: "human",
+    claim: true,
+    test_domain: "other",
+  });
+  store.fact(summaryId, summaryStep.id, {
+    worker: "human",
+    description: "域内合成事实",
+    evidence_ids: [],
+  });
+  await goRoute(page, `projects/${summaryId}/blackboard`);
+  await page.locator(".graph-canvas canvas").first().waitFor();
+  await page.getByRole("button", { name: "按测试域汇总", exact: true }).click();
+  await page.locator('.graph-canvas[data-layout-ready="preset"]').waitFor();
+  assert.equal(await page.locator("main[role=alert]").count(), 0, "测试域分框不能整页失败");
+  const frames = await page.locator(".graph-canvas").evaluate((el) => {
+    const cy = (el as unknown as { _cyreg: { cy: any } })._cyreg.cy;
+    return cy
+      .nodes()
+      .filter((node: any) => node.data("frame"))
+      .map((node: any) => ({ id: node.id(), label: String(node.data("label") || "") }));
+  });
+  assert.ok(frames.length > 0, "域分框至少有一个框");
+  for (const frame of frames) {
+    assert.match(frame.label, /个节点/, `${frame.id} 的数量写成「N 个节点」`);
+    assert.ok(!frame.label.includes("×"), `${frame.id} 不再使用不解释的乘号`);
+  }
+  const stepNode = await page.locator(".graph-canvas").evaluate((el) => {
+    const cy = (el as unknown as { _cyreg: { cy: any } })._cyreg.cy;
+    const node = cy
+      .nodes()
+      .filter((item: any) => item.data("type") === "step" && item.data("group"))
+      .first();
+    if (!node.length) return null;
+    return { shape: node.style("shape"), width: node.width(), label: String(node.data("label") || "") };
+  });
+  assert.ok(stepNode, "域框里保留了真实任务节点");
+  assert.equal(stepNode.shape, "ellipse", "任务在域框里仍是圆圈，不能变成方框");
+  assert.equal(stepNode.label, "?", "任务仍显示原来的问号");
+  assert.ok(stepNode.width <= 40, "任务保持原来的圆圈尺寸");
+  // 框里的真实节点仍可点开详情，不需要先展开框。
+  const grouped = await page.locator(".graph-canvas").evaluate((el) => {
+    const cy = (el as unknown as { _cyreg: { cy: any } })._cyreg.cy;
+    const node = cy
+      .nodes()
+      .filter((item: any) => item.data("grouped"))
+      .first();
+    if (!node.length) return null;
+    node.emit("tap");
+    return { id: node.id(), label: String(node.data("label") || "") };
+  });
+  assert.ok(grouped, "域框内保留了真实节点");
+  await page.locator(".detail-panel .detail-content").waitFor();
+
+  // 类型汇总仍可展开；任何一条悬空边都不能再触发「工作区加载失败」。
+  await page.getByLabel("汇总方式").selectOption("type");
+  await page.waitForTimeout(600);
+  const expanded = await page.locator(".graph-canvas").evaluate((el) => {
+    const cy = (el as unknown as { _cyreg: { cy: any } })._cyreg.cy;
+    const node = cy
+      .nodes()
+      .filter((item: any) => item.data("type") === "summary" && !item.data("frame"))
+      .first();
+    if (!node.length) return null;
+    node.emit("tap");
+    return node.id();
+  });
+  assert.ok(expanded, "类型汇总存在可展开的框");
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator("main[role=alert]").count(), 0, "展开类型框不能整页失败");
+  await page.screenshot({ path: join(output, "board-summary.png"), fullPage: true });
+
+  await page.getByRole("button", { name: "退出汇总", exact: true }).click();
+  await page.waitForTimeout(600);
+}
+
 async function checkSearchCompletion(page: Page) {
   const project = store.create(
     createProjectSchema.parse({
@@ -605,7 +693,8 @@ async function checkProjectMenus(page: Page) {
     });
     assert.equal(geometry.insideViewport, true, `${name}: menu stays within the viewport`);
     assert.equal(geometry.portal, true, `${name}: menu escapes clipping and stacking contexts`);
-    assert.deepEqual(geometry.visibleItems, [true, true, true], `${name}: every action is visible and clickable`);
+    assert.ok(geometry.visibleItems.length >= 3, `${name}: every project action is present`);
+    assert.ok(geometry.visibleItems.every(Boolean), `${name}: every action is visible and clickable`);
     await page.screenshot({ path: join(output, `project-menu-${name}.png`), fullPage: true });
   }
   for (const theme of ["light", "dark"]) {
@@ -628,7 +717,7 @@ async function checkProjectMenus(page: Page) {
       await page.keyboard.press("ArrowDown");
       assert.equal(
         await menu
-          .getByRole("menuitem", { name: "导出项目数据", exact: true })
+          .getByRole("menuitem", { name: "导出完整备份（含日志）", exact: true })
           .evaluate((item) => item === document.activeElement),
         true,
       );
@@ -888,6 +977,7 @@ try {
   await checkWorkspaceReviewQueue(page);
   await checkFindingReviews(page);
   await checkCausalProvenance(page);
+  await checkBoardSummary(page);
   await checkSearchCompletion(page);
   await checkProjectMenus(page);
 

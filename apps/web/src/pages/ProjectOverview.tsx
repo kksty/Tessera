@@ -526,8 +526,6 @@ export function ProjectOverviewPage() {
         </Card>
       </div>
 
-      <ToolLeaderboard graph={graph} />
-
       <div className="split-grid">
         <Card
           title="重点漏洞"
@@ -600,6 +598,8 @@ export function ProjectOverviewPage() {
           )}
         </Card>
       </div>
+
+      <ToolLeaderboard graph={graph} />
 
       {leads.length > 0 && (
         <Card

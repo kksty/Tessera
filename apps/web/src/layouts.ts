@@ -11,13 +11,8 @@ export function localPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem("tessera.localPrefs") || "{}");
     return {
-      actor_name:
-        typeof p.actor_name === "string" && p.actor_name.trim()
-          ? p.actor_name
-          : "Human",
-      layout_mode: layoutOptions.some(([v]) => v === p.layout_mode)
-        ? p.layout_mode
-        : "dagre_tb",
+      actor_name: typeof p.actor_name === "string" && p.actor_name.trim() ? p.actor_name : "Human",
+      layout_mode: layoutOptions.some(([v]) => v === p.layout_mode) ? p.layout_mode : "dagre_tb",
     };
   } catch {
     return { actor_name: "Human", layout_mode: "dagre_tb" };
@@ -27,49 +22,49 @@ export async function applyLayout(c: Core, mode: string, fit = true, current = (
   const direction = mode.endsWith("_lr") ? "LR" : "TB";
   // 所有选项均保留因果方向；不因图宽而改用力导向。
   let options: any;
-  if (mode.startsWith("klay")) {
-    const [{ default: cytoscape }, plugin] = await Promise.all([
-      import("cytoscape"), import("cytoscape-klay"),
-    ]);
+  if (mode === "preset") {
+    // 域分框的节点位置已由 domainSummaryElements 按卡片算好；这里只负责适应窗口。
+    options = { name: "preset", fit, padding: 28, animate: false };
+  } else if (mode.startsWith("klay")) {
+    const [{ default: cytoscape }, plugin] = await Promise.all([import("cytoscape"), import("cytoscape-klay")]);
     cytoscape.use(plugin.default);
     options = {
       name: "klay",
       fit,
-      padding: 42,
+      padding: 28,
       animate: false,
       klay: {
         direction: direction === "LR" ? "RIGHT" : "DOWN",
-        spacing: 62,
+        spacing: 48,
         nodeLayering: "NETWORK_SIMPLEX",
       },
     };
   } else if (mode.startsWith("elk")) {
-    const [{ default: cytoscape }, plugin] = await Promise.all([
-      import("cytoscape"), import("cytoscape-elk"),
-    ]);
+    const [{ default: cytoscape }, plugin] = await Promise.all([import("cytoscape"), import("cytoscape-elk")]);
     cytoscape.use(plugin.default);
     options = {
       name: "elk",
       fit,
-      padding: 42,
+      padding: 28,
       animate: false,
       elk: {
         algorithm: "layered",
         "elk.direction": direction === "LR" ? "RIGHT" : "DOWN",
-        "elk.spacing.nodeNode": "58",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "88",
+        "elk.spacing.nodeNode": "44",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "68",
+        "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       },
     };
   } else
     options = {
       name: "dagre",
       rankDir: direction,
-      nodeSep: 40,
-      rankSep: 88,
-      edgeSep: 20,
+      nodeSep: 30,
+      rankSep: 68,
+      edgeSep: 12,
       ranker: "network-simplex",
       fit,
-      padding: 42,
+      padding: 28,
       animate: false,
     };
   if (c.destroyed() || !current()) return;
@@ -78,7 +73,8 @@ export async function applyLayout(c: Core, mode: string, fit = true, current = (
     layout.one("layoutstop", () => resolve());
     layout.run();
   });
-  if (fit) raiseToReadableZoom(c);
+  // 域分框先保证整张图可见；强行抬到可读字号会把框和标题裁掉。
+  if (fit && mode !== "preset") raiseToReadableZoom(c);
 }
 
 /**

@@ -183,7 +183,7 @@ export function NodeDetail() {
                   }}
                 />
                 {!!displayStep.edits?.length && (
-                  <p className="detail-meta">已被人改写 {displayStep.edits.length} 次，原文保留在事件流中。</p>
+                  <p className="detail-meta">已改写 {displayStep.edits.length} 次，原文保留在事件流中。</p>
                 )}
               </Field>
             )}
@@ -286,12 +286,28 @@ export function NodeDetail() {
 
       {displayFact && (
         <>
-          <Section title="观测">
+          {!isOrigin && displayFact.conclusion && displayFact.description !== displayFact.conclusion && (
+            <Section title="观测正文">
+              <p className="detail-text detail-fact-body">{prettyText(displayFact.description)}</p>
+              {displayFact.conclusion_inferred && <p className="detail-meta">该结论由正文推断，不是显式提交的结论。</p>}
+            </Section>
+          )}
+          <Section title="观测信息">
             <Field label="观测状态">
               <p className="detail-text">
-                {displayFact.status === "disputed" ? "审核已指出结论问题，待重新验证" : "观测事实"}
+                {isOrigin
+                  ? "项目起点"
+                  : displayFact.status === "disputed"
+                    ? "审核已指出结论问题，待重新验证"
+                    : displayFact.status === "not_observed"
+                      ? "未观测到（负面结论）"
+                      : "观测事实"}
               </p>
             </Field>
+            {displayFact.status === "not_observed" &&
+              (!displayFact.request || !displayFact.parameter_sources?.length) && (
+                <p className="detail-meta">负面结论缺少请求或参数溯源，Review 可能要求补证。</p>
+              )}
             {!isOrigin && (
               <Field label="生产来源">
                 {provenance?.ambiguous && (
@@ -313,8 +329,50 @@ export function NodeDetail() {
                 )}
               </Field>
             )}
+            {displayFact.asset_id && (
+              <Field label="资产">
+                <code className="mono">{displayFact.asset_id}</code>
+              </Field>
+            )}
             {displayFact.created_at && <p className="detail-meta">观测于 {fmt(displayFact.created_at)}</p>}
           </Section>
+          {!!displayFact.objects?.length && (
+            <Section title="影响对象">
+              <ul className="detail-fact-objects">
+                {displayFact.objects.map((object) => (
+                  <li key={object}>
+                    <code className="mono">{object}</code>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+          {(displayFact.request || !!displayFact.parameter_sources?.length) && (
+            <Section title="请求与参数溯源">
+              {displayFact.request && (
+                <Field label="请求">
+                  <p className="detail-text mono detail-request">
+                    {displayFact.request.method.toUpperCase()} {displayFact.request.url}
+                  </p>
+                </Field>
+              )}
+              {!!displayFact.parameter_sources?.length && (
+                <Field label="参数来源">
+                  <ul className="detail-fact-params">
+                    {displayFact.parameter_sources.map((source) => (
+                      <li key={`${source.parameter}-${source.source}`}>
+                        <code className="mono">{source.parameter}</code>
+                        <span className="detail-param-source">← {source.source}</span>
+                        {!!source.evidence_ids?.length && (
+                          <span className="detail-param-evidence">{ws.linkEvidence(source.evidence_ids)}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </Field>
+              )}
+            </Section>
+          )}
           {!!displayFact.evidence_ids.length && (
             <Section title="证据">
               <div className="detail-evidence-list">{ws.linkEvidence(displayFact.evidence_ids)}</div>

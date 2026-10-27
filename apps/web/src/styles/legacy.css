@@ -1171,6 +1171,15 @@ button.danger.subtle:hover {
   margin-top: 8px;
 }
 
+/* 证据正文：解析标题/列表，但保留普通段落里的换行与缩进，不把原始报文折成一行。 */
+.rich-text-lines p,
+.rich-text-lines li,
+.rich-text-lines blockquote p,
+.rich-text-lines th,
+.rich-text-lines td {
+  white-space: pre-wrap;
+}
+
 .rich-text h1,
 .rich-text h2,
 .rich-text h3,

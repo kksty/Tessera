@@ -39,11 +39,24 @@ const isTableSeparator = (line: string) => /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/.te
 // 审核记录常用「一、二、」分节，单独识别能让长记录有清晰的段落层级。
 const isChineseHeading = (line: string) => /^[一二三四五六七八九十百]+、/.test(line);
 const isBlockStart = (line: string) =>
-  isFence(line) || isHeading(line) || isHr(line) || isTableRow(line) || isChineseHeading(line) || isBullet(line) || isOrdered(line) || isQuote(line);
+  isFence(line) ||
+  isHeading(line) ||
+  isHr(line) ||
+  isTableRow(line) ||
+  isChineseHeading(line) ||
+  isBullet(line) ||
+  isOrdered(line) ||
+  isQuote(line);
 
-const tableCells = (line: string) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
+const tableCells = (line: string) =>
+  line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
 
-function parseBlocks(source: string): Block[] {
+function parseBlocks(source: string, preserveLines = false): Block[] {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const blocks: Block[] = [];
   let index = 0;
@@ -134,10 +147,10 @@ function parseBlocks(source: string): Block[] {
       continue;
     }
 
-    const paragraph = [line.trim()];
+    const paragraph = [preserveLines ? line.replace(/\s+$/, "") : line.trim()];
     index += 1;
     while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index])) {
-      paragraph.push(lines[index].trim());
+      paragraph.push(preserveLines ? lines[index].replace(/\s+$/, "") : lines[index].trim());
       index += 1;
     }
     blocks.push({ kind: "p", text: paragraph.join("\n") });
@@ -149,33 +162,104 @@ function parseBlocks(source: string): Block[] {
 function blockNode(block: Block, index: number): ReactNode {
   switch (block.kind) {
     case "p":
-      return <p key={index}><InlineText text={block.text} /></p>;
+      return (
+        <p key={index}>
+          <InlineText text={block.text} />
+        </p>
+      );
     case "h": {
       const Heading = block.level === 3 ? "h3" : "h4";
-      return <Heading key={index}><InlineText text={block.text} /></Heading>;
+      return (
+        <Heading key={index}>
+          <InlineText text={block.text} />
+        </Heading>
+      );
     }
     case "ul":
-      return <ul key={index}>{block.items.map((item, i) => <li key={i}><InlineText text={item} /></li>)}</ul>;
+      return (
+        <ul key={index}>
+          {block.items.map((item, i) => (
+            <li key={i}>
+              <InlineText text={item} />
+            </li>
+          ))}
+        </ul>
+      );
     case "ol":
-      return <ol key={index}>{block.items.map((item, i) => <li key={i}><InlineText text={item} /></li>)}</ol>;
+      return (
+        <ol key={index}>
+          {block.items.map((item, i) => (
+            <li key={i}>
+              <InlineText text={item} />
+            </li>
+          ))}
+        </ol>
+      );
     case "quote":
-      return <blockquote key={index}>{block.lines.map((line, i) => <p key={i}><InlineText text={line} /></p>)}</blockquote>;
+      return (
+        <blockquote key={index}>
+          {block.lines.map((line, i) => (
+            <p key={i}>
+              <InlineText text={line} />
+            </p>
+          ))}
+        </blockquote>
+      );
     case "pre":
-      return <pre key={index}><code>{block.text}</code></pre>;
+      return (
+        <pre key={index}>
+          <code>{block.text}</code>
+        </pre>
+      );
     case "hr":
       return <hr key={index} />;
     case "table":
-      return <div className="rich-table-wrap" key={index}><table>
-        <thead><tr>{block.header.map((cell, i) => <th key={i}><InlineText text={cell} /></th>)}</tr></thead>
-        <tbody>{block.rows.map((row, r) => <tr key={r}>{row.map((cell, c) => <td key={c}><InlineText text={cell} /></td>)}</tr>)}</tbody>
-      </table></div>;
+      return (
+        <div className="rich-table-wrap" key={index}>
+          <table>
+            <thead>
+              <tr>
+                {block.header.map((cell, i) => (
+                  <th key={i}>
+                    <InlineText text={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, r) => (
+                <tr key={r}>
+                  {row.map((cell, c) => (
+                    <td key={c}>
+                      <InlineText text={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
   }
 }
 
-export function RichText({ text, className = "" }: { text?: string | null; className?: string }) {
+export function RichText({
+  text,
+  className = "",
+  preserveLines = false,
+}: {
+  text?: string | null;
+  className?: string;
+  /** 证据正文用：解析标题/列表，但不折叠普通段落里的换行与缩进。 */
+  preserveLines?: boolean;
+}) {
   const source = prettyText(text).trim();
   if (!source) return null;
-  return <div className={`rich-text ${className}`.trim()}>{parseBlocks(source).map(blockNode)}</div>;
+  return (
+    <div className={`rich-text ${preserveLines ? "rich-text-lines" : ""} ${className}`.trim()}>
+      {parseBlocks(source, preserveLines).map(blockNode)}
+    </div>
+  );
 }
 
 /** 取第一段作为导语；返回剩余部分，避免“导语 + 完整记述”重复同一段。

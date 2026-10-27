@@ -127,6 +127,8 @@ export interface Workspace {
   reviewFindings: OverviewFinding[];
   config: RuntimeConfig | null;
   theme: "light" | "dark";
+  /** 证据正文默认是否按 Markdown 渲染；关闭后一律显示未渲染原文。 */
+  markdownRendering: boolean;
   selected: string | null;
   selectedNodes: string[];
   selectedFacts: string[];
@@ -194,6 +196,7 @@ export interface Workspace {
   clearFocusFinding: () => void;
   setPaletteOpen: (open: boolean) => void;
   setTheme: (theme: "light" | "dark") => void;
+  setMarkdownRendering: (value: boolean) => void;
 }
 
 export const WorkspaceContext = createContext<Workspace | null>(null);

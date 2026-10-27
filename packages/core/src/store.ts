@@ -18,6 +18,7 @@ import { activeGraph, isActiveNode } from "../../protocol/src/node-lifecycle.js"
 import { reportMaterial } from "./report-material.js";
 import { validateReviewResult, ReviewValidationError } from "../../protocol/src/review-validation.js";
 import { effectiveStepPriority, stepCoversHint } from "./hint-coverage.js";
+import { isNearDuplicateStep, stepTextContainment, type StepDraft } from "./step-similarity.js";
 import { reopenLeadsForStep } from "./leads.js";
 import { normalizeSurface, originHost } from "../../protocol/src/coverage.js";
 import { DatabaseSync } from "node:sqlite";
@@ -114,6 +115,7 @@ const collections = [
   "usage",
   "bookmarks",
 ] as const;
+type StepInsert = StepDraft & { hint_ids?: string[]; lead_ids?: string[] };
 export class Store {
   readonly db: DatabaseSync;
   readonly evidenceRoot: string;
@@ -1283,22 +1285,11 @@ export class Store {
   }
   private insertStep(
     g: Graph,
-    input: {
-      from: string[];
-      description: string;
-      property?: string;
-      method_hint?: string;
-      test_domain?: Step["test_domain"];
-      focus?: string;
-      priority?: number;
-      asset_id?: string;
-      goal_id?: string;
-      hint_ids?: string[];
-      lead_ids?: string[];
-    },
+    input: StepInsert,
     creator: string,
     graphId = "main",
     archival = false,
+    options: { mergeNearDuplicates?: boolean } = {},
   ): Step {
     this.sources(g, input.from);
     this.markReferenced(g, input.from);
@@ -1340,6 +1331,11 @@ export class Store {
           )),
     );
     if (duplicate && !archival) {
+      // Decide also absorbs property/method/source refinements on an exact repeat;
+      // other callers keep the historical lead/hint-only merge. Executed, running
+      // or blocked Steps keep their original question untouched.
+      if (options.mergeNearDuplicates && !duplicate.worker && !duplicate.executed_at && !duplicate.blocked_run_id)
+        return this.mergeNearDuplicateStep(duplicate, input, creator, hintVersions);
       if (
         input.hint_ids?.some(
           (id) =>
@@ -1362,6 +1358,14 @@ export class Store {
       if (input.focus && !duplicate.focus) duplicate.focus = input.focus;
       return duplicate;
     }
+    if (!archival && options.mergeNearDuplicates) {
+      // A paraphrase of an already-open Step is the same investigation. Merge the
+      // richer wording into it instead of creating a second Step that will race
+      // the first one for the same executor slot. Only Decide asks for this; an
+      // operator retest or a manual Step must keep its own identity.
+      const similar = g.steps.find((s) => isNearDuplicateStep(s, input, graphId));
+      if (similar) return this.mergeNearDuplicateStep(similar, input, creator, hintVersions);
+    }
     const step: Step = {
       ...input,
       ...(input.hint_ids?.length ? { hint_versions: hintVersions } : {}),
@@ -1382,6 +1386,83 @@ export class Store {
       attempts: 0,
     };
     g.steps.push(step);
+    return step;
+  }
+  /**
+   * Absorb a refined near-duplicate into the Step that is already queued.
+   * The existing identity wins (same lease/queue slot); description, property,
+   * method hint and sources are widened to the more specific text, and the
+   * replaced wording stays in `edits` plus the event stream.
+   */
+  private mergeNearDuplicateStep(
+    step: Step,
+    input: StepInsert,
+    creator: string,
+    hintVersions: Record<string, number>,
+  ): Step {
+    // A Step that already acted, is acting, or is waiting for human inspection
+    // must keep the exact question it ran/was blocked on.
+    if (step.worker || step.executed_at || step.blocked_run_id) return step;
+    let changed = false;
+    const prefer = (current: string, incoming: string, minChars: number) => {
+      const oldText = current.trim();
+      const newText = incoming.trim();
+      if (!newText || newText === oldText) return oldText;
+      if (!oldText) return newText;
+      // Only adopt a longer refinement that still contains the old wording; a
+      // different property/question must stay a separate Step.
+      return stepTextContainment(newText, oldText, minChars) >= 0.65 && newText.length > oldText.length
+        ? newText
+        : oldText;
+    };
+    const nextDescription = prefer(step.description, input.description, 20);
+    if (nextDescription !== step.description) {
+      (step.edits ??= []).push({
+        at: now(),
+        editor: creator,
+        field: "description",
+        from: step.description,
+      });
+      step.description = nextDescription;
+      changed = true;
+    }
+    const nextProperty = prefer(step.property ?? "", input.property ?? "", 12);
+    if (nextProperty !== (step.property ?? "")) {
+      if (step.property)
+        (step.edits ??= []).push({ at: now(), editor: creator, field: "property", from: step.property });
+      step.property = nextProperty || undefined;
+      changed = true;
+    }
+    const nextMethod = prefer(step.method_hint ?? "", input.method_hint ?? "", 12);
+    if (nextMethod !== (step.method_hint ?? "")) {
+      if (step.method_hint)
+        (step.edits ??= []).push({ at: now(), editor: creator, field: "method_hint", from: step.method_hint });
+      step.method_hint = nextMethod || undefined;
+      changed = true;
+    }
+    const nextFrom = [...new Set([...step.from, ...input.from])];
+    if (nextFrom.length !== step.from.length) {
+      step.from = nextFrom;
+      changed = true;
+    }
+    const nextLeads = [...new Set([...(step.lead_ids ?? []), ...(input.lead_ids ?? [])])];
+    if (nextLeads.length !== (step.lead_ids ?? []).length) {
+      step.lead_ids = nextLeads;
+      changed = true;
+    }
+    const nextHints = [...new Set([...(step.hint_ids ?? []), ...(input.hint_ids ?? [])])];
+    if (nextHints.length !== (step.hint_ids ?? []).length) {
+      step.hint_ids = nextHints;
+      if (input.hint_ids?.length) step.hint_versions = { ...step.hint_versions, ...hintVersions };
+      changed = true;
+    }
+    if (input.test_domain && !step.test_domain) step.test_domain = input.test_domain;
+    if (input.focus && !step.focus) step.focus = input.focus;
+    if (input.priority !== undefined && input.priority > step.priority) {
+      step.priority = input.priority;
+      changed = true;
+    }
+    if (changed) step.version = (step.version ?? 1) + 1;
     return step;
   }
   private insertFact(

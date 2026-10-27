@@ -397,6 +397,63 @@
   color: var(--ink-4);
 }
 
+/* 事实正文和观测细节要能直接在详情栏读完，不依赖原始 JSON 或导出。 */
+.detail-fact-body,
+.detail-request {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.detail-request {
+  font-size: 12px;
+}
+
+.detail-fact-objects,
+.detail-fact-params {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-fact-objects li,
+.detail-fact-params li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.detail-fact-objects code,
+.detail-fact-params code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+}
+
+.detail-fact-objects code {
+  padding: 1px 5px;
+  border: 1px solid var(--line-faint);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+}
+
+.detail-param-source {
+  color: var(--ink-3);
+}
+
+.detail-param-evidence {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 .detail-note {
   padding: 8px 9px;
   border-radius: var(--r-sm);

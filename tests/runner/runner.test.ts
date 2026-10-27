@@ -151,6 +151,7 @@ test("repair contracts describe the correct job without requiring runtime identi
     assert.equal(schema.additionalProperties, false);
     assert.equal(schema.properties.worker, undefined);
     assert.ok(schema.properties[kind === "decide" ? "steps" : kind === "execute" ? "summary" : "verdict"]);
+    if (kind === "execute") assert.equal(schema.properties.read_only, undefined);
   }
 });
 
@@ -1710,6 +1711,34 @@ test("Pi summary failure uses read-only recovery", async () => {
     const run = f.store.runs(g.project.id)[0];
     assert.equal(run.external_action_possible, false);
     // Usage is recorded, but the application no longer derives a token-threshold closeout.
+  } finally {
+    await f.close();
+  }
+});
+
+test("a model-echoed read_only cannot suppress or invalidate a normal Execute result", async () => {
+  const f = await sdkFixture();
+  f.model.post("/v1/chat/completions", async (_req, reply) => {
+    streamFixture(
+      reply,
+      {
+        role: "assistant",
+        content: JSON.stringify({
+          summary: "只读复核完成，但本 Run 不是恢复会话",
+          facts: ["已确认的观测"],
+          leads: [{ surface: "GET /api/thing", why: "值得核查", suggested_property: "若返回 200 则成立" }],
+          read_only: true,
+        }),
+      },
+      1000,
+    );
+  });
+  try {
+    await f.run();
+    const g = f.store.get(f.graph.project.id);
+    assert.ok(g.steps[0].executed_at, "the Step records the final result");
+    assert.ok(g.facts.some((fact) => fact.description === "已确认的观测"));
+    assert.equal(f.store.runs(g.project.id)[0].status, "succeeded");
   } finally {
     await f.close();
   }
