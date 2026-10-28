@@ -69,7 +69,7 @@ Worker 发现资产时，候选范围以种子或人工已批准主机及其子�
 
 报告导出与网页预览共用 view model，统一 CVSS、风险分布、身份、复现与缺项提示。自由文本转义，多行原始证据使用自适应围栏；漏洞通过 Review 前需具备影响、复现步骤和修复建议。诊断接收时间保存在事件 JSON 中，不自动变更已有数据表。
 
-项目内「发现」展示候选、信息类、审核与撤回历史，全局「漏洞库」只显示入库漏洞。`export?format=findings` 导出当前保留发现及分类/复核标记，`format=vulnerabilities` 与漏洞库、风险、报告共用入库条件；完整 JSON/YAML 和时间线继续可作历史导出。整份项目（图、事件、Run 与诊断日志、流量正文、报告快照、证据原件）通过 `GET /api/projects/:id/bundle` 导出为 ZIP，`POST /api/projects/import` 可原 ID 恢复并继续工作；导入拒绝覆盖同 ID 项目，导出时在途的 Run 在导入后标记为中断。备份不包含 Docker 工作区卷与平台密钥，详见[运行维护说明](operations.md)。
+项目内「发现」展示候选、信息类、审核与撤回历史，全局「漏洞库」只显示入库漏洞。`export?format=findings` 导出当前保留发现及分类/复核标记，`format=vulnerabilities` 与漏洞库、风险、报告共用入库条件；完整 JSON/YAML 和时间线继续可作历史导出。整份项目（图、事件、Run 与诊断日志、流量正文、报告快照、证据原件）通过 `GET /api/projects/:id/bundle` 导出为 ZIP，界面走两阶段导出（`POST /api/projects/:id/bundles` 先打包，再由一次性地址下载）：打包慢或失败时错误留在页面内，不会把工作台导航到 `/bundle`；`POST /api/projects/import` 可原 ID 恢复并继续工作；导入拒绝覆盖同 ID 项目，导出时在途的 Run 在导入后标记为中断。备份不包含 Docker 工作区卷与平台密钥，详见[运行维护说明](operations.md)。
 
 Decide 可在 `submit_decisions.delete_nodes` 自主批量删除 Fact、Step、Finding 和模型子 Goal，每项带 `id`、`reason` 及默认 `none` 的 `cascade`。明确选择 `downstream` 才沿生产、输入、发现来源及子目标关联任务扩展，所有可达后继即使还有其他保留来源也会被删除；去环且不沿资产或共用证据扩散。`origin`、根目标、Hint、资产授权、Evidence、Review、Run 不在此接口范围。没有人工确认或审核前置条件，但操作员已批准的当前版本 Finding 不能被 Decide 删除：批准是人对该版本的明确认可，模型只能撤回或修订后重新审核；操作员仍可在发现页自行删除。返回实际删除、保留但受影响的节点及取消 Run 列表；同批删除与更新、关闭、重开或合并冲突时，结算原子失败，新计划保留。
 

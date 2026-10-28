@@ -1523,6 +1523,19 @@ button.danger.subtle:hover {
   color: var(--accent-ink);
 }
 
+/* 完整备份的两阶段导出：准备阶段的进度与失败都留在对话框里。 */
+.export-bundle-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+
+.export-bundle-status.danger {
+  color: var(--danger);
+}
+
 .yaml-key {
   color: var(--accent-ink);
 }

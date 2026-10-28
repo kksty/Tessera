@@ -123,6 +123,22 @@ export function buildApp(
         }));
   const diagnostics = new DiagnosticRecords(store.db);
   const deleting = new Map<string, Promise<void>>();
+  // Two-phase export: POST builds the archive and answers with a one-shot URL,
+  // GET streams that file. The page therefore never navigates to a request that
+  // is still building the archive — a slow or failed export stays inside the UI.
+  const preparedBundles = new Map<
+    string,
+    { file: string; project: string; created_at: number; warnings: number; missing: number }
+  >();
+  const preparedTtl = 2 * 60 * 60 * 1000;
+  const sweepPrepared = () => {
+    const now = Date.now();
+    for (const [id, entry] of preparedBundles) {
+      if (now - entry.created_at < preparedTtl) continue;
+      preparedBundles.delete(id);
+      rmSync(entry.file, { force: true });
+    }
+  };
   const operatorCheck = (req: { headers: { cookie?: string } }) => {
     if (auth && !auth.valid(cookieValue(req.headers.cookie)))
       throw new DomainError(403, "该操作仅允许已登录的网页操作员执行");
@@ -270,7 +286,10 @@ export function buildApp(
         const file = join(directory, `export-${req.params.id}-${randomUUID()}.zip`);
         try {
           const manifest = await exportProjectBundle(store, req.params.id, file);
+          const size = statSync(file).size;
           reply.header("Content-Disposition", `attachment; filename="${req.params.id}-bundle.zip"`);
+          reply.header("Content-Length", String(size));
+          reply.header("Cache-Control", "no-store");
           reply.header("X-Content-Type-Options", "nosniff");
           reply.header("X-Tessera-Bundle-Warnings", String(manifest.warnings.length));
           reply.header("X-Tessera-Bundle-Evidence-Missing", String(manifest.missing_evidence.length));
@@ -283,6 +302,66 @@ export function buildApp(
           rmSync(file, { force: true });
           throw error;
         }
+      });
+      // Build the archive first, then hand back a one-shot URL. The page shows the
+      // preparing state itself, so a failure never becomes a navigation to /bundle.
+      api.post<{ Params: { id: string } }>("/projects/:id/bundles", async (req, reply) => {
+        operatorCheck(req);
+        store.get(req.params.id);
+        sweepPrepared();
+        const directory = bundleTempRoot(store);
+        mkdirSync(directory, { recursive: true });
+        const bundleId = randomUUID();
+        const file = join(directory, `export-${req.params.id}-${bundleId}.zip`);
+        let manifest;
+        try {
+          manifest = await exportProjectBundle(store, req.params.id, file);
+        } catch (error) {
+          rmSync(file, { force: true });
+          throw error;
+        }
+        preparedBundles.set(bundleId, {
+          file,
+          project: req.params.id,
+          created_at: Date.now(),
+          warnings: manifest.warnings.length,
+          missing: manifest.missing_evidence.length,
+        });
+        reply.code(201);
+        return {
+          bundle_id: bundleId,
+          url: `/api/projects/${encodeURIComponent(req.params.id)}/bundles/${bundleId}`,
+          filename: `${req.params.id}-bundle.zip`,
+          size: statSync(file).size,
+          warnings: manifest.warnings,
+          missing_evidence: manifest.missing_evidence,
+        };
+      });
+      api.get<{ Params: { id: string; bundleId: string } }>("/projects/:id/bundles/:bundleId", (req, reply) => {
+        operatorCheck(req);
+        sweepPrepared();
+        const entry = preparedBundles.get(req.params.bundleId);
+        // One-shot: a prepared file is handed out once and then removed, so a stale
+        // URL cannot be replayed or left behind on the data volume.
+        if (!entry || entry.project !== req.params.id) throw new DomainError(404, "备份已过期，请重新导出");
+        preparedBundles.delete(req.params.bundleId);
+        let size: number;
+        try {
+          size = statSync(entry.file).size;
+        } catch {
+          throw new DomainError(404, "备份文件已被清理，请重新导出");
+        }
+        const stream = createReadStream(entry.file);
+        const cleanup = () => rmSync(entry.file, { force: true });
+        stream.once("close", cleanup);
+        stream.once("error", cleanup);
+        reply.header("Content-Disposition", `attachment; filename="${req.params.id}-bundle.zip"`);
+        reply.header("Content-Length", String(size));
+        reply.header("Cache-Control", "no-store");
+        reply.header("X-Content-Type-Options", "nosniff");
+        reply.header("X-Tessera-Bundle-Warnings", String(entry.warnings));
+        reply.header("X-Tessera-Bundle-Evidence-Missing", String(entry.missing));
+        return reply.type("application/zip").send(stream);
       });
       api.post("/projects/import", async (req, reply) => {
         operatorCheck(req);

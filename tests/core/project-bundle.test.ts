@@ -184,6 +184,52 @@ test("bundle export/import API roundtrip refuses duplicate ids and invalid archi
   }
 });
 
+test("a bundle is prepared first and then streamed once, so the page never downloads a half-built archive", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-bundle-twophase-"));
+  const store = new Store(join(dir, "tessera.db"));
+  const app = buildApp(store, new RuntimeConfig(join(dir, "config.json")), join(dir, "web"));
+  try {
+    const id = projectId(store, "Two-phase export");
+    store.addEvidence(id, { title: "Proof", content: "two phase body", encoding: "utf8", mime_type: "text/plain" });
+
+    const prepared = await app.inject({ method: "POST", url: `/api/projects/${id}/bundles` });
+    assert.equal(prepared.statusCode, 201, prepared.body);
+    const body = prepared.json() as { url: string; filename: string; size: number; bundle_id: string };
+    assert.equal(body.filename, `${id}-bundle.zip`);
+    assert.equal(body.url, `/api/projects/${id}/bundles/${body.bundle_id}`);
+    assert.ok(body.size > 0, "the prepared archive reports its size before the download starts");
+
+    const download = await app.inject({ method: "GET", url: body.url });
+    assert.equal(download.statusCode, 200);
+    assert.match(String(download.headers["content-disposition"]), /attachment/);
+    assert.equal(download.headers["content-length"], String(body.size));
+    assert.equal(download.headers["cache-control"], "no-store");
+    assert.equal(download.rawPayload.subarray(0, 2).toString(), "PK");
+
+    const replay = await app.inject({ method: "GET", url: body.url });
+    assert.equal(replay.statusCode, 404, "a prepared download is handed out once");
+
+    const other = projectId(store, "Other project");
+    const fresh = await app.inject({ method: "POST", url: `/api/projects/${id}/bundles` });
+    const freshUrl = (fresh.json() as { url: string }).url;
+    const wrongProject = await app.inject({
+      method: "GET",
+      url: freshUrl.replace(`/projects/${id}/`, `/projects/${other}/`),
+    });
+    assert.equal(wrongProject.statusCode, 404, "a prepared archive only downloads through its own project");
+    // The rejected request must not consume or delete the prepared archive.
+    assert.equal((await app.inject({ method: "GET", url: freshUrl })).statusCode, 200);
+  } finally {
+    await app.close();
+    store.close();
+    const tempRoot = join(dir, "bundle-tmp");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const leftover = existsSync(tempRoot) ? readdirSync(tempRoot) : [];
+    assert.deepEqual(leftover, [], "nothing is left in the bundle temp root");
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a bundle whose entry no longer matches the manifest checksum is rejected before writing records", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tessera-bundle-tamper-")),
     bundle = join(dir, "clean.zip"),

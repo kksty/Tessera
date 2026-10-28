@@ -1,4 +1,4 @@
-import { Badge, Field, Modal, Overlay } from "./components/ui.js";
+import { Badge, Field, Modal, Overlay, Toast } from "./components/ui.js";
 import { ActionMenu } from "./components/ActionMenu.js";
 import { useEffect, useState } from "react";
 import {
@@ -21,7 +21,7 @@ import {
 import type { Graph, ProjectSummary } from "../../../packages/protocol/src/index.js";
 import { api, path } from "./api.js";
 import { layoutOptions, localPrefs } from "./layouts.js";
-import { reviewTone, statusLabels } from "./format.js";
+import { fmtBytes, reviewTone, statusLabels } from "./format.js";
 import { StepDecision } from "./components/StepDecision.js";
 import { nodeReference } from "./node-reference.js";
 import { stepState } from "./workspace.js";
@@ -150,6 +150,13 @@ export function ProjectExtras({
   } | null>(null);
   const [deletionError, setDeletionError] = useState("");
   const [deletingNow, setDeletingNow] = useState(false);
+  /** busy/error/note for the two-phase full-backup export; also mirrored into a toast. */
+  const [bundle, setBundle] = useState({ busy: false, error: "", note: "" });
+  useEffect(() => {
+    if (bundle.busy || !bundle.note) return;
+    const timer = setTimeout(() => setBundle((current) => (current.note ? { ...current, note: "" } : current)), 8000);
+    return () => clearTimeout(timer);
+  }, [bundle.busy, bundle.note]);
   useEffect(() => {
     if (modal === "export") {
       setExportText("读取中…");
@@ -231,16 +238,46 @@ export function ProjectExtras({
     setCopied(document.execCommand("copy"));
     input.remove();
   }
-  function downloadBundle() {
-    const anchor = document.createElement("a");
-    anchor.href = `/api${path(project.id, "/bundle")}`;
-    anchor.download = `${project.id}-bundle.zip`;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
+  // The archive is built by a POST and then streamed from a one-shot URL. A slow
+  // or failed export therefore reports itself here instead of navigating the page
+  // to /api/.../bundle, where a dead loopback URL (or a JSON error) would replace
+  // the workbench until the operator went back and retried.
+  async function downloadBundle() {
+    if (bundle.busy) return;
+    setBundle({ busy: true, error: "", note: "正在服务端打包，较大的项目需要几十秒到几分钟…" });
+    try {
+      const prepared = await api<{ url: string; filename: string; size: number }>(path(project.id, "/bundles"), {});
+      // The download runs through a hidden iframe: if the stream ever fails, the
+      // error response lands in that frame and this page stays intact.
+      const anchor = document.createElement("a");
+      anchor.href = prepared.url;
+      anchor.download = prepared.filename;
+      anchor.target = "tessera-bundle";
+      document.body.append(anchor);
+      anchor.click();
+      // Firefox aborts a download whose anchor is removed in the same task.
+      setTimeout(() => anchor.remove(), 60_000);
+      setBundle({ busy: false, error: "", note: `已生成 ${fmtBytes(prepared.size)}，浏览器开始保存` });
+    } catch (error) {
+      setBundle({
+        busy: false,
+        note: "",
+        error: error instanceof Error ? error.message : "导出失败，请重试",
+      });
+    }
   }
   return (
     <div className="project-extras">
+      {/* The iframe receives the one-shot download; a failed stream can never
+          replace the workbench with a raw error response. */}
+      <iframe name="tessera-bundle" title="项目备份下载" hidden />
+      {compact && (bundle.busy || bundle.error || bundle.note) && (
+        <Toast
+          message={bundle.busy ? bundle.note : bundle.error || bundle.note}
+          tone={bundle.error ? "danger" : "success"}
+          onClose={() => setBundle({ busy: false, error: "", note: "" })}
+        />
+      )}
       {compact && (
         <ActionMenu
           label="更多项目操作"
@@ -359,13 +396,23 @@ export function ProjectExtras({
               需要带走整份项目（图、运行日志、诊断、流量正文与证据原件）时，使用完整备份；备份可在「项目」页重新导入并继续工作。单个备份上限
               4 GiB，更大的项目请使用整卷备份。
             </p>
+            {(bundle.busy || bundle.error || bundle.note) && (
+              <p className={bundle.error ? "export-bundle-status danger" : "export-bundle-status quiet"} role="status">
+                {bundle.busy ? bundle.note : bundle.error || bundle.note}
+                {bundle.error && (
+                  <button type="button" className="button small" onClick={() => void downloadBundle()}>
+                    重试
+                  </button>
+                )}
+              </p>
+            )}
             <div className="modal-actions">
               <button type="button" onClick={() => setModal(null)}>
                 关闭
               </button>
-              <button type="button" className="primary" onClick={downloadBundle}>
+              <button type="button" className="primary" onClick={() => void downloadBundle()} disabled={bundle.busy}>
                 <Archive size={14} />
-                下载完整备份
+                {bundle.busy ? "正在打包…" : "下载完整备份"}
               </button>
             </div>
           </div>

@@ -44,7 +44,7 @@ Shell 和看门狗使用显式环境白名单，只传递路径、语言、代�
 
 除整卷维护备份外，应用本身支持把**一个项目**打包带走并在另一个实例继续工作：
 
-- 导出：项目页「更多项目操作 → 导出完整备份（含日志）」，或登录后 `GET /api/projects/PROJECT_ID/bundle`，得到 `<项目ID>-bundle.zip`。
+- 导出：项目页「更多项目操作 → 导出完整备份（含日志）」，或登录后 `GET /api/projects/PROJECT_ID/bundle`，得到 `<项目ID>-bundle.zip`。界面使用两阶段导出：先 `POST /api/projects/PROJECT_ID/bundles` 在服务端打包，返回一次性下载地址 `GET /api/projects/PROJECT_ID/bundles/BUNDLE_ID`（含 `Content-Length`），再由隐藏 iframe 下载。打包较慢或失败时进度和错误留在页面内，不会把工作台导航到 `/bundle`；一次性地址 2 小时后清理，下载一次即删。
 - 导入：项目页「导入项目」上传该 ZIP，或 `POST /api/projects/import`（`content-type: application/zip`，请求体为 ZIP）。
 
 ZIP 内包含 `manifest.json`（条目 SHA-256、计数、缺失原件警告）、`graph.json`（全部节点）、`events-*.ndjson`、`diagnostics-*.ndjson`、`runs-*.ndjson`、`run-models-*.ndjson`、`request-usage-*.ndjson`、`receipts-*.ndjson`、`submissions-*.ndjson`、`plans-*.ndjson`、`pools-*.ndjson`、`reports-*.ndjson`、`traffic-*.ndjson`、`traffic-status.json`、`traffic-bodies/*` 与 `evidence/*`。归档过的事件、诊断和证据在导出时解压为可读条目，导入后不需要原数据库即可查看历史。
