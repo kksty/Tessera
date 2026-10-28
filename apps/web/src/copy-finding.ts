@@ -49,7 +49,12 @@ export function findingCopyText(finding: Finding): string {
 
   const conditions = (finding.reproduction?.conditions || []).map((line) => line.trim()).filter(Boolean);
   const steps = (finding.reproduction?.steps || []).map((line) => line.trim()).filter(Boolean);
-  if (conditions.length || steps.length || text(finding.reproduction?.expected) || text(finding.reproduction?.observed)) {
+  if (
+    conditions.length ||
+    steps.length ||
+    text(finding.reproduction?.expected) ||
+    text(finding.reproduction?.observed)
+  ) {
     out.push("", "## 复现与验证");
     if (conditions.length) {
       out.push("", "前置条件：");

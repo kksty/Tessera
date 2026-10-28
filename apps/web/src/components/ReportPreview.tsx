@@ -92,7 +92,10 @@ function CvssBox({
   };
 }) {
   return (
-    <Section title={`CVSS v${cvss.version || "4.0"} 评分`} note={<strong className="report-cvss-score">{cvss.score.toFixed(1)}</strong>}>
+    <Section
+      title={`CVSS v${cvss.version || "4.0"} 评分`}
+      note={<strong className="report-cvss-score">{cvss.score.toFixed(1)}</strong>}
+    >
       <div className="report-cvss-vector">
         <code>{cvss.vector}</code>
         <CopyButton text={cvss.vector} label="复制向量" />
@@ -128,7 +131,15 @@ function CvssBox({
   );
 }
 
-export function ReportPreview({ report, stale, onClose }: { report: ReportSnapshot; stale: boolean; onClose: () => void }) {
+export function ReportPreview({
+  report,
+  stale,
+  onClose,
+}: {
+  report: ReportSnapshot;
+  stale: boolean;
+  onClose: () => void;
+}) {
   return (
     <Modal
       label="报告网页预览"
@@ -170,11 +181,17 @@ export function ReportContent({ report, stale }: { report: ReportSnapshot; stale
           </div>
         </dl>
         <div className="report-actions">
-          <a className="button small" href={"/api" + path(report.project_id, `/reports/${report.id}/content?format=markdown`)}>
+          <a
+            className="button small"
+            href={"/api" + path(report.project_id, `/reports/${report.id}/content?format=markdown`)}
+          >
             <Download size={12} aria-hidden="true" />
             下载 Markdown
           </a>
-          <a className="button small" href={"/api" + path(report.project_id, `/reports/${report.id}/content?format=zip`)}>
+          <a
+            className="button small"
+            href={"/api" + path(report.project_id, `/reports/${report.id}/content?format=zip`)}
+          >
             <Download size={12} aria-hidden="true" />
             下载报告与证据
           </a>
@@ -277,14 +294,8 @@ export function ReportContent({ report, stale }: { report: ReportSnapshot; stale
               </div>
 
               <div className="report-repro-sub">
-                <h5>
-                  复现步骤{f.reproBlocks.length ? `（${f.reproBlocks.length} 步）` : ""}
-                </h5>
-                {f.reproBlocks.length ? (
-                  <ReproSteps blocks={f.reproBlocks} />
-                ) : (
-                  <p className="quiet">缺少：复现步骤</p>
-                )}
+                <h5>复现步骤{f.reproBlocks.length ? `（${f.reproBlocks.length} 步）` : ""}</h5>
+                {f.reproBlocks.length ? <ReproSteps blocks={f.reproBlocks} /> : <p className="quiet">缺少：复现步骤</p>}
               </div>
 
               {(f.expected || f.observed) && (

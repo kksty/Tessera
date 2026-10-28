@@ -273,7 +273,8 @@ export function FindingsPage() {
             <span className="eyebrow">DELIVERABLE / FINDINGS</span>
             <h1>发现</h1>
             <p className="page-lede">
-              项目内所有结论记录：候选、审核中、已确认与已驳回。按「未批准 / 已批准」分组，再按危险度分级排列；信息类没有危险度，单独成页签。
+              项目内所有结论记录：候选、审核中、已确认与已驳回。按「未批准 /
+              已批准」分组，再按危险度分级排列；信息类没有危险度，单独成页签。
             </p>
           </div>
           <div className="page-actions">
@@ -380,9 +381,7 @@ export function FindingsPage() {
                               ? "漏洞类"
                               : "待分类"}
                         </span>
-                        {findingKind(selected) !== "informational" && (
-                          <SeverityBadge severity={selected.severity} />
-                        )}
+                        {findingKind(selected) !== "informational" && <SeverityBadge severity={selected.severity} />}
                         <span className="status-pill" data-tone={reviewTone(findingReviewStatus(selected))}>
                           {findingReviewLabels[findingReviewStatus(selected)]}
                         </span>
