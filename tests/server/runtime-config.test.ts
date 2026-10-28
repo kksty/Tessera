@@ -28,6 +28,14 @@ test("task runtime defaults to unlimited, supports explicit zero, and validates 
     assert.equal(config.value.task_timeout_seconds, 0);
     assert.equal(config.value.tool_timeout_seconds, 0);
     assert.equal(config.value.closeout_seconds, 60);
+    assert.equal(config.value.result_repairs, 2, "schema-shaped output gets two repair rounds by default");
+    config.updatePublic({ result_repairs: 1 });
+    assert.equal(
+      new RuntimeConfig(f.file, {}).value.result_repairs,
+      1,
+      "an explicitly stored value still wins over the default",
+    );
+    config.updatePublic({ result_repairs: 2 });
     config.updatePublic({ task_timeout_seconds: 0, tool_timeout_seconds: 0 });
     assert.equal(new RuntimeConfig(f.file, {}).value.tool_timeout_seconds, 0);
     assert.equal(new RuntimeConfig(f.file, {}).value.task_timeout_seconds, 0);

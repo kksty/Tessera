@@ -69,7 +69,7 @@ function compactionAnchor(graph: Graph, job: Job): string {
   );
   const lines = [
     `目标：${cut(graph.goals.find((goal) => goal.id === "goal")?.description ?? "", 300)}`,
-    `未确认 Hint（${hints.length}）：${hints.join(", ") || "无"}；只有人工能关闭`,
+    `未处置 Hint（${hints.length}）：${hints.join(", ") || "无"}；用 hint_notes 说明落实或由人工确认`,
     `open leads（${leads.length}）：${leads.join(" | ") || "无"}`,
     `已观测 surface（${coverage.length}）：${coverage.slice(0, 30).join(", ") || "无"}`,
     `待审 Finding（${pending.length}）：${
@@ -254,7 +254,7 @@ async function runJobInternal(
     recovery: !!recoverySession,
     configured_compaction: !recoverySession,
     task_timeout_seconds: config.task_timeout_seconds,
-    result_repairs: config.result_repairs ?? 1,
+    result_repairs: config.result_repairs ?? 2,
     trace_run_limit_chars: traces.runLimit,
     trace_limit_chars: traces.traceLimit,
     worker: job.worker,
@@ -679,7 +679,7 @@ async function runJobInternal(
           "finding_merges takes target_id, source_ids, expected_versions for every participant and reason; the target is re-reviewed and source history is retained. " +
           "finding_updates takes id, expected_version, reason and changes; content edits are audited and re-reviewed, never confirmed by Decide. " +
           "withdraw:true withdraws a Finding; restore:true with changes restores a withdrawn ID as a new version for review. An operator-approved current version cannot be withdrawn or merged away as a source; the operator must withdraw the approval first. " +
-          "hint_ids on a Step carries an active Hint; hint_notes records advice and does not close it. complete stays rejected until a human confirms every open Hint in the hint panel. " +
+          "hint_ids on a Step carries an active Hint; a hint_notes entry that states how the directive was handled closes it (the Decider may settle it this way), and a human can still confirm or withdraw it in the hint panel. " +
           "complete.coverage accounts for every coverage_surfaces entry: tested requires evidence_ids, waived requires a reason, na means it is not a testable surface. Omitted surfaces reject the settlement and name the missing entries. " +
           "Open leads block completion: lead_ids on a new Step, lead_dispositions.step_id on an existing Step, or lead_dispositions with waiver_reason. " +
           "Review planning_issues block completion too: complete.review_issues accounts for each with its review_id and zero-based issue_index. addressed requires a Step executed and concluded after that Review; waived requires a reason, and IDOR / authorization / PII issues can only be waived by the operator. " +
@@ -1454,7 +1454,7 @@ async function runJobInternal(
       task_timeout_seconds: config.task_timeout_seconds,
       closeout_seconds: closeoutReserve,
       tool_timeout_seconds: config.tool_timeout_seconds ?? 0,
-      result_repairs: config.result_repairs ?? 1,
+      result_repairs: config.result_repairs ?? 2,
       model_id: model.id,
       api: model.api,
       context_window: model.contextWindow,
@@ -1499,7 +1499,7 @@ async function runJobInternal(
     // reasoning-only qwen completions and right after a rejected tool argument.
     // Ask for one concrete answer before counting this as a model failure; the
     // repair budget is the same one used for invalid final JSON.
-    const emptyRepairs = Math.max(0, Math.min(1, config.result_repairs ?? 1));
+    const emptyRepairs = Math.max(0, Math.min(1, config.result_repairs ?? 2));
     for (let attempt = 0; attempt < emptyRepairs && !session.getLastAssistantText() && !leaseError; attempt++) {
       diagnose("result_repair", {
         attempt: attempt + 1,

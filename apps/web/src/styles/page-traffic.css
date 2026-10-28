@@ -1007,3 +1007,214 @@
   color: var(--danger);
   font-size: var(--f-sm);
 }
+
+/* ---------- 就地预览：真实流量弹层 ---------- */
+.traffic-preview-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.traffic-preview-title .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--f-sm);
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+/* 抽屉标题里的方法徽标沿用摘要栏配色。 */
+.traffic-preview-title .http-method {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 48px;
+  height: 21px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--f-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.traffic-preview-title .http-method[data-method="GET"],
+.traffic-preview-title .http-method[data-method="HEAD"] {
+  border-color: color-mix(in srgb, var(--info) 26%, transparent);
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.traffic-preview-title .http-method[data-method="POST"],
+.traffic-preview-title .http-method[data-method="PUT"],
+.traffic-preview-title .http-method[data-method="PATCH"] {
+  border-color: color-mix(in srgb, var(--warn) 26%, transparent);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.traffic-preview-title .http-method[data-method="DELETE"] {
+  border-color: color-mix(in srgb, var(--danger) 26%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.traffic-preview-nonhttp {
+  padding: 14px 16px;
+}
+
+.finding-traffic-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+/* 发现详情里的流量列表给「就地查看」一个更清楚的悬停暗示。 */
+.finding-traffic-row .finding-traffic-open {
+  opacity: 0.5;
+  transition: opacity var(--fast), transform var(--fast);
+}
+
+.finding-traffic-row:hover .finding-traffic-open {
+  opacity: 1;
+  transform: translate(1px, -1px);
+  color: var(--accent-ink);
+}
+
+/* ---------- 更真实的 webfuzz 抓包观感 ---------- */
+/* 顶部目标栏：方法、URL、状态在同一视觉行里，像代理工具的条目摘要。 */
+.http-summary {
+  padding: 10px 16px 9px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 65%, var(--surface)), var(--surface));
+}
+
+.http-summary-top .http-method {
+  min-width: 54px;
+  height: 24px;
+  font-size: var(--f-xs);
+  letter-spacing: 0.06em;
+}
+
+.http-url {
+  font-weight: 500;
+}
+
+/* 事实条（时间/协议/耗时…）做成细粒度标签，密度更高。 */
+.http-facts {
+  gap: 4px 16px;
+  padding-top: 8px;
+  margin-top: 9px;
+  border-top: 1px dashed var(--line-faint);
+}
+
+.http-facts dt {
+  letter-spacing: 0.04em;
+}
+
+/* 分栏：请求/响应各自成卡片，圆角、边框、内部滚动；像 Burp 的 Message Editors。 */
+.http-panes {
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface-3);
+}
+
+.http-pane {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+
+.http-pane-head {
+  gap: 9px;
+  padding: 7px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.http-pane-kicker {
+  letter-spacing: 0.02em;
+}
+
+.http-pane-kicker i {
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 16%, transparent);
+}
+
+.http-pane[data-side="response"] .http-pane-kicker i {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+.http-pane-tool {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+}
+
+/* 头部标题行加一层淡背景，字段名与值分色更贴近抓包器。 */
+.http-head {
+  padding: 10px 14px 9px;
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+}
+
+.http-start {
+  font-weight: 600;
+}
+
+.http-header-name {
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.http-colon {
+  padding-right: 5px;
+}
+
+.http-head-rule {
+  margin: 0;
+  height: 2px;
+  background: var(--line-faint);
+}
+
+.http-body {
+  padding: 12px 14px 20px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.http-body.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 工具条按钮等高对齐，避免尺寸参差。 */
+.http-toolbar .button,
+.http-toolbar .segmented {
+  height: 28px;
+}
+
+.http-toolbar .button {
+  padding: 0 10px;
+  font-size: var(--f-xs);
+  gap: 6px;
+}
+
+.http-toolbar .button svg {
+  flex: none;
+}
+
+@media (max-width: 1080px) {
+  .http-panes {
+    padding: 10px;
+  }
+}

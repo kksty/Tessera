@@ -3,7 +3,7 @@ import { AlertCircle, Check, Copy, Download, Loader2, Pencil, RotateCcw, Send, W
 import type { TrafficRecord, TrafficResendResult } from "../../../../packages/protocol/src/traffic.js";
 import { api, path } from "../api.js";
 import { fmt, fmtBytes } from "../format.js";
-import { Segmented } from "./ui.js";
+import { Drawer, Segmented, Skeleton } from "./ui.js";
 
 type Mode = "render" | "raw" | "body" | "hex";
 type Layout = "split" | "request" | "response";
@@ -260,6 +260,21 @@ function HttpHead({ head, side }: { head: string; side: "request" | "response" }
   );
 }
 
+async function writeClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+}
+
 function useCopy() {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -268,20 +283,8 @@ function useCopy() {
     return () => clearTimeout(timer);
   }, [copied]);
   const copy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      const area = document.createElement("textarea");
-      area.value = text;
-      area.style.position = "fixed";
-      area.style.opacity = "0";
-      document.body.appendChild(area);
-      area.select();
-      document.execCommand("copy");
-      area.remove();
-      setCopied(true);
-    }
+    await writeClipboard(text);
+    setCopied(true);
   };
   return { copied, copy };
 }
@@ -527,7 +530,8 @@ function MessagePane({
 export function TrafficInspector({ project, record }: { project: string; record: TrafficRecord }) {
   const [mode, setMode] = useState<Mode>("render");
   const [layout, setLayout] = useState<Layout>("split");
-  const [wrap, setWrap] = useState(false);
+  // 打开即自动换行，长 URL / JSON / 表单更易读；仍可手动关闭。
+  const [wrap, setWrap] = useState(true);
   const [resending, setResending] = useState(false);
   const [resendError, setResendError] = useState("");
   const [resendResult, setResendResult] = useState<TrafficResendResult | null>(null);
@@ -535,6 +539,7 @@ export function TrafficInspector({ project, record }: { project: string; record:
   const [draft, setDraft] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
+  // 每条报文独立的复制/下载按钮已足够；不再提供「复制全部」。
   const resendBytes = useMemo(
     () => (resendResult ? decodeBase64(resendResult.body_base64) || new Uint8Array() : null),
     [resendResult],
@@ -814,5 +819,94 @@ export function TrafficInspector({ project, record }: { project: string; record:
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * 就地预览一条真实流量：以大号抽屉覆盖在当前页上方，不切页、不改路由。
+ * 关闭后底层页面（发现详情、滚动位置、选中项）保持原样。
+ */
+export function TrafficPreviewModal({
+  project,
+  flowId,
+  label,
+  onClose,
+}: {
+  project: string;
+  flowId: string;
+  label?: string;
+  onClose: () => void;
+}) {
+  const [record, setRecord] = useState<TrafficRecord | null>(null);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    let stopped = false;
+    setRecord(null);
+    setError("");
+    api<TrafficRecord>(path(project, `/traffic/${encodeURIComponent(flowId)}`))
+      .then((value) => {
+        if (!stopped) setRecord(value);
+      })
+      .catch((failure: unknown) => {
+        if (!stopped) setError(messageOf(failure));
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [project, flowId, retry]);
+
+  const http = record?.capture_kind === "http";
+  return (
+    <Drawer
+      label="真实流量预览"
+      title={
+        <span className="traffic-preview-title">
+          {record ? (
+            <>
+              <span className="http-method" data-method={record.method.toUpperCase()}>
+                {record.method}
+              </span>
+              <span className="mono">{record.url}</span>
+            </>
+          ) : (
+            <>流量预览{label ? <span className="quiet"> · {label}</span> : null}</>
+          )}
+        </span>
+      }
+      width={http ? 1240 : 720}
+      className={http ? "traffic-inspector-drawer" : undefined}
+      onClose={onClose}
+    >
+      {error && (
+        <div className="banner danger" role="alert">
+          <AlertCircle size={15} aria-hidden="true" />
+          <span>{error}</span>
+          <button type="button" className="button ghost small" onClick={() => setRetry((value) => value + 1)}>
+            重试
+          </button>
+        </div>
+      )}
+      {!record && !error && <Skeleton rows={5} />}
+      {record && record.capture_kind === "http" && <TrafficInspector project={project} record={record} />}
+      {record && record.capture_kind !== "http" && (
+        <div className="traffic-preview-nonhttp">
+          <p className="traffic-note">仅记录网络元数据：载荷原样转发，不解析、不解密、不保存。</p>
+          {record.error && (
+            <div className="banner danger" role="alert">
+              <AlertCircle size={15} aria-hidden="true" />
+              <span>
+                {record.capture_kind === "packet" ? "元数据聚合" : "连接失败"} · {record.error}
+              </span>
+            </div>
+          )}
+          <pre className="traffic-raw" tabIndex={0}>
+            {record.request.head}
+            {record.response ? `\n${record.response.head}` : ""}
+          </pre>
+        </div>
+      )}
+    </Drawer>
   );
 }

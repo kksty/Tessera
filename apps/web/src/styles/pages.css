@@ -2605,6 +2605,48 @@
 }
 
 /* ---------- 项目漏洞页 ---------- */
+/* 页头下方的指标条：四格读数，替代原先散落的 meta-pill。 */
+.findings-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 2px 0 16px;
+}
+
+.findings-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-faint);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.findings-stat-num {
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.findings-stat-label {
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+.findings-stat[data-tone="danger"] .findings-stat-num {
+  color: var(--sev-high);
+}
+
+@media (max-width: 720px) {
+  .findings-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .findings-toolbar {
   margin-bottom: 14px;
   align-items: center;
@@ -2652,7 +2694,12 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 1px 2px;
+  padding: 4px 2px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 78%, transparent));
+  backdrop-filter: blur(4px);
 }
 
 .finding-group-dot {
@@ -2789,26 +2836,72 @@
 
 .finding-detail-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px 12px;
-  border-bottom: 1px solid var(--line-faint);
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px 15px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+
+/* 顶行：编号与状态徽章成排；操作按钮靠右，空间不足时整体换到下一行。 */
+.finding-detail-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.finding-detail-idline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.finding-detail-id {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: var(--surface-3);
+}
+
+.finding-detail-version {
+  font-size: 11.5px;
 }
 
 .finding-detail-head h2 {
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.42;
   letter-spacing: -0.01em;
-}
-
-.finding-detail-head .eyebrow {
-  margin-bottom: 5px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 .finding-detail-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+  flex: none;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+/* 详情页动作按钮尺寸统一：同一高度、同一圆角、同字号，图标与文字居中对齐。 */
+.finding-detail-actions .button {
+  height: 30px;
+  padding: 0 11px;
+  gap: 6px;
+  border-radius: 8px;
+  font-size: var(--f-xs);
+  font-weight: 500;
+}
+
+.finding-detail-actions .button svg {
   flex: none;
 }
 
@@ -3129,12 +3222,15 @@
     order: 4;
     margin-left: auto;
   }
-  .finding-detail-head {
-    flex-direction: column;
+  .finding-detail-top {
+    align-items: flex-start;
   }
   .finding-detail-actions {
     width: 100%;
-    flex-wrap: wrap;
+    margin-left: 0;
+  }
+  .finding-detail-actions .button {
+    flex: 1 1 auto;
   }
 
   /* 漏洞库工具栏在窄屏收成两行：等级条占满，搜索占满，项目和排序并排。 */

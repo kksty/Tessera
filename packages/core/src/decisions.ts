@@ -695,16 +695,18 @@ export function submitDecisionBatch(
       else if (observedPlanning(g, body) !== planningRevision(g))
         result.conflicts.push({ kind: "complete", reason: "Graph changed; refresh planning state before completing" });
       else {
-        // A Hint is a human directive. A model note is advice only; only the
-        // operator can close it, so completion waits for that confirmation even
-        // when a Step already carried the wording.
-        const openHints = g.hints.filter((h) => !h.withdrawn_at && !h.resolved);
+        // A Hint is a human directive. The operator may close it from the panel,
+        // or the Decider may close it by returning a `hint_notes` entry that states
+        // how the directive was carried out. Only an open Hint with no such
+        // disposition blocks completion.
+        const noted = new Set(hinted.filter((h) => h.note.trim()).map((h) => h.id));
+        const openHints = g.hints.filter((h) => !h.withdrawn_at && !h.resolved && !noted.has(h.id));
         if (openHints.length)
           result.conflicts.push({
             kind: "complete",
             reason:
-              `Hint 需人工确认后才能完成项目：${openHints.map((h) => h.id).join(", ")}；` +
-              "hint_notes 只记录建议，不关闭 Hint。请在提示面板确认或撤回后再完成",
+              `Hint 需处置后才能完成项目：${openHints.map((h) => h.id).join(", ")}；` +
+              "在 hint_notes 写明该提示如何落实（模型据此关闭），或由人工在提示面板确认/撤回后再完成",
           });
       }
       // Coverage is checked independently of the Hint gate so one submission
@@ -871,9 +873,15 @@ export function submitDecisionBatch(
     for (const note of hinted) {
       const hint = g.hints.find((h) => h.id === note.id && !h.withdrawn_at);
       if (!hint) continue;
-      // Advice, not closure: keep one bounded trail per Hint and leave the
-      // operator-only `resolved` field untouched.
+      // Record the bounded advice trail on every note. A non-empty note is also a
+      // model closure: the Decider states how the directive was carried out, so the
+      // Hint counts as settled (resolved_by: "decide"). The operator can reopen it.
       hint.notes = [...(hint.notes ?? []), { at: now(), note: note.note, worker: body.worker }].slice(-10);
+      if (note.note.trim() && !hint.resolved) {
+        hint.resolved = { at: now(), note: note.note.trim(), worker: body.worker };
+        hint.resolved_by = "decide";
+        hint.reopened_at = undefined;
+      }
     }
     Object.assign(
       result,

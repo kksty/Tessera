@@ -114,3 +114,13 @@ test("并发与预算字段拒绝越界和非整数，启用独立审核模型�
   const custom = { ...base(), review_model: { ...blankReview(), id: "m", provider: "custom" } };
   assert.ok(runtimeFieldErrors(custom, true)["review_model.base_url"]);
 });
+
+test("飞书 Webhook 必须是非空的 HTTPS 地址；留空或 '-' 视为不修改/清空", () => {
+  const key = "notifications.feishu_webhook";
+  const withHook = (hook: string): RuntimeConfig => ({ ...base(), notifications: { feishu_webhook: hook } });
+  assert.equal(runtimeFieldErrors(withHook(""), false)[key], undefined);
+  assert.equal(runtimeFieldErrors(withHook("-"), false)[key], undefined);
+  assert.equal(runtimeFieldErrors(withHook("https://open.feishu.cn/open-apis/bot/v2/hook/x"), false)[key], undefined);
+  assert.ok(runtimeFieldErrors(withHook("http://example.test/hook"), false)[key], "非 HTTPS 应报错");
+  assert.ok(runtimeFieldErrors(withHook("not-a-url"), false)[key], "非 URL 应报错");
+});

@@ -924,7 +924,7 @@ test("preview does not acknowledge unseen observations and a settlement conflict
     // The final settlement ends the turn before another provider request.
     assert.equal(calls, 5);
     assert.ok(f.store.get(f.graph.project.id).facts.find((record) => record.id === fact.id)!.deleted);
-    assert.equal(f.store.get(f.graph.project.id).hints[0].resolved, undefined);
+    assert.equal(f.store.get(f.graph.project.id).hints[0].resolved_by, "decide");
     assert.equal(f.store.get(f.graph.project.id).hints[0].notes?.at(-1)?.note, "新指令已纳入删除判断");
   } finally {
     await f.close();
@@ -2206,8 +2206,8 @@ test("malformed final protocol replies preserve failure backoff and leave the St
     assert.equal(graph.project.model_failures, 3);
     assert.equal(graph.project.status, "stopped");
     assert.equal(graph.steps[0].concluded_at, null);
-    assert.equal(graph.usage.length, 2, "both invalid replies still consume model tokens");
-    assert.equal(f.store.runs(f.graph.project.id)[0].request_count, 2);
+    assert.equal(graph.usage.length, 3, "every invalid reply still consumes model tokens");
+    assert.equal(f.store.runs(f.graph.project.id)[0].request_count, 3);
   } finally {
     await f.close();
   }
@@ -2714,7 +2714,8 @@ for (const failure of ["length", "schema", "quota"] as const)
         );
         return true;
       });
-      assert.equal(calls, 2);
+      // Two repair rounds by default; a non-retryable provider error stops at the first one.
+      assert.equal(calls, failure === "quota" ? 2 : 3);
       assert.equal(f.store.get(f.graph.project.id).steps[0].concluded_at, null);
     } finally {
       await f.close();

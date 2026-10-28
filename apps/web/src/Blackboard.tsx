@@ -215,7 +215,7 @@ function applyPalette(c: Core) {
       events: "no",
     })
     // 框里的真实节点用紧凑卡片，不再按任务圆圈或长事实框绘制。
-    .selector("node[grouped=1]")
+    .selector("node.grouped")
     .style({
       shape: "round-rectangle",
       width: 168,
@@ -477,8 +477,38 @@ export function Blackboard({
   const [hops, setHops] = useState(SCOPE_FULL);
   // 汇总视图：按测试域分框（默认，大图先看域）或按节点类型合并成少量框；
   // 类型视图可展开一个组恢复原节点，域视图本身就把真实节点放在框里。
-  const [summary, setSummary] = useState(() => graph.steps.length + graph.facts.length + graph.findings.length > 40);
-  const [summaryMode, setSummaryMode] = useState<"domain" | "type">("domain");
+  // 视图模式按「项目 + 图」持久化：切去其他页面再回来要保持原样。
+  const summaryKey = `tessera.summaryView:${graph.project.id}:${graphId}`;
+  const readSummaryPref = (): "off" | "domain" | "type" | null => {
+    try {
+      const value = localStorage.getItem(summaryKey);
+      if (value === "off" || value === "domain" || value === "type") return value;
+    } catch {
+      /* localStorage 不可用时只用默认值 */
+    }
+    return null;
+  };
+  const saveSummaryPref = (on: boolean, mode: "domain" | "type") => {
+    try {
+      localStorage.setItem(summaryKey, on ? mode : "off");
+    } catch {
+      /* 忽略写入失败 */
+    }
+  };
+  const defaultSummary = graph.steps.length + graph.facts.length + graph.findings.length > 40;
+  const [summary, setSummary] = useState(() => {
+    const stored = readSummaryPref();
+    return stored ? stored !== "off" : defaultSummary;
+  });
+  const [summaryMode, setSummaryMode] = useState<"domain" | "type">(() =>
+    readSummaryPref() === "type" ? "type" : "domain",
+  );
+  // 换项目/换图时恢复该图自己的视图模式
+  useEffect(() => {
+    const stored = readSummaryPref();
+    setSummary(stored ? stored !== "off" : defaultSummary);
+    setSummaryMode(stored === "type" ? "type" : "domain");
+  }, [summaryKey]);
   const [expanded, setExpanded] = useState<string[]>([]);
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const layoutSequence = useRef(0),
@@ -966,12 +996,31 @@ export function Blackboard({
         const existing = c.getElementById(String(el.data.id));
         if (existing.length) {
           existing.data(el.data);
+          // cytoscape 的 data() 是合并而不是替换：退出域分框后，旧的 grouped/group
+          // 等汇总标记会留在节点上，把事实/发现继续画成紧凑卡片。这里清掉新数据里
+          // 不存在的旧键，恢复原始节点样式和完整标签。
+          for (const key of Object.keys(existing.data())) {
+            if (!(key in (el.data as any))) existing.removeData(key);
+          }
           // 域分框重排后，已有节点也要更新坐标；只更新 data 会让新卡片和旧位置错开。
           if ((el as any).position) existing.position((el as any).position);
         } else {
           c.add(el);
           changed = true;
         }
+      }
+      // 卡片样式用 class 而不是 data 选择器：退出域分框时先整体清掉，
+      // 再只给当前域分框里的输出节点加回，避免残留 data 让事实/发现继续显示为小卡片。
+      c.nodes().removeClass("grouped");
+      if (summaryRef.current && summaryModeRef.current === "domain") {
+        for (const el of nodeDefinitions) {
+          if ((el.data as any).grouped) c.getElementById(String(el.data.id)).addClass("grouped");
+        }
+      } else {
+        // 非域分框视图里 group/grouped 没有业务含义；cytoscape 的 data 合并可能留下
+        // 上一次域分框的标记，这里直接清掉，保证退出汇总后回到原图节点。
+        c.nodes().removeData("group");
+        c.nodes().removeData("grouped");
       }
     });
     lastElements.current = elementSignature;
@@ -1155,7 +1204,9 @@ export function Blackboard({
               aria-label="汇总方式"
               value={summaryMode}
               onChange={(e) => {
-                setSummaryMode(e.target.value === "type" ? "type" : "domain");
+                const mode = e.target.value === "type" ? "type" : "domain";
+                setSummaryMode(mode);
+                saveSummaryPref(true, mode);
                 setExpanded([]);
               }}
             >
@@ -1175,13 +1226,10 @@ export function Blackboard({
           <button aria-label="适应黑板" title="适应窗口" onClick={() => cy.current?.fit(undefined, 65)}>
             <Maximize size={15} />
           </button>
-          <button
-            aria-label="自动整理黑板"
-            title={summaryOn && summaryMode === "domain" ? "重新排列测试域卡片" : "按层级整理节点与连线"}
-            onClick={() => void layoutGraph()}
-          >
-            <Network size={15} />
+          <button aria-label="导出黑板图片" title="导出 PNG" onClick={download}>
+            <Download size={15} />
           </button>
+          {/* 测试域分框、整理节点与连线放在动效开关正上方 */}
           <button
             aria-label={summaryOn ? "退出汇总" : "按测试域汇总"}
             title={
@@ -1194,14 +1242,21 @@ export function Blackboard({
             aria-pressed={summaryOn}
             disabled={scoped}
             onClick={() => {
-              setSummary((value) => !value);
+              setSummary((value) => {
+                saveSummaryPref(!value, summaryModeRef.current);
+                return !value;
+              });
               setExpanded([]);
             }}
           >
             <Boxes size={15} />
           </button>
-          <button aria-label="导出黑板图片" title="导出 PNG" onClick={download}>
-            <Download size={15} />
+          <button
+            aria-label="自动整理黑板"
+            title={summaryOn && summaryMode === "domain" ? "重新排列测试域卡片" : "按层级整理节点与连线"}
+            onClick={() => void layoutGraph()}
+          >
+            <Network size={15} />
           </button>
           <button
             aria-label={motion ? "关闭黑板动效" : "开启黑板动效"}

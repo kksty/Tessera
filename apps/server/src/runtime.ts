@@ -27,6 +27,18 @@ export const modelSchema = z.object({
   max_output_tokens: z.number().int().min(0).default(0),
   disable_thinking: z.boolean().optional(),
 });
+// The webhook is a secret-bearing URL. Validate it as HTTPS (Feishu only accepts
+// https hooks) but allow an empty string so notifications can be left off.
+const feishuWebhookSchema = z
+  .string()
+  .trim()
+  .default("")
+  .refine((v) => !v || (/^https:\/\//i.test(v) && URL.canParse(v)), "飞书 Webhook 必须是 HTTPS 地址");
+export const notificationSchema = z.object({
+  feishu_webhook: feishuWebhookSchema,
+  notify_new_finding: z.boolean().default(false),
+  notify_needs_human: z.boolean().default(false),
+});
 export const configSchema = z
   .object({
     server: z.string().url(),
@@ -47,9 +59,14 @@ export const configSchema = z
       .refine((v) => v === 0 || v >= 30, "Task timeout must be 0 (unlimited) or at least 30 seconds"),
     closeout_seconds: z.number().int().min(1).max(300).optional(),
     tool_timeout_seconds: z.number().int().min(0).max(600).default(0),
-    result_repairs: z.number().int().min(0).max(3).default(1),
+    result_repairs: z.number().int().min(0).max(3).default(2),
     capture_enabled: z.boolean().default(true),
     skip_informational_review: z.boolean().default(false),
+    notifications: notificationSchema.default({
+      feishu_webhook: "",
+      notify_new_finding: false,
+      notify_needs_human: false,
+    }),
     model: modelSchema,
     review_model: modelSchema.optional(),
   })
@@ -84,6 +101,14 @@ export class RuntimeConfig {
     task_timeout_seconds: 0,
     capture_enabled: true,
     skip_informational_review: false,
+    notifications: {
+      // Empty by default: tests and fresh installs never deliver until an operator
+      // pastes a webhook in Settings. Both switches start on so filling the webhook
+      // is the only step needed.
+      feishu_webhook: "",
+      notify_new_finding: true,
+      notify_needs_human: true,
+    },
     model: {
       id: "",
       base_url: "",
@@ -116,6 +141,9 @@ export class RuntimeConfig {
       ["TESSERA_TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds", true],
       ["TESSERA_RESULT_REPAIRS", "result_repairs", true],
       ["TESSERA_SKIP_INFORMATIONAL_REVIEW", "skip_informational_review", "boolean"],
+      ["TESSERA_FEISHU_WEBHOOK", "notifications.feishu_webhook"],
+      ["TESSERA_NOTIFY_NEW_FINDING", "notifications.notify_new_finding", "boolean"],
+      ["TESSERA_NOTIFY_NEEDS_HUMAN", "notifications.notify_needs_human", "boolean"],
       ["PI_MODEL", "model.id"],
       ["PI_BASE_URL", "model.base_url"],
       ["PI_API_KEY", "model.api_key"],
@@ -158,7 +186,7 @@ export class RuntimeConfig {
   }
   private merge(base: Record<string, unknown>, patch: Record<string, unknown>) {
     const value = { ...base, ...patch };
-    for (const key of ["model", "review_model"]) {
+    for (const key of ["model", "review_model", "notifications"]) {
       if (patch[key] && typeof patch[key] === "object" && !Array.isArray(patch[key]))
         value[key] = { ...(base[key] as object), ...(patch[key] as object) };
     }
@@ -192,12 +220,21 @@ export class RuntimeConfig {
       api_key: "",
       api_key_set: !!m.api_key,
     });
+    // The webhook carries its own bot secret in the URL path, so it is masked to
+    // "set" metadata exactly like an API key and never echoed back verbatim.
+    const hideWebhook = (n: DispatchConfig["notifications"]) => ({
+      feishu_webhook: "",
+      feishu_webhook_set: !!n?.feishu_webhook,
+      notify_new_finding: n?.notify_new_finding === true,
+      notify_needs_human: n?.notify_needs_human === true,
+    });
     const { server, worker_image, network, volume_prefix, ...publicValue } = this.value;
     return {
       ...publicValue,
       read_only_fields: [...this.readOnlyFields],
       model: hide(this.value.model),
       review_model: this.value.review_model ? hide(this.value.review_model) : undefined,
+      notifications: hideWebhook(this.value.notifications),
     };
   }
   requireModel() {
@@ -263,6 +300,22 @@ export class RuntimeConfig {
         (nativeProvider(incoming.provider) || nativeProvider(previous?.provider));
       if ((changedEndpoint || changedProvider) && !incoming?.api_key) model.api_key = "";
       else if (incoming && incoming.api_key === "") model.api_key = previous?.api_key ?? "";
+    }
+    // Same masked-secret rule as model keys: an empty submitted webhook keeps the
+    // stored one; the operator explicitly clears it by setting the field to a
+    // single "-" so an accidental blank never drops the delivery channel.
+    {
+      const notifications = persisted.notifications as Record<string, unknown> | undefined;
+      if (notifications && typeof notifications === "object") {
+        delete notifications.feishu_webhook_set;
+        const previous = this.persisted.notifications as Record<string, unknown> | undefined;
+        const incoming = patch.notifications as Record<string, unknown> | undefined;
+        if (incoming && incoming.feishu_webhook === "") {
+          notifications.feishu_webhook = previous?.feishu_webhook ?? this.defaults.notifications.feishu_webhook;
+        } else if (incoming && incoming.feishu_webhook === "-") {
+          notifications.feishu_webhook = "";
+        }
+      }
     }
     const value = this.effective(persisted);
     mkdirSync(dirname(this.file), { recursive: true });

@@ -224,7 +224,7 @@ test("editing a confirmed Hint on a completed project reopens the search", () =>
   }
 });
 
-test("a model note is recorded advice and only an operator confirmation closes a Hint", () => {
+test("a model note closes a Hint (resolved_by decide); an unexplained Hint still blocks", () => {
   const store = new Store(":memory:");
   try {
     const id = store.create(
@@ -241,23 +241,48 @@ test("a model note is recorded advice and only an operator confirmation closes a
     });
     assert.equal(noted.settle.ok, true);
     let graph = store.get(id);
-    assert.equal(graph.hints[0].resolved, undefined, "a note must not close the Hint");
+    assert.equal(graph.hints[0].resolved_by, "decide", "a non-empty note is a model closure");
+    assert.equal(graph.hints[0].resolved?.note, "低优先级，本轮先不单独立项");
     assert.equal(graph.hints[0].notes?.at(-1)?.note, "低优先级，本轮先不单独立项");
 
-    // A new directive wakes Decide again; the earlier advice is still visible.
+    // A new directive wakes Decide again; without a note it still blocks complete.
     store.hint(id, "Follow up on the login page");
     const planner2 = store.claim(id, "planner-2", 0)!;
     assert.equal(planner2.kind, "decide");
     const blocked = decision(store, id, planner2.worker, { complete: { from: ["origin"], description: "Done" } });
     assert.equal(blocked.settle.ok, false);
-    assert.match(blocked.settle.conflicts[0].reason, /h001/);
+    assert.match(blocked.settle.conflicts[0].reason, /h002/);
 
-    store.resolveHint(id, "h001", { note: "人工确认无需继续跟踪" });
-    store.resolveHint(id, "h002", { note: "人工确认无需继续跟踪" });
-    const completed = decision(store, id, planner2.worker, { complete: { from: ["origin"], description: "Done" } });
-    assert.equal(completed.settle.ok, true);
+    // The Decider closes the remaining Hint by explaining it, then completes.
+    const closed = decision(store, id, planner2.worker, {
+      hint_notes: [{ id: "h002", note: "已在本轮结论中落实登录页检查" }],
+      complete: { from: ["origin"], description: "Done" },
+    });
+    assert.equal(closed.settle.ok, true);
     assert.equal(store.get(id).project.status, "completed");
-    assert.equal(store.get(id).hints[0].resolved_by, "operator");
+    assert.equal(store.get(id).hints[1].resolved_by, "decide");
+  } finally {
+    store.close();
+  }
+});
+
+test("an operator can reopen a Hint the model closed", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = store.create(
+      createProjectSchema.parse({
+        title: "Reopen model closure",
+        origin: "https://example.test",
+        goal: "goal",
+        hints: [{ content: "Check the login page" }],
+      }),
+    ).project.id;
+    const planner = store.claim(id, "planner", 0)!;
+    decision(store, id, planner.worker, { hint_notes: [{ id: "h001", note: "已落实，无独立价值" }] });
+    assert.equal(store.get(id).hints[0].resolved_by, "decide");
+    store.reopenHint(id, "h001", { note: "仍需跟踪" });
+    assert.equal(store.get(id).hints[0].resolved, undefined);
+    assert.equal(store.get(id).hints[0].reopened_at !== undefined, true);
   } finally {
     store.close();
   }

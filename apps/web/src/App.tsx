@@ -14,6 +14,7 @@ import { brand } from "./brand.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { RichText } from "./components/RichText.js";
 import { Drawer, Modal, Toast } from "./components/ui.js";
+import { TrafficPreviewModal } from "./components/TrafficInspector.js";
 import { Sidebar, Topbar } from "./components/Shell.js";
 import { ProjectExtras } from "./WorkbenchTools.js";
 import { ProjectUsage } from "./components/ProjectUsage.js";
@@ -138,6 +139,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     findingId: string;
   } | null>(null);
   const [trafficTarget, setTrafficTarget] = useState<TrafficTarget | null>(null);
+  const [trafficPreview, setTrafficPreview] = useState<TrafficTarget | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const authenticated = session?.authenticated === true;
   // 时间线和回放按「图有变化」推进：用量与证据归档不产生新的画面时刻。
@@ -768,6 +770,14 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     setTrafficTarget(target);
   }
 
+  /** 就地弹层预览一条流量：不切页、不改路由，关闭后原页面保持原样。 */
+  function openTrafficPreview(target: TrafficTarget) {
+    setTrafficPreview(target);
+  }
+  function closeTrafficPreview() {
+    setTrafficPreview(null);
+  }
+
   function openFinding(projectId: string, findingId: string) {
     setFindingSeverity("all");
     // Navigation clears the focus target; set it afterwards so a cross-project
@@ -866,6 +876,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     findingSeverity,
     focusFinding,
     trafficTarget,
+    trafficPreview,
     paletteOpen,
     refreshing,
     node,
@@ -906,6 +917,8 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     setFindingSeverity,
     openFinding,
     openTraffic,
+    openTrafficPreview,
+    closeTrafficPreview,
     clearFocusFinding: () => setFocusFinding(null),
     setPaletteOpen,
     setTheme: setThemeState,
@@ -1284,6 +1297,15 @@ export function App({ session, setSession }: { session: Session; setSession: (se
               />
             </label>
           </Modal>
+        )}
+
+        {trafficPreview && id && (
+          <TrafficPreviewModal
+            project={id}
+            flowId={trafficPreview.flowId}
+            label={trafficPreview.label || trafficPreview.findingId}
+            onClose={closeTrafficPreview}
+          />
         )}
       </div>
     </WorkspaceContext.Provider>

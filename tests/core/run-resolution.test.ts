@@ -132,3 +132,51 @@ test("confirming a retry marks the Run as handled and releases the Step", () => 
     store.close();
   }
 });
+
+test("a human-gated Execute does not burn the model-failure budget", () => {
+  const { store, id, job } = fixture();
+  try {
+    store.mutate(id, "", false, (g) => {
+      g.project.model_failures = 2;
+    });
+    store.externalAction(id, job);
+    store.release(
+      id,
+      job,
+      "Model provider failure: final JSON does not match the job protocol (execute): facts.0: Invalid input",
+    );
+
+    const blocked = store.get(id);
+    assert.equal(blocked.steps[0].blocked_run_id, job.run_id);
+    assert.equal(blocked.project.status, "active");
+    assert.equal(
+      blocked.project.model_failures,
+      2,
+      "the Step already stops auto-retry; it must not become the third project-wide strike",
+    );
+    assert.equal(blocked.project.model_retry_at, undefined, "no project-wide model backoff for a gated Run");
+
+    // A Decide that is not gated still counts, and this one is the third.
+    const planner = store.claim(id, "decider", 0)!;
+    assert.equal(planner.kind, "decide");
+    store.release(id, planner, "Model provider failure: 503: overloaded");
+    const stopped = store.get(id);
+    assert.equal(stopped.project.model_failures, 3);
+    assert.equal(stopped.project.status, "stopped");
+  } finally {
+    store.close();
+  }
+});
+
+test("an Execute that never reached the target still counts toward the model budget", () => {
+  const { store, id, job } = fixture();
+  try {
+    store.release(id, job, "Model provider failure: 503: overloaded");
+    const graph = store.get(id);
+    assert.equal(graph.steps[0].blocked_run_id, undefined);
+    assert.equal(graph.project.status, "active");
+    assert.equal(graph.project.model_failures, 1);
+  } finally {
+    store.close();
+  }
+});

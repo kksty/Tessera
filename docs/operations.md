@@ -29,13 +29,13 @@ Shell 和看门狗使用显式环境白名单，只传递路径、语言、代�
 
 ## 一致性备份和恢复
 
-需要一起备份平台目录（默认 `datas/tessera`）和每个项目的 `/workspace` 命名卷。平台目录包含数据库、WAL、归档原件、runtime 配置和内部凭据，按凭据文件的权限保护备份。在线复制单个 `.db` 文件不能替代 SQLite 一致性备份。
+需要一起备份平台命名卷（`/data`，默认 `tessera-data`）和每个项目的 `/workspace` 命名卷。平台卷包含数据库、WAL、归档原件、runtime 配置和内部凭据，按凭据文件的权限保护备份。在线复制单个 `.db` 文件不能替代 SQLite 一致性备份。
 
 一次完整的维护备份应按以下顺序执行：
 
 1. 暂停项目并等所有 Run 退出，停止 Dispatcher 和 Server 写入。
-2. 记录应用与 Worker 镜像版本、平台挂载方式和项目卷名称。
-3. 在同一个备份代次中复制整个平台目录与所有项目工作区卷，并保存文件校验清单。
+2. 记录应用与 Worker 镜像版本、平台卷名称和项目卷名称。
+3. 在同一个备份代次中复制整个平台卷与所有项目工作区卷，并保存文件校验清单。
 4. 在隔离的 Compose 项目中恢复，核对项目数、原件 SHA-256、报告、会话和 outbox，再恢复服务。
 
 备份保留代数和异地存放由部署方确定；未完成隔离恢复演练前不要删除旧代次。应用内删除项目不会删除外部备份或模型服务已经保存的数据。
@@ -61,9 +61,12 @@ ZIP 内包含 `manifest.json`（条目 SHA-256、计数、缺失原件警告）�
 
 ## 数据目录与命名卷
 
-`/data` **始终是 Docker 命名卷**（默认 `tessera-data`），不再支持宿主机目录挂载。2026-10-26 实测：Windows bind mount（9p/grpc-fuse）下 SQLite 写放大可达 15–90 倍，全图读取 92–160 ms（卷内 6–8 ms），20 MB 提交 6.8 s（卷内 77 ms），长尾会把 `POST /jobs/claim` 推到 40–56 s，并最终造成页级损坏；迁移后已弃用目录模式。
+`/data` **始终是 Docker 命名卷**（默认 `tessera-data`），也是唯一形态：没有宿主机目录挂载，也没有额外的覆盖层或迁移脚本。2026-10-26 实测：Windows bind mount（9p/grpc-fuse）下 SQLite 写放大可达 15–90 倍，全图读取 92–160 ms（卷内 6–8 ms），20 MB 提交 6.8 s（卷内 77 ms），长尾会把 `POST /jobs/claim` 推到 40–56 s，并最终造成页级损坏；因此目录模式已删除，不再提供兼容路径。
 
 ```powershell
+# 首次部署：卷在 Compose 中是 external，先创建一次
+docker volume create tessera-data
+
 # 日常启动：compose.yaml 直接使用命名卷
 docker compose up -d
 
@@ -71,23 +74,15 @@ docker compose up -d
 TESSERA_DATA_VOLUME=other-data docker compose up -d
 ```
 
-`TESSERA_DATA_VOLUME` 只决定卷名，不会创建数据。该卷在 Compose 中是 `external`：首次部署先 `docker volume create tessera-data`（迁移脚本会自动创建），`docker compose down -v` 也不会删除它。换卷名等于挂载空卷，会生成新的数据库与登录凭据。
+`TESSERA_DATA_VOLUME` 只决定卷名，不会创建数据。该卷在 Compose 中是 `external`：`docker compose down -v` 也不会删除它。换卷名等于挂载空卷，会生成新的数据库与登录凭据。
 
-从旧的 `datas/tessera` 目录迁移是一次停机操作（约 15–30 分钟，取决于证据文件数），使用脚本完成停服 → 备份 → tar 打包 → 解包 → 校验 → 启动 → 健康检查：
+排查时直接读卷内容，不要挂回宿主机目录再交给 Server 使用：
 
 ```powershell
-pwsh scripts/ops/migrate-data-to-volume.ps1                 # 源目录、卷名、镜像均可参数化
-node scripts/ops/verify-data-volume.mjs datas/tessera/tessera.db datas/tessera/evidence
+docker run --rm -v tessera-data:/data alpine sh -c "ls -l /data && du -sh /data"
 ```
 
-要点：
-
-- 必须停服：DB 与 WAL 在写入中途复制会不一致；脚本先 `docker compose stop`，再单独停止 `tessera-worker-*`。
-- 20 万级小文件不要在容器里直接从 bind mount 逐文件读取：实测约 4k 文件/分钟（近 1 小时）。脚本改为宿主机 `tar` 打包（约 1 分钟，单文件 ~1 GB），容器只做一次顺序读取并解包到卷（约 30 秒）。`tar` 保留 `600 root` 权限。
-- 解包后删除源库残留的 `tessera.db-shm` / `tessera.db-wal`（旧进程共享内存，SQLite 会重建）；脚本会拒绝覆盖已存在的同名卷。
-- 校验 `PRAGMA quick_check`、项目/Run/证据计数与 evidence 文件数；`/health` 返回 ok 后才算完成。
-- 旧目录只作为回退/备份来源，保留 3–7 天后再删除；代码回退改 `TESSERA_IMAGE_TAG`，数据恢复从 `datas/release-backups` 解包到新卷。
-- 迁移后重新确认 `docker inspect tessera-tessera-server-1 --format '{{json .Mounts}}'` 指向命名卷，并观察 1 小时 `/api/control-plane/timing` 的 claim p99 与事务 max。
+卷内包含数据库、WAL、归档原件、`runtime.json`、登录凭据和内部 token。恢复后可用任意 SQLite 工具对导出的副本执行 `PRAGMA quick_check`，并核对项目数、Run 数与 evidence 文件数。
 
 ## 超时预算与失败分类
 
@@ -116,9 +111,13 @@ Run 结束时写入 `failure_kind`：
 
 项目上同时记录 `last_failure_kind`、`infra_failures`、`infra_retry_at`；项目页对基础设施故障显示“控制面故障，第 N 次退避重试”，运行记录显示模型/基础设施/目标徽标。execute 已放出外部动作时仍升级为 `needs_attention`（安全属性不变），但不再因此停止整个项目。
 
+已升级为 `needs_attention` 的 Execute 不再计入 `model_failures`：它已经被人工闸门停住，再记一次连击会让“一个阻塞任务 + 两次 Decide 抖动”直接暂停整个项目。未被闸门拦住的 Execute 失败仍照常计数。
+
+运行记录的 `failed` 只是那一次尝试的历史，不代表项目在等人：同一种工作已有更高 `attempt` 时显示“已被第 N 次接管”，项目因连续失败暂停时显示“项目已暂停”，只有 `needs_attention` 才显示“需人工检查”并进入人工重试页。
+
 模型偶尔会以“空回复”结束一轮：只有 `stop`、没有正文也没有工具调用（qwen 的 reasoning-only 输出，或工具参数被拒后模型改用不存在的工具）。这类回合不算任务结果：Runner 会先用与 `result_repairs` 相同的预算追问一次（Decide 的提示会点名 `submit_decisions` 并要求每个 `update` 带 `id`，步骤放进 `steps`），记录 `result_repair` 诊断；只有追问后仍为空才按 `model` 失败退避。
 
-最终 JSON 的修复请求对 GLM-5 与 qwen 系列改用**非流式 + JSON mode**（`response_format: {type:"json_object"}`），由 vLLM 的 guided decoding 保证语法有效，避免长上下文下出现 “I've now prepared my full reasoning…” 这类无法解析的碎片。仍按 `result_repairs` 限制次数，修复后不匹配协议才失败。
+最终 JSON 的修复请求对 GLM-5 与 qwen 系列改用**非流式 + JSON mode**（`response_format: {type:"json_object"}`），由 vLLM 的 guided decoding 保证语法有效，避免长上下文下出现 “I've now prepared my full reasoning…” 这类无法解析的碎片。仍按 `result_repairs` 限制次数（默认 2，可设 0–3），修复后不匹配协议才失败。
 
 如果网关把模型的原生工具调用格式（例如 `</think`、`</parameter`、`</function`、`<|…|>`）当成工具名或参数交给 Pi，Runner 会在该回合结束时记录 `tool_protocol_mismatch` 并以 `tool-call protocol mismatch` 失败，提示检查模型服务的 chat template / tool-call parser；不会再用剩余回合反复尝试 “tool not found”。这属于供应商侧配置问题，换用能输出 OpenAI 工具调用的模型或修正 parser 后即可恢复。
 
@@ -134,7 +133,7 @@ Server 默认输出结构化错误日志、鉴权失败和超过 500 ms 的慢�
 
 ## 审核范围与信息类免审
 
-`skip_informational_review` 默认 `false`（`configSchema` 与新建部署一致）。本部署保留操作员原有选择：`datas/tessera/runtime.json` 中为 `true`，即明确标注为信息类且引用原始证据的发现直接归档、不启动 Review。开启后独立审核对信息类失效，这是审核范围的收窄，不应在未确认时改动。部署可用 `TESSERA_SKIP_INFORMATIONAL_REVIEW=true|false` 强制该值，设置页随后显示该项只读。
+`skip_informational_review` 默认 `false`（`configSchema` 与新建部署一致）。本部署保留操作员原有选择：平台卷内的 `/data/runtime.json` 为 `true`，即明确标注为信息类且引用原始证据的发现直接归档、不启动 Review。开启后独立审核对信息类失效，这是审核范围的收窄，不应在未确认时改动。部署可用 `TESSERA_SKIP_INFORMATIONAL_REVIEW=true|false` 强制该值，设置页随后显示该项只读。
 
 此前免审的发现不会被自动重审；本部署也**不做**重审。若以后需要重新审核，仍可用显式接口（会保留旧 system Review 与证据）：
 

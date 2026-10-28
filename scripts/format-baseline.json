@@ -407,17 +407,8 @@
     "9e5cde3e1c6f01a1e959843e2162166af7a28047fa8be240d9f130da68c71f20",
     "1465e8d2e9e3fc139808a4a43dac805efe0fe6983386c2d383dd00f18fb428aa"
   ],
-  "scripts/checks/capacity-model.ts": [
-    "d5ef1348c0ad7526ce6c8270a8c867e83560fe06967af29fa36665b267ea3c6d"
-  ],
-  "scripts/checks/capacity-runner.ts": [
-    "f2d79487cefb0c8cb0e7930e9a7be2877f345285450d484b9111e134a3bc42f7"
-  ],
   "scripts/checks/completion-browser.ts": [
     "162e1cd8ce363fa420b1c956b9e6edc09d4a79cb1121282b62ee20f6b5b3d728"
-  ],
-  "scripts/checks/decide-model.ts": [
-    "0aa44499cdb60fca7b752fc40da19ca156124248c5d399f5fe1d8eca1a6b4fbf"
   ],
   "scripts/checks/deletion-config-browser.ts": [
     "3eb22d3c8ba1a8faa90b009bc7417b4ec2f6d44b01dc5ee930dc650ce73e3006",
@@ -431,20 +422,8 @@
     "51479cea858d1854fdc6d85816412e09a605b7fb3b8b90e7be33f539019aee26",
     "5729d0c771bd09b94457e7cb581e257cd79534defa86108431a67505e70f8ce2"
   ],
-  "scripts/checks/memory-model.ts": [
-    "091458580d2e978484ea4b0e72d80bae80a4f614db851043e6024033ca0fc187"
-  ],
-  "scripts/checks/model-observation.ts": [
-    "56c6c662848b2e5bdf1ab8014d02a65b31aa2f6e46d1d777c0512f2643d4ea8b"
-  ],
   "scripts/checks/models-browser.ts": [
     "5869e62f9f87a59654a5349dc2e1502a20efae47c62eda2b26db8a382e5fd01e"
-  ],
-  "scripts/checks/project-observation.ts": [
-    "c95ec7fcca200840bf4d373ad03bc921a8a1e6d5889abd034b1e7d3394eed570"
-  ],
-  "scripts/checks/result-format.ts": [
-    "951f8810c625bd60f216d24b2424e651171bb46868760d865e87ca4be78944af"
   ],
   "scripts/checks/usage-browser.ts": [
     "18af01ad121b9ca140a577e51c3d907c3684ab1c541bd695d556383674ed798d"

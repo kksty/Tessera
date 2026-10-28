@@ -10,8 +10,8 @@
  * 用法：
  *   pnpm exec tsx scripts/checks/memory-model.ts [--runs 3] [--timeout 900] [--keep]
  *
- * 模型配置默认取运行中部署的持久配置（datas/tessera/runtime.json），可通过
- * TESSERA_ACCEPTANCE_MODEL_JSON（单行 JSON）覆盖。密钥只用于调用模型，不写入任何输出。
+ * 模型配置来自 TESSERA_ACCEPTANCE_CONFIG（从平台卷导出的 runtime.json 副本）
+ * 或 TESSERA_ACCEPTANCE_MODEL_JSON（单行 JSON）。密钥只用于调用模型，不写入任何输出。
  */
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +23,7 @@ import type { ModelConfig } from "../../packages/protocol/src/model-config.js";
 import { buildApp, testWorkerToken } from "../../tests/helpers/server.js";
 import { ApiClient } from "../../packages/runner/src/client.js";
 import { runJob } from "../../packages/runner/src/run.js";
+import { acceptanceRuntime } from "./acceptance-config.js";
 
 const args = process.argv.slice(2);
 const option = (name: string, fallback: number) => {
@@ -109,11 +110,11 @@ function loadModelConfig(): ModelConfig {
     const parsed = JSON.parse(env) as Partial<ModelConfig>;
     return { api: "openai-completions", base_url: "", context_window: 0, ...parsed } as ModelConfig;
   }
-  const file = join(repoRoot, "datas", "tessera", "runtime.json");
-  if (!existsSync(file)) throw new Error(`未找到部署持久配置 ${file}，或用 TESSERA_ACCEPTANCE_MODEL_JSON 提供模型配置`);
-  const model = new RuntimeConfig(file).value.model;
+  const model = acceptanceRuntime().value.model;
   if (!model.id || (!model.base_url && !model.provider) || !model.api_key)
-    throw new Error("部署持久配置缺少模型 ID、供应商或 API 地址、API Key");
+    throw new Error(
+      "配置里缺少模型 ID、API 地址或 API Key：检查导出的 runtime.json，或用 TESSERA_ACCEPTANCE_MODEL_JSON 提供模型配置",
+    );
   return model as ModelConfig;
 }
 

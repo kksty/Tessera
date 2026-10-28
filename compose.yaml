@@ -130,10 +130,11 @@ services:
     networks: [tessera]
     restart: "no"
 volumes:
-  # /data is always a Docker named volume. The name is stable across Compose
-  # project renames; set TESSERA_DATA_VOLUME only to attach an existing volume.
-  # external: Compose never creates or deletes it. Create it once (the migration
-  # script does) so `docker compose down -v` cannot destroy platform data.
+  # /data is always a Docker named volume; host-directory mounts are not supported.
+  # The name is stable across Compose project renames; set TESSERA_DATA_VOLUME only
+  # to attach an existing volume. external: Compose never creates or deletes it.
+  # Create it once with `docker volume create` so `docker compose down -v` cannot
+  # destroy platform data.
   tessera-data:
     name: ${TESSERA_DATA_VOLUME:-tessera-data}
     external: true

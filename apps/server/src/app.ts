@@ -64,6 +64,7 @@ import { registerModelRelay, pinRunModel } from "./model-relay.js";
 import { workerConfig } from "../../dispatcher/src/worker-config.js";
 import { requestLogging } from "./request-logging.js";
 import { runMetrics } from "../../../packages/core/src/run-metrics.js";
+import { Notifier, type PendingItem } from "./notifications.js";
 
 const text = z.string().trim().min(1).max(65536);
 const jobSchema = z.object({
@@ -98,6 +99,69 @@ export function buildApp(
   // Review scope is a persisted platform setting; mirror it into the store so
   // submission, revision and scheduling all apply the same rule.
   store.skipInformationalReview = runtime.value.skip_informational_review === true;
+  // Feishu notifications read the live runtime config on every send, so a switch
+  // toggled in Settings takes effect immediately without a restart.
+  const notifier = new Notifier(() => runtime.value.notifications ?? {});
+  const projectTitle = (id: string) => {
+    try {
+      return store.get(id).project.title || id;
+    } catch {
+      return id;
+    }
+  };
+  // A successful mutating request may change what needs a human. Recompute the
+  // pending-work set afterwards; Notifier only sends when a new item appears, so
+  // this is cheap and does not spam. Best-effort: never affects the response.
+  // Items mirror the project 人工重试 page plus the operator gates: interrupted
+  // Runs awaiting a manual retry decision, assets awaiting approval, project errors.
+  const refreshNeedsHuman = () => {
+    if (runtime.value.notifications?.notify_needs_human !== true) return;
+    try {
+      const items: PendingItem[] = [];
+      for (const project of store.list()) {
+        const graph = store.get(project.id);
+        const blockedRuns = store
+          .runs(project.id, 200)
+          .filter(
+            (run) =>
+              run.status === "needs_attention" &&
+              !run.resolved_at &&
+              !!run.node_id &&
+              graph.steps.some((s) => s.id === run.node_id && !s.deleted && !s.concluded_at && !s.discarded),
+          );
+        if (blockedRuns.length)
+          items.push({
+            key: `${project.id}:retry`,
+            kind: "retry",
+            line: `${project.title}：${blockedRuns.length} 次运行待人工重试`,
+            at: blockedRuns
+              .map((run) => run.finished_at || run.heartbeat_at)
+              .sort()
+              .at(-1),
+          });
+        if (project.pending_asset_count > 0)
+          items.push({
+            key: `${project.id}:assets`,
+            kind: "assets",
+            line: `${project.title}：${project.pending_asset_count} 个资产等待人工批准`,
+            at: graph.assets
+              .filter((asset) => asset.approval === "pending")
+              .map((asset) => asset.created_at)
+              .sort()
+              .at(-1),
+          });
+        if (project.last_error)
+          items.push({
+            key: `${project.id}:error`,
+            kind: "error",
+            line: `${project.title}：项目错误 — ${String(project.last_error).replace(/\s+/g, " ").slice(0, 120)}`,
+          });
+      }
+      notifier.notifyNeedsHuman(items);
+    } catch {
+      // A concurrent write or unreadable project must not surface to the caller.
+    }
+  };
   // Control-plane timing: receive to response, per route, plus the store's own
   // transaction cost. Recording is best-effort and never affects the response.
   controlPlane.startEventLoopDelay();
@@ -109,6 +173,14 @@ export function buildApp(
     if (started === undefined) return;
     const route = (req as any).routeOptions?.url || (req.url || "").split("?")[0] || "/";
     controlPlane.recordRequest(route, req.method, Number(process.hrtime.bigint() - started) / 1e6, reply.statusCode);
+  });
+  // Any successful non-GET request may have created work that needs a human
+  // (a new candidate, a discovered asset, a project error). Recompute once the
+  // response is sent so the check never delays the caller.
+  app.addHook("onResponse", async (req, reply) => {
+    if (req.method === "GET" || reply.statusCode >= 400) return;
+    if (!(req.url || "").startsWith("/api/")) return;
+    refreshNeedsHuman();
   });
   const reports = new Reports(store);
   const workspaceKey = readWorkspaceSecret(dirname(store.evidenceRoot));
@@ -767,7 +839,9 @@ export function buildApp(
       });
       api.post<{ Params: { id: string } }>("/projects/:id/fgs/findings", (req) => {
         operatorCheck(req);
-        return store.submitFinding(req.params.id, findingSchema.parse(req.body));
+        const finding = store.submitFinding(req.params.id, findingSchema.parse(req.body));
+        notifier.notifyNewFinding(finding, projectTitle(req.params.id));
+        return finding;
       });
       api.post<{ Params: { id: string; step: string } }>("/projects/:id/fgs/steps/:step/findings", (req) => {
         workerCheck(req, req.params.id);
@@ -777,7 +851,9 @@ export function buildApp(
           findingSchema.extend({ worker: text }),
           (b) => {
             const { worker, ...input } = b;
-            return store.submitStepFinding(req.params.id, req.params.step, worker, input);
+            const finding = store.submitStepFinding(req.params.id, req.params.step, worker, input);
+            notifier.notifyNewFinding(finding, projectTitle(req.params.id));
+            return finding;
           },
           "execute",
           req.params.step,

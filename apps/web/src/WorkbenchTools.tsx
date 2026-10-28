@@ -922,10 +922,12 @@ export function QuickSidebar({
                   const status = h.resolved
                     ? h.resolved_by === "operator"
                       ? "已人工确认"
-                      : "历史关闭"
+                      : h.resolved_by === "decide"
+                        ? "决策已关闭"
+                        : "历史关闭"
                     : covered.length
                       ? "已落实"
-                      : "待确认";
+                      : "待处置";
                   return (
                     <QuickItem
                       key={h.id}

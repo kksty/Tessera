@@ -2,11 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { DomainError } from "../../../packages/core/src/errors.js";
 import { modelIssue, redactModelError } from "../../../packages/protocol/src/model-errors.js";
-import {
-  sameModelDeployment,
-  type ModelConfig,
-  type ModelMetadata,
-} from "../../../packages/protocol/src/model-config.js";
+import { sameModelDeployment, type ModelConfig } from "../../../packages/protocol/src/model-config.js";
 import {
   configuredModel,
   modelCatalog,
@@ -22,55 +18,16 @@ const modelInputSchema = modelSchema.extend({
   scope: z.enum(["model", "review_model"]).optional(),
 });
 
-// Connectivity is not capacity: a 16-token ping keeps answering when the endpoint
-// silently drops every request big enough to matter. The probe therefore spends
-// the budget a real Run spends — a context sized from the declared window plus the
-// declared output ceiling — so a deployment that cannot honour the declaration
-// fails at the settings check instead of mid-Run with an empty stream.
-// The ceiling bounds the cost; the floor only keeps a degenerate budget from
-// producing an empty prompt. Never exceed the declared prompt allowance, so a
-// genuinely small window is not failed by the probe itself.
-const PROBE_CONTEXT_CEILING = 32768;
-const PROBE_CONTEXT_MINIMUM = 512;
-const PROBE_SAFETY_TOKENS = 4096;
-// Pi budgets with 3.5 characters per token. Sizing the filler by Pi's own constant
-// keeps Pi's clamp authoritative, so the probe can never overrun the declaration.
-const PROBE_CHARS_PER_TOKEN = 3.5;
-const PROBE_TIMEOUT_MS = 180_000;
-// Join before splitting: `a + b + c.split(" ")` would coerce the array back into a
-// comma-joined string, so indexing it would yield single characters and commas.
-const PROBE_VOCABULARY = [
-  "asset finding evidence probe context boundary request decision review step observation graph revision",
-  "worker lease heartbeat session fingerprint capacity window completion stream transport adapter provider",
-  "endpoint credential envelope render surface anchor receipt queue batch retry deadline budget",
-]
-  .join(" ")
-  .split(" ");
-
-function probeBudget(metadata: ModelMetadata) {
-  const available = metadata.context_window - metadata.max_output_tokens - PROBE_SAFETY_TOKENS;
-  return {
-    context: Math.max(PROBE_CONTEXT_MINIMUM, Math.min(PROBE_CONTEXT_CEILING, available)),
-    output: metadata.max_output_tokens,
-    // The cost ceiling means a large declaration is only probed up to 32K; report that honestly.
-    capped: available > PROBE_CONTEXT_CEILING,
-  };
-}
-
-/** Varied ASCII filler tokenizes close to Pi's estimate; repeated lines collapse. */
-function probeFiller(tokens: number) {
-  let seed = 0x9e3779b9;
-  const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
-  const target = Math.ceil(tokens * PROBE_CHARS_PER_TOKEN);
-  const words: string[] = [];
-  for (let size = 0; size < target;) {
-    const word = PROBE_VOCABULARY[Math.floor(random() * PROBE_VOCABULARY.length)];
-    const sample = random() < 0.1 ? `${word}-${Math.floor(random() * 100000)}` : word;
-    words.push(sample);
-    size += sample.length + 1;
-  }
-  return words.join(" ");
-}
+// The settings button is a connectivity test, not a capacity probe. Probing capacity
+// means sending a prompt sized from the declared window — tens of thousands of input
+// tokens per click — so an operator action cost as much as a real Run. This check
+// sends one short prompt with a small output ceiling: it can prove that the endpoint,
+// key and protocol answer, and it deliberately cannot prove that the declared window
+// fits. Capacity surfaces in the first real Run, which fails into needs_attention
+// with the numbers, not in the settings page.
+const CHECK_PROMPT = "只回复 OK。";
+const CHECK_MAX_TOKENS = 128;
+const CHECK_TIMEOUT_MS = 60_000;
 export function registerRuntimeRoutes(
   api: FastifyInstance,
   runtime: RuntimeConfig,
@@ -138,26 +95,6 @@ export function registerRuntimeRoutes(
     const issue = modelIssue(raw)!;
     return new DomainError(422, `${issue.title}：${issue.action}`);
   };
-  const capacityFailure = (
-    metadata: ModelMetadata,
-    budget: { context: number; output: number },
-    sent: number | null,
-    elapsed: number,
-    error: unknown,
-    key: string,
-  ) => {
-    const detail = redactModelError(error instanceof Error ? error.message : String(error), [key]).slice(0, 300);
-    const issue = modelIssue(`Context capacity probe failed: ${detail}`);
-    // An endpoint that accepts an oversized request and then returns nothing is the
-    // failure this probe exists for, so name the numbers instead of the transport.
-    return new DomainError(
-      422,
-      `${issue?.title ?? "上下文预算不足"}：已按「上下文检测 ${budget.context.toLocaleString()} tokens + 输出上限 ` +
-        `${(sent ?? budget.output).toLocaleString()} tokens」（声明窗口 ${metadata.context_window.toLocaleString()}）` +
-        `发出真实请求，${elapsed.toLocaleString()} ms 后没有得到完整响应（${detail || "空响应"}）。` +
-        `${issue?.action ?? "请按部署实际能力下调上下文窗口或输出上限，然后重新检测。"}`,
-    );
-  };
   api.post("/runtime/model-check", async (req) => {
     operatorCheck(req);
     const cfg = modelInput(req.body);
@@ -165,54 +102,38 @@ export function registerRuntimeRoutes(
     const started = Date.now();
     try {
       const { runtime: pi, model, metadata } = await configuredModel(cfg);
-      const budget = probeBudget(metadata);
-      // Pi clamps this against the remaining window, so record what actually went out.
-      let sent: number | null = null;
+      // One short prompt, small output ceiling: the whole request costs a few dozen
+      // tokens, so the operator can press this button without burning Run budget.
       const result = await pi.completeSimple(
         model,
-        {
-          messages: [
-            {
-              role: "user",
-              content: `${probeFiller(budget.context)}\n\n以上内容与本任务无关，仅用于占用声明的上下文预算。只回复 OK。`,
-              timestamp: Date.now(),
-            },
-          ],
-        },
-        {
-          maxTokens: budget.output,
-          maxRetries: 0,
-          signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-          onPayload: (payload) => {
-            const body = payload as Record<string, unknown>;
-            const value = Number(body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens);
-            if (Number.isFinite(value) && value > 0) sent = value;
-          },
-        },
+        { messages: [{ role: "user", content: CHECK_PROMPT, timestamp: Date.now() }] },
+        { maxTokens: CHECK_MAX_TOKENS, maxRetries: 0, signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) },
       );
       const elapsed = Date.now() - started;
       // Pi reports uncached input in `input` and cache hits separately; the operator
       // needs the prompt the deployment actually saw, not only its cache miss.
       const usage = result.usage;
-      const promptTokens = usage ? usage.input + usage.cacheRead + usage.cacheWrite : null;
-      if (result.stopReason === "error" || result.stopReason === "aborted")
-        throw capacityFailure(metadata, budget, sent, elapsed, result.errorMessage || result.stopReason, cfg.api_key);
-      if (!result.content.length)
-        throw capacityFailure(metadata, budget, sent, elapsed, new Error("empty provider response"), cfg.api_key);
+      if (result.stopReason === "error" || result.stopReason === "aborted") {
+        const detail = redactModelError(result.errorMessage || result.stopReason, [cfg.api_key]).slice(0, 300);
+        const issue = modelIssue(`Model provider failure: ${detail}`);
+        throw new DomainError(
+          422,
+          `连接测试失败：已发出一次极短请求，${elapsed.toLocaleString()} ms 后没有得到完整响应（${detail || "空响应"}）。` +
+            `${issue?.action ?? "请检查 API 地址、密钥与接口协议，保存后再用真实任务验证。"}`,
+        );
+      }
       return {
         ok: true,
         model: metadata,
         compaction: modelSettings(model).getCompactionSettings(model),
         elapsed_ms: elapsed,
-        capacity: {
-          context_window: metadata.context_window,
-          output_limit: metadata.max_output_tokens,
-          context_probe_tokens: budget.context,
-          context_probe_limit: PROBE_CONTEXT_CEILING,
-          context_probe_capped: budget.capped,
-          max_tokens: sent,
-          prompt_tokens: promptTokens,
-          cached_tokens: usage ? usage.cacheRead + usage.cacheWrite : null,
+        reply: result.content
+          .map((part) => (part.type === "text" ? part.text : ""))
+          .join("")
+          .trim()
+          .slice(0, 200),
+        usage: {
+          prompt_tokens: usage ? usage.input + usage.cacheRead + usage.cacheWrite : null,
           completion_tokens: usage?.output ?? null,
         },
       };

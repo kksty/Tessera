@@ -80,10 +80,12 @@ export function HintControls({ hintId }: { hintId: string }) {
         {hint.resolved
           ? hint.resolved_by === "operator"
             ? `已由人工确认：${hint.resolved.note}（${hint.resolved.worker}）`
-            : `历史备注关闭（${hint.resolved.worker}），尚未经过新的操作员确认；请核对后重新确认或重开`
+            : hint.resolved_by === "decide"
+              ? `已由决策按落实说明关闭：${hint.resolved.note}；如需继续跟踪可重新打开`
+              : `历史备注关闭（${hint.resolved.worker}），尚未经过新的操作员确认；请核对后重新确认或重开`
           : tasks.length
-            ? `已落实到 ${tasks.length} 个任务；仍需人工确认后才能完成项目`
-            : "尚未落实：下一轮决策应建任务，或说明不采纳的理由；说明本身不会关闭提示"}
+            ? `已落实到 ${tasks.length} 个任务；决策可在 hint_notes 说明落实后自行关闭，或由人工确认`
+            : "尚未落实：下一个决策应建任务，或在 hint_notes 说明不采纳的理由（据此关闭提示）"}
       </small>
       {!hint.resolved && (hint.notes?.length ?? 0) > 0 && (
         <small className="quiet">决策建议：{hint.notes?.at(-1)?.note}</small>

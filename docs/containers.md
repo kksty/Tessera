@@ -61,26 +61,25 @@ docker compose up -d --build
 
 - 只重建变化的构建层；应用镜像通常很快，Worker 镜像较慢。
 - 旧项目 Worker 在任务排空后按新镜像重建；升级前确认没有在途任务，避免中断正在执行的外部动作。
-- 升级前备份 `datas/` 或命名卷，见[运行、数据归档与升级](operations.md)；不要删除平台数据目录或项目工作区卷。
+- 升级前备份平台命名卷与项目工作区卷，见[运行、数据归档与升级](operations.md)；不要删除平台数据卷或项目工作区卷。
 - `docker compose down` 只停止容器，不删除数据。
 
 ## 数据目录：始终使用命名卷
 
-`/data` 由 `compose.yaml` 直接挂载命名卷 `tessera-data`（可由 `TESSERA_DATA_VOLUME` 改名），不再支持宿主机目录挂载。旧目录模式在 Windows 9p/grpc-fuse 上有 15–90× 写放大，已导致过 claim 长尾与数据库页级损坏。
+`/data` 由 `compose.yaml` 直接挂载命名卷 `tessera-data`（可由 `TESSERA_DATA_VOLUME` 改名）。命名卷是唯一形态：没有宿主机目录挂载，也没有兼容覆盖层或迁移脚本。旧目录模式在 Windows 9p/grpc-fuse 上有 15–90× 写放大，已导致过 claim 长尾与数据库页级损坏，因此已删除。
 
 ```powershell
-# 首次：从旧目录停机迁移（停服 → 备份 → tar → 校验 → 启动）
-pwsh scripts/ops/migrate-data-to-volume.ps1
+# 首次部署：卷在 Compose 中是 external，先创建一次
+docker volume create tessera-data
 
-# 之后日常启动：不需要额外覆盖层
+# 日常启动
 docker compose up -d
 ```
 
-- 命名卷是默认且唯一的挂载方式，并在 Compose 中声明为 `external`：首次部署先 `docker volume create tessera-data`（迁移脚本会自动创建），`docker compose down -v` 也不会删除它。`compose.volume.yaml` 仅为兼容旧命令保留，内容为空。
-- `TESSERA_DATA_VOLUME` 只决定卷名（默认 `tessera-data`）；不会迁移数据。换卷名 = 挂一个空卷，会生成新的数据库与登录凭据。
-- 校验：`node scripts/ops/verify-data-volume.mjs datas/tessera/tessera.db datas/tessera/evidence`；迁移脚本会自动执行 quick_check 与文件计数。
-- `docker compose down` 不删除卷；`down -v` 才会。代码回退用 `TESSERA_IMAGE_TAG`；数据回退从 `datas/release-backups` 解包到新卷。
-- 详细停机窗口、风险与观察项见[运行、数据归档与升级](operations.md#数据目录与命名卷)。
+- 卷在 Compose 中声明为 `external`：`docker compose down -v` 也不会删除它。
+- `TESSERA_DATA_VOLUME` 只决定卷名（默认 `tessera-data`），不会创建数据。换卷名 = 挂一个空卷，会生成新的数据库与登录凭据。
+- `docker compose down` 不删除卷；`down -v` 才会。代码回退用 `TESSERA_IMAGE_TAG`，数据回退把备份解包到新卷。
+- 详细说明、备份与排查见[运行、数据归档与升级](operations.md#数据目录与命名卷)。
 
 ## 使用自行推送的镜像
 

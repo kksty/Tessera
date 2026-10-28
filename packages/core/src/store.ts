@@ -3029,6 +3029,10 @@ export class Store {
           failureKind,
         );
         const retry = error ? this.failedJob(g, job.kind, error, failureKind) : undefined;
+        // 已经升级为 needs_attention 的 Execute 是人工闸门，不是模型连续故障的证据：
+        // 把它再记一次连击，等于一个阻塞任务加两次 Decide 抖动就暂停整个项目。
+        const humanGated =
+          job.kind === "execute" && g.steps.find((s) => s.id === job.step_id)?.blocked_run_id === job.run_id;
         if (job.kind === "decide" && g.project.reason?.worker === job.worker) {
           g.project.reason = null;
           if (conflict) g.project.decide_conflicts = (g.project.decide_conflicts ?? 0) + 1;
@@ -3053,7 +3057,8 @@ export class Store {
           }
         }
         if (error) g.project.last_error = error.slice(0, 1500);
-        const issue = owned && !(job.kind === "execute" && executeCapacityFailure(error)) ? modelIssue(error) : null;
+        const issue =
+          owned && !humanGated && !(job.kind === "execute" && executeCapacityFailure(error)) ? modelIssue(error) : null;
         if (issue) {
           g.project.model_failures = (g.project.model_failures || 0) + 1;
           g.project.model_retry_at = new Date(

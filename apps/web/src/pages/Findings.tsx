@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Route, ShieldCheck } from "lucide-react";
+import { Check, Copy, Download, Pencil, Route, ShieldCheck } from "lucide-react";
 import type { Finding } from "../../../../packages/protocol/src/index.js";
+import { findingCopyText } from "../copy-finding.js";
 import { path } from "../api.js";
 import { useViewState } from "../view-state.js";
 import { severityLabels, severityOrder, fromNow, reviewTone } from "../format.js";
@@ -51,6 +52,11 @@ export function FindingsPage() {
   const [filter, setFilter] = useViewState<FindingReviewFilter>(`${graph.project.id}:findings:filter`, "all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lifecycle, setLifecycle] = useState("active");
+  // 顶部「修订」按钮向详情组件下达进入编辑的信号。
+  const [editSignal, setEditSignal] = useState(0);
+  // 复制某个发现的描述后短暂回显「已复制」。
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const appliedFocus = useRef<typeof ws.focusFinding>(null);
   const risk = ws.findingSeverity;
@@ -178,6 +184,27 @@ export function FindingsPage() {
 
   const selected = findings.find((finding) => finding.id === selectedId) || null;
 
+  // 复制单个发现的完整描述，便于整体粘贴到工单/文档。
+  async function copySelected(finding: Finding) {
+    const payload = findingCopyText(finding);
+    try {
+      await navigator.clipboard.writeText(payload);
+    } catch {
+      // 非安全上下文没有剪贴板权限时退回选区复制。
+      const area = document.createElement("textarea");
+      area.value = payload;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    setCopiedId(finding.id);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopiedId(null), 1600);
+  }
+
   const renderFinding = (finding: Finding) => {
     const identity = finding.identity;
     const host = identity?.host
@@ -246,17 +273,10 @@ export function FindingsPage() {
             <span className="eyebrow">DELIVERABLE / FINDINGS</span>
             <h1>发现</h1>
             <p className="page-lede">
-              项目内所有结论记录：候选、审核中、已确认与已驳回，按「未批准 /
-              已批准」分组，再按危险度分级排列；信息类没有危险度，收在单独的「信息类」页签。人工批准后该发现不再出现在待处理列表；审核通过的漏洞同时汇总到工作区漏洞库。
+              项目内所有结论记录：候选、审核中、已确认与已驳回。按「未批准 / 已批准」分组，再按危险度分级排列；信息类没有危险度，单独成页签。
             </p>
           </div>
           <div className="page-actions">
-            <span className="meta-pill">
-              <strong>{counts.confirmed}</strong> 已确认漏洞 · 共 {counts.total} 条发现
-            </span>
-            <span className="meta-pill">
-              当前筛选 <strong>{findings.length}</strong> 条
-            </span>
             <FindingReports variant="menu" />
             <a className="button" href={"/api" + path(id, "/export?format=findings")}>
               <Download size={14} />
@@ -264,6 +284,25 @@ export function FindingsPage() {
             </a>
           </div>
         </header>
+
+        <div className="findings-stats">
+          <div className="findings-stat">
+            <span className="findings-stat-num">{counts.total}</span>
+            <span className="findings-stat-label">发现总数</span>
+          </div>
+          <div className="findings-stat" data-tone="danger">
+            <span className="findings-stat-num">{counts.confirmed}</span>
+            <span className="findings-stat-label">已确认漏洞</span>
+          </div>
+          <div className="findings-stat">
+            <span className="findings-stat-num">{approvalCounts.pending}</span>
+            <span className="findings-stat-label">待批准</span>
+          </div>
+          <div className="findings-stat">
+            <span className="findings-stat-num">{findings.length}</span>
+            <span className="findings-stat-label">当前筛选</span>
+          </div>
+        </div>
 
         <div className="toolbar findings-toolbar">
           <Segmented
@@ -331,35 +370,81 @@ export function FindingsPage() {
               {selected ? (
                 <>
                   <header className="finding-detail-head">
-                    <div>
-                      <span className="eyebrow">FINDING {selected.id}</span>
-                      <h2>{selected.title}</h2>
+                    <div className="finding-detail-top">
+                      <div className="finding-detail-idline">
+                        <span className="mono finding-detail-id">{selected.id}</span>
+                        <span className="tag">
+                          {findingKind(selected) === "informational"
+                            ? "信息类"
+                            : findingKind(selected) === "vulnerability"
+                              ? "漏洞类"
+                              : "待分类"}
+                        </span>
+                        {findingKind(selected) !== "informational" && (
+                          <SeverityBadge severity={selected.severity} />
+                        )}
+                        <span className="status-pill" data-tone={reviewTone(findingReviewStatus(selected))}>
+                          {findingReviewLabels[findingReviewStatus(selected)]}
+                        </span>
+                        {humanApproved(selected) && (
+                          <span className="tag" title="已由操作员人工批准；不进入待处理列表">
+                            已批准
+                          </span>
+                        )}
+                        {classificationReviewRequired(selected, graph) && (
+                          <span className="finding-warn">旧结论需复核</span>
+                        )}
+                        {selected.reviewed_version > 0 && selected.reviewed_version !== selected.version && (
+                          <span className="finding-warn">待复审</span>
+                        )}
+                        <span className="mono quiet finding-detail-version">v{selected.version}</span>
+                      </div>
+                      <div className="finding-detail-actions">
+                        <button
+                          type="button"
+                          className="button ghost small"
+                          title="复制这条发现的完整描述（标题、影响、复现、修复、身份与证据）"
+                          onClick={() => void copySelected(selected)}
+                        >
+                          {copiedId === selected.id ? <Check size={14} /> : <Copy size={14} />}
+                          {copiedId === selected.id ? "已复制" : "复制描述"}
+                        </button>
+                        <button
+                          type="button"
+                          className="button ghost small"
+                          onClick={() => {
+                            setEditSignal((value) => value + 1);
+                          }}
+                        >
+                          <Pencil size={14} />
+                          修订
+                        </button>
+                        <button
+                          type="button"
+                          className="button small"
+                          onClick={() =>
+                            ws.navigate("review", {
+                              anchor: reviewAnchor(graph, selected),
+                            })
+                          }
+                        >
+                          <ShieldCheck size={14} />
+                          查看审核
+                        </button>
+                        <button
+                          type="button"
+                          className="button small"
+                          onClick={() => ws.openInGraph(scopeForFinding(graph, selected.id))}
+                        >
+                          <Route size={14} />
+                          发现链路
+                        </button>
+                      </div>
                     </div>
-                    <div className="finding-detail-actions">
-                      <button
-                        type="button"
-                        className="button ghost small"
-                        onClick={() =>
-                          ws.navigate("review", {
-                            anchor: reviewAnchor(graph, selected),
-                          })
-                        }
-                      >
-                        <ShieldCheck size={13} />
-                        查看审核
-                      </button>
-                      <button
-                        type="button"
-                        className="button small"
-                        onClick={() => ws.openInGraph(scopeForFinding(graph, selected.id))}
-                      >
-                        <Route size={13} />
-                        发现链路
-                      </button>
-                    </div>
+                    <h2>{selected.title}</h2>
                   </header>
                   <div className="finding-detail-body">
-                    <FindingDetails key={selected.id} finding={selected} allowActions />
+                    <FindingDetails key={selected.id} finding={selected} allowActions editSignal={editSignal} />
                   </div>
                 </>
               ) : (

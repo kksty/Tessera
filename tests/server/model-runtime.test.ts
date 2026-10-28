@@ -202,8 +202,8 @@ function anthropicCompletion(reply: any) {
   return events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
 }
 
-test("API detection uses Pi native transports and reports the exact runner configuration", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "tessera-pi-probe-")),
+test("connection test uses Pi native transports and reports the exact runner configuration", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-pi-check-")),
     store = new Store(join(dir, "graph.db"));
   const runtime = new RuntimeConfig(join(dir, "runtime.json"), {}),
     provider = Fastify();
@@ -212,25 +212,15 @@ test("API detection uses Pi native transports and reports the exact runner confi
   provider.post("/v1/chat/completions", (req: any, reply) => {
     calls.push({ body: req.body, key: req.headers.authorization });
     const budget = req.body.max_tokens ?? req.body.max_completion_tokens;
-    assert.ok(budget > 4000 && budget <= 4096, `probe spends the declared output ceiling, got ${budget}`);
-    assert.ok(JSON.stringify(req.body).length > 80000, "probe sends a context sized from the declared window");
-    // A regression guard for vocabulary precedence: single characters and stray
-    // commas mean the filler no longer tokenizes like real prompt text.
-    const prompt: string = req.body.messages.at(-1).content;
-    const filler = prompt.slice(0, prompt.indexOf("\n\n"));
-    const words = filler.split(" ");
-    assert.ok(filler.length > 80000);
-    assert.ok(words.length < filler.length / 3, "probe filler uses whole words, not one character per token");
-    assert.ok(
-      words.every((word: string) => /^[a-z]+(?:-\d+)?$/.test(word)),
-      `unexpected probe filler: ${words.slice(0, 5).join(" ")}`,
-    );
+    assert.ok(budget > 0 && budget <= 128, `connection test keeps the output ceiling small, got ${budget}`);
+    assert.ok(JSON.stringify(req.body).length < 2000, "connection test sends one short prompt");
+    assert.equal(req.body.messages.at(-1).content, "只回复 OK。");
     return completion(reply);
   });
   provider.post("/anthropic/v1/messages", (req: any, reply) => {
     calls.push({ body: req.body, key: req.headers["x-api-key"] });
-    assert.ok(req.body.max_tokens > 4000 && req.body.max_tokens <= 4096);
-    assert.ok(JSON.stringify(req.body).length > 80000);
+    assert.ok(req.body.max_tokens > 0 && req.body.max_tokens <= 128);
+    assert.ok(JSON.stringify(req.body).length < 2000);
     return anthropicCompletion(reply);
   });
   await provider.listen({ host: "127.0.0.1", port: 0 });
@@ -253,12 +243,7 @@ test("API detection uses Pi native transports and reports the exact runner confi
       assert.equal(response.statusCode, 200, response.body);
       assert.deepEqual(response.json().model, expected.metadata);
       assert.deepEqual(response.json().compaction, modelSettings(expected.model).getCompactionSettings(expected.model));
-      // The probe reports what it actually spent, not merely that HTTP succeeded.
-      const capacity = response.json().capacity;
-      assert.equal(capacity.context_window, 32000);
-      assert.equal(capacity.output_limit, 4096);
-      assert.equal(capacity.context_probe_tokens, 23808);
-      assert.ok(capacity.max_tokens > 4000 && capacity.max_tokens <= 4096);
+      assert.equal(response.json().reply, "OK");
       assert.equal(calls.at(-1).body.model, native.id);
       assert.ok(!response.body.includes('"api_key"'));
     }
@@ -271,8 +256,8 @@ test("API detection uses Pi native transports and reports the exact runner confi
   }
 });
 
-test("capacity probe rejects a deployment that answers an oversized request with an empty stream", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "tessera-pi-capacity-")),
+test("connection test reports an endpoint that answers with an empty stream", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-pi-empty-")),
     store = new Store(join(dir, "graph.db"));
   const runtime = new RuntimeConfig(join(dir, "runtime.json"), {}),
     provider = Fastify();
@@ -280,8 +265,9 @@ test("capacity probe rejects a deployment that answers an oversized request with
   let sent: any;
   provider.post("/v1/chat/completions", (req: any, reply) => {
     sent = req.body;
-    // Exactly what this relay's vLLM does when prompt + max_tokens exceeds the real
-    // window: 200, one usage-only chunk, [DONE], and no finish_reason anywhere.
+    // What this relay's vLLM does when the request exceeds the real window: 200, one
+    // usage-only chunk, [DONE], and no finish_reason anywhere. The check must not
+    // report success just because the HTTP call completed.
     reply.header("content-type", "text/event-stream");
     return `data: ${JSON.stringify({ id: "", model: "fixture", choices: [], usage: { prompt_tokens: 40000, completion_tokens: 0, total_tokens: 40000 } })}\n\ndata: [DONE]\n\n`;
   });
@@ -289,19 +275,19 @@ test("capacity probe rejects a deployment that answers an oversized request with
   try {
     const cfg = config({
       base_url: provider.listeningOrigin + "/v1",
-      api_key: "capacity-secret",
+      api_key: "check-secret",
       context_window: 200000,
       max_output_tokens: 128000,
     });
     const response = await app.inject({ method: "POST", url: "/api/runtime/model-check", payload: cfg });
     assert.equal(response.statusCode, 422, response.body);
     const detail = response.json().detail as string;
-    assert.match(detail, /上下文预算不足/);
-    assert.match(detail, /1,?28,?000/); // the output ceiling it really sent
+    assert.match(detail, /连接测试失败/);
     assert.match(detail, /Stream ended without finish_reason/);
-    assert.ok(!response.body.includes("capacity-secret"));
-    assert.equal(sent.max_tokens ?? sent.max_completion_tokens, 128000);
-    assert.ok(JSON.stringify(sent).length > 100000);
+    assert.ok(!response.body.includes("check-secret"));
+    // The failure names the transport, not a capacity budget it never sent.
+    assert.ok((sent.max_tokens ?? sent.max_completion_tokens) <= 128);
+    assert.ok(JSON.stringify(sent).length < 2000);
   } finally {
     await app.close();
     await provider.close();
@@ -310,7 +296,7 @@ test("capacity probe rejects a deployment that answers an oversized request with
   }
 });
 
-test("capacity probe stays inside a small declared window instead of failing it", async () => {
+test("the connection test stays tiny even for a large declared window", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tessera-pi-small-")),
     store = new Store(join(dir, "graph.db"));
   const runtime = new RuntimeConfig(join(dir, "runtime.json"), {}),
@@ -323,27 +309,18 @@ test("capacity probe stays inside a small declared window instead of failing it"
   });
   await provider.listen({ host: "127.0.0.1", port: 0 });
   try {
-    // 8192 window with a 4096 ceiling leaves almost no prompt room: the probe must
-    // shrink with the declaration, not force a failure of its own making.
-    const cfg = config({ base_url: provider.listeningOrigin + "/v1", context_window: 8192, max_output_tokens: 4096 });
-    const response = await app.inject({ method: "POST", url: "/api/runtime/model-check", payload: cfg });
-    assert.equal(response.statusCode, 200, response.body);
-    const capacity = response.json().capacity;
-    assert.equal(capacity.context_probe_tokens, 512);
-    assert.ok(capacity.max_tokens > 0 && capacity.max_tokens <= 4096);
-    assert.ok(JSON.stringify(sent).length < 8000, "small windows get a small probe");
-    // A 200K declaration is only probed to the 32K cost ceiling; say so instead of implying full coverage.
-    const large = config({
-      base_url: provider.listeningOrigin + "/v1",
-      context_window: 200000,
-      max_output_tokens: 20000,
-    });
-    const largeResponse = await app.inject({ method: "POST", url: "/api/runtime/model-check", payload: large });
-    assert.equal(largeResponse.statusCode, 200, largeResponse.body);
-    const largeCapacity = largeResponse.json().capacity;
-    assert.equal(largeCapacity.context_probe_tokens, 32768);
-    assert.equal(largeCapacity.context_probe_limit, 32768);
-    assert.equal(largeCapacity.context_probe_capped, true);
+    // The check must not scale with the declaration: an operator pressing it on a 200K
+    // model must not spend the tens of thousands of prompt tokens a capacity probe sent.
+    for (const cfg of [
+      config({ base_url: provider.listeningOrigin + "/v1", context_window: 8192, max_output_tokens: 4096 }),
+      config({ base_url: provider.listeningOrigin + "/v1", context_window: 200000, max_output_tokens: 20000 }),
+    ]) {
+      const response = await app.inject({ method: "POST", url: "/api/runtime/model-check", payload: cfg });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.ok(JSON.stringify(sent).length < 2000, `window ${cfg.context_window} must not size the request`);
+      assert.ok((sent.max_tokens ?? sent.max_completion_tokens) <= 128);
+      assert.equal(response.json().capacity, undefined, "the capacity probe payload is gone");
+    }
   } finally {
     await app.close();
     await provider.close();

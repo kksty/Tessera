@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { Pencil, ShieldCheck } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { Finding } from "../../../../packages/protocol/src/index.js";
 import { api, path } from "../api.js";
 import { fmt, locateRecord, useWorkspace } from "../workspace.js";
@@ -70,7 +69,15 @@ const identityFields = [
   ["variant", "状态或变体"],
 ] as const;
 
-export function FindingDetails({ finding: f, allowActions = false }: { finding: Finding; allowActions?: boolean }) {
+export function FindingDetails({
+  finding: f,
+  allowActions = false,
+  editSignal = 0,
+}: {
+  finding: Finding;
+  allowActions?: boolean;
+  editSignal?: number;
+}) {
   const ws = useWorkspace();
   const key = `tessera.findingDraft:${ws.id}:${f.id}`;
   const load = (): Draft | null => {
@@ -83,13 +90,19 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
   };
   const [draft, setDraft] = useState<Draft>(() => load() || fromFinding(f));
   const [editing, setEditing] = useState(false);
-  const [saved, setSaved] = useState(() => !!load());
   useEffect(() => {
     if (editing) {
       sessionStorage.setItem(key, JSON.stringify(draft));
-      setSaved(true);
     }
   }, [draft, editing, key]);
+  // 页头的「修订」通过递增信号点进来（FindingDetails 以 finding.id 为 key，故每次都是同一实例）。
+  const lastSignal = useRef(editSignal);
+  useEffect(() => {
+    if (editSignal === lastSignal.current) return;
+    lastSignal.current = editSignal;
+    setDraft(load() || fromFinding(f));
+    setEditing(true);
+  }, [editSignal, f.status, f.version]);
   const update = (field: keyof Draft, value: string) => setDraft((d) => ({ ...d, [field]: value }));
   const lines = (value: string) =>
     value
@@ -138,7 +151,6 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
     });
     if (ok) {
       setEditing(false);
-      setSaved(false);
       sessionStorage.removeItem(key);
     }
   }
@@ -247,7 +259,6 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
               sessionStorage.removeItem(key);
               setDraft(fromFinding(f));
               setEditing(false);
-              setSaved(false);
             }}
           >
             丢弃草稿
@@ -270,20 +281,6 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
   // 信息级发现通常不适用 CVSS；旧版本留下的向量只作为历史材料。
   const currentCvss = confirmedVulnerability(f, ws.graph!);
   const legacyCvss = !!f.cvss && !currentCvss;
-  const review = graphReviewTarget(f);
-
-  function graphReviewTarget(finding: Finding) {
-    const current = ws.graph?.reviews
-      .filter((r) => r.finding_id === finding.id && r.finding_version === finding.version)
-      .at(-1);
-    const historical = ws.graph?.reviews.filter((r) => r.finding_id === finding.id).at(-1);
-    return current || (finding.review_status !== "pending" ? historical : undefined);
-  }
-  const openReview = () =>
-    ws.navigate("review", {
-      anchor: review ? `review-${review.id}` : `pending-review-${f.id}`,
-      top: true,
-    });
 
   return (
     <div className="finding-details">
@@ -347,13 +344,12 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
             </div>
           )}
 
-          {hasHttpTrafficHint(f) && <FindingTrafficPanel finding={f} />}
-
+          {/* 复现与验证紧跟影响/修复建议，作为一整块，方便整体复制。 */}
           {(conditions.length > 0 ||
             steps.length > 0 ||
             text(f.reproduction?.expected) ||
             text(f.reproduction?.observed)) && (
-            <section className="fd-section">
+            <section className="fd-section fd-repro">
               <header className="fd-section-head">
                 <h3>复现与验证</h3>
                 {steps.length > 0 && <span>{steps.length} 步</span>}
@@ -407,19 +403,7 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
             </section>
           )}
 
-          {rest &&
-            (hasStructured ? (
-              <details className="fd-raw">
-                <summary>
-                  完整记述<span>观测、归因与不确定性</span>
-                </summary>
-                <RichText text={rest} />
-              </details>
-            ) : (
-              <div className="fd-narrative">
-                <RichText text={rest} />
-              </div>
-            ))}
+          {hasHttpTrafficHint(f) && <FindingTrafficPanel finding={f} />}
 
           {hasEvidence && (
             <section className="fd-section">
@@ -436,6 +420,20 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
               {f.evidence_ids.length > 0 && <div className="fd-evidence-links">{ws.linkEvidence(f.evidence_ids)}</div>}
             </section>
           )}
+
+          {rest &&
+            (hasStructured ? (
+              <details className="fd-raw">
+                <summary>
+                  完整记述<span>观测、归因与不确定性</span>
+                </summary>
+                <RichText text={rest} />
+              </details>
+            ) : (
+              <div className="fd-narrative">
+                <RichText text={rest} />
+              </div>
+            ))}
         </div>
 
         <aside className="fd-aside" aria-label="发现判定与溯源">
@@ -505,24 +503,6 @@ export function FindingDetails({ finding: f, allowActions = false }: { finding: 
             </details>
           )}
 
-          <div className="fd-actions">
-            <button type="button" className="button primary small" onClick={openReview}>
-              <ShieldCheck size={13} />
-              查看审核
-            </button>
-            <button
-              type="button"
-              className="button small"
-              onClick={() => {
-                setDraft(load() || fromFinding(f));
-                setEditing(true);
-              }}
-            >
-              <Pencil size={13} />
-              {saved ? "继续修订草稿" : "修订内容"}
-            </button>
-          </div>
-          <p className="fd-aside-note">Review 核对风险、复现与证据，人工可在审核后提出处理要求。</p>
           {allowActions && <FindingActions finding={f} />}
 
           {identityEntries.length > 0 && (

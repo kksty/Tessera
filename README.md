@@ -23,7 +23,7 @@ docker volume create tessera-data
 docker compose up -d
 ```
 
-平台数据固定放在命名卷 `tessera-data`（Compose 不会创建或删除它，`down -v` 也不会）；已有 `datas/tessera` 数据时先用 `scripts/ops/migrate-data-to-volume.ps1` 停机迁移。首次运行会在本机构建 `tessera-server` 和 `tessera-runtime`（Worker 压缩后约 1.5 GB），之后复用本地镜像。打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。登录凭据留空时首次启动自动生成，在 `docker compose logs tessera-server` 中打印一次；登录后在设置页配置模型。
+平台数据固定放在命名卷 `tessera-data`（Compose 不会创建或删除它，`down -v` 也不会），首次部署先执行上面的 `docker volume create`。首次运行会在本机构建 `tessera-server` 和 `tessera-runtime`（Worker 压缩后约 1.5 GB），之后复用本地镜像。打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。登录凭据留空时首次启动自动生成，在 `docker compose logs tessera-server` 中打印一次；登录后在设置页配置模型。
 
 默认配置即可启动。需要修改端口、卷名、登录凭据或模型时：
 
@@ -42,7 +42,7 @@ docker compose up -d --build
 
 `--build` 按当前代码重建镜像；旧项目 Worker 在任务排空后按新镜像重建，升级前先确认没有在途任务。回退时把 `.env` 的 `TESSERA_IMAGE_TAG` 换成之前的标签，再执行 `docker compose up -d`（不重建）。标签、构建参数和回退细节见[容器镜像](docs/containers.md)。
 
-平台数据固定保存在命名卷 `tessera-data`（`TESSERA_DATA_VOLUME` 可改名）；`docker compose down` 不会删除它。迁移与备份见[运行、数据归档与升级](docs/operations.md)。
+平台数据固定保存在命名卷 `tessera-data`（`TESSERA_DATA_VOLUME` 可改名）；`docker compose down` 不会删除它。备份见[运行、数据归档与升级](docs/operations.md)。
 
 ## 能力
 

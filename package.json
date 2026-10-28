@@ -29,8 +29,6 @@
     "test:usage-browser": "tsx scripts/checks/usage-browser.ts",
     "test:tools-browser": "tsx scripts/checks/tools-browser.ts",
     "test:settings-browser": "tsx scripts/checks/settings-browser.ts",
-    "test:capacity-real-model": "tsx scripts/checks/capacity-model.ts",
-    "test:capacity-runner-real": "tsx scripts/checks/capacity-runner.ts",
     "test:result-format-probe": "tsx scripts/checks/result-format.ts",
     "test:docker": "node scripts/checks/docker.cjs",
     "dev": "tsx apps/server/src/main.ts",

@@ -185,7 +185,7 @@ for (const closed of [false, true])
       assert.deepEqual(graph.steps[0].hint_ids, ["h001"], "keep the historical association");
       const view = memoryEntry(graph, next) as { unaddressed_hints: string[]; hints: string[] };
       assert.deepEqual(view.unaddressed_hints, ["h001"]);
-      assert.match(view.hints[0], /待人工确认/);
+      assert.match(view.hints[0], /待处置/);
       assert.throws(
         () =>
           commitPlan(
@@ -199,23 +199,18 @@ for (const closed of [false, true])
               complete: { from: ["origin"], description: "Premature" },
             }),
           ),
-        /Hint 需人工确认/,
+        /Hint 需处置/,
       );
       const refused = f.submit(next.worker, "refused", { complete: { from: ["origin"], description: "Premature" } });
       assert.equal(refused.settle.ok, false);
-      assert.match(refused.settle.conflicts[0].reason, /Hint 需人工确认/);
+      assert.match(refused.settle.conflicts[0].reason, /Hint 需处置/);
       const noted = f.submit(next.worker, "answered", {
         hint_notes: [{ id: "h001", note: "B requires a separate scope" }],
         complete: { from: ["origin"], description: "Done with explanation" },
       });
-      assert.equal(noted.settle.ok, false, "a model note is not operator closure");
-      assert.equal(f.store.get(f.id).hints[0].resolved, undefined);
-      f.store.resolveHint(f.id, "h001", { note: "B requires a separate scope" });
-      assert.equal(
-        f.submit(next.worker, "confirmed", { complete: { from: ["origin"], description: "Done with explanation" } })
-          .settle.ok,
-        true,
-      );
+      assert.equal(noted.settle.ok, true, "fresh coverage plus a hint_notes explanation completes");
+      assert.equal(f.store.get(f.id).hints[0].resolved_by, "decide");
+      assert.equal(f.store.get(f.id).project.status, "completed");
     } finally {
       f.close();
     }

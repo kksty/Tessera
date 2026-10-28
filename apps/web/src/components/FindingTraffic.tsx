@@ -115,8 +115,8 @@ export function FindingTrafficPanel({ finding }: { finding: Finding }) {
         <>
           <p className="finding-traffic-note">
             {linked
-              ? "执行者关联的原始 HTTP 请求。点击任意一条，直接打开抓包视图查看完整报文。"
-              : "按来源任务和入口自动匹配到的原始 HTTP 请求。点击任意一条，直接打开抓包视图。"}
+              ? "执行者关联的原始 HTTP 请求。点击任意一条，就在当前页弹出抓包视图，随时关闭、不离开发现。"
+              : "按来源任务和入口自动匹配到的原始 HTTP 请求。点击任意一条，就在当前页弹出抓包视图。"}
           </p>
           <div className="finding-traffic-list">
             {records.map((record) => (
@@ -124,9 +124,9 @@ export function FindingTrafficPanel({ finding }: { finding: Finding }) {
                 type="button"
                 className="finding-traffic-row"
                 key={record.id}
-                title={`${record.url}\n点击查看完整请求与响应`}
+                title={`${record.url}\n点击就地查看完整请求与响应`}
                 onClick={() =>
-                  ws.openTraffic({
+                  ws.openTrafficPreview({
                     flowId: record.id,
                     findingId: finding.id,
                     label: `${finding.id} · v${finding.version}`,
@@ -144,6 +144,12 @@ export function FindingTrafficPanel({ finding }: { finding: Finding }) {
                 <ArrowUpRight size={13} className="finding-traffic-open" aria-hidden="true" />
               </button>
             ))}
+          </div>
+          <div className="finding-traffic-foot">
+            <button type="button" className="button ghost small" onClick={() => ws.navigate("traffic")}>
+              打开流量页
+              <ArrowUpRight size={12} aria-hidden="true" />
+            </button>
           </div>
         </>
       )}

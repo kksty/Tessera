@@ -179,6 +179,11 @@ test("按测试域分框：每个域一个框，Step / Fact / Finding 作为真�
     const factMember = byId(out, facts.recon.id)!;
     assert.equal(factMember.data.grouped, 1, "事实仍用紧凑卡片");
     assert.ok(factMember.position);
+    assert.equal(
+      (byId(elements, steps.recon.id)!.data as any).group,
+      undefined,
+      "分框不能把 group 写回原始图元素，否则退出汇总后仍残留汇总标记",
+    );
 
     // 事实与发现不单独打标：它们跟随生产 Step 落在同一个域里。
     const inject = byId(out, domainNodeId("inject"))!;

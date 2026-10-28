@@ -491,12 +491,13 @@ export interface Graph {
      */
     notes?: { at: string; note: string; worker: string }[];
     /**
-     * Operator confirmation. A Hint that no longer needs work must be closed by
-     * a human; older graphs may contain model-written values, which are read as
-     * closed for compatibility but never produced by new code.
+     * Closure of the directive. An operator closes it from the hint panel; the
+     * Decider may also close it by returning a `hint_notes` entry that states how
+     * the directive was carried out (resolved_by: "decide"). The operator can still
+     * reopen any Hint a model closed.
      */
     resolved?: { at: string; note: string; worker: string };
-    resolved_by?: "operator";
+    resolved_by?: "operator" | "decide";
     reopened_at?: string;
   }[];
   findings: Finding[];
@@ -714,6 +715,10 @@ export interface DispatchConfig {
   closeout_seconds?: number;
   /** 0 disables the platform shell limit; the model may still supply a timeout. */
   tool_timeout_seconds?: number;
+  /**
+   * Bounded repair rounds for a final result that fails the job protocol (0–3).
+   * Defaults to 2: a schema-shaped answer is a serialization miss, not a new task.
+   */
   result_repairs?: number;
   /** Injects the capture proxy into Execute runs. False keeps the original direct network path. */
   capture_enabled?: boolean;
@@ -724,4 +729,19 @@ export interface DispatchConfig {
   skip_informational_review?: boolean;
   model: import("./model-config.js").ModelConfig;
   review_model?: import("./model-config.js").ModelConfig;
+  /** Feishu (Lark) webhook notifications for operator-facing events. */
+  notifications?: NotificationConfig;
+}
+
+/**
+ * Feishu bot notifications. The webhook is a secret-bearing URL: it is stored on
+ * the server and never echoed back verbatim. Each switch gates one event family.
+ */
+export interface NotificationConfig {
+  /** Full Feishu bot webhook URL; empty disables all delivery. */
+  feishu_webhook?: string;
+  /** Send a message whenever a new Finding is submitted. */
+  notify_new_finding?: boolean;
+  /** Send a message when work needs a human (pending review / assets / errors). */
+  notify_needs_human?: boolean;
 }

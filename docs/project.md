@@ -97,7 +97,7 @@ Decide 看到全部未关闭 Step 的精确索引、执行/产出引用、Step �
 
 因果关系由 `graph-relations.ts` 共用解析：Fact 上游是生产 Step 和直接 Evidence；Step 上游是输入 Fact，下游是产出 Fact 和关联 Finding；Finding 上游包括来源 Fact、直接 Evidence 和生产/修订 Step；Review 边保留被审核的 Finding 版本。`query_graph` 的 `related_to` / `relation=sources|outputs` 在 1–3 层内双向遍历，返回有类型的 `relations`、生产来源及歧义标记。去环时不把查询种子作为结果返回；保留稳定排序和快照游标，较深链从返回的边界节点继续查询。`read_graph` 原文 JSON 不因兼容来源推断而被改写。
 
-黑板、来源详情与报告复用同一生产关系，支持历史跨图来路。新报告快照含完整上游 Fact、生产 Step 的问题/输入、类型关系及上游原始证据；网页、Markdown 和归档来自冻结材料。读取、回热和冷却不使报告过期，源事实争议与实质材料变化会使旧快照过期。旧快照没有 `trace` 时仍可读取；新增溯源材料可能使旧结构的快照显示过期，不改写其内容。项目概览与任务页按同一记录展示 Step 的 `property`/`method_hint`、探索线索（`surface`/`why`/`suggested_property`/豁免理由）和逐 surface 完成覆盖表；完成后覆盖表来自完成 Step 的 `completion` 记录，旧项目回退为观测 surface 并标「未登记」。黑板工具栏提供「按测试域分框」（大图默认，Step / Fact / Finding 合计超过 40 时首屏启用）与「按节点类型汇总」（临时视图）：每个测试域是一张大方框，Step / Fact / Finding 作为真实节点放在框内；框头写明「N 个节点」与任务 / 事实 / 发现数量，组内连线只计为「组内 N 条关联」，框与框之间只画跨域关联并标「N 条关联」，不再使用不解释的 `×N`。`post` 的 focus 前缀分布写在框头，不再多套一层二级框。Fact / Finding 跟随生产 Step 归组，起点、范围、目标与 Hint 保持独立锚点；类型汇总仍可点击框展开。大图首屏直接进入域分框，点击框内节点仍打开原节点详情；域分框使用固定卡片布局，「自动整理」只重新排列卡片，不会把框内节点拆散。时间线页顶部按当前任务统计各测试域数量、已分类/未分类比例、核心域覆盖率与输入来自其他域的跨域任务数；只计未删除、未丢弃的任务，空域保留 0 条以便看出覆盖缺口，事实与发现按生产任务继承域。同一个统计实现也写进运行日志导出（`domain_coverage` 记录），网页与导出文件口径一致。
+黑板、来源详情与报告复用同一生产关系，支持历史跨图来路。新报告快照含完整上游 Fact、生产 Step 的问题/输入、类型关系及上游原始证据；网页、Markdown 和归档来自冻结材料。读取、回热和冷却不使报告过期，源事实争议与实质材料变化会使旧快照过期。旧快照没有 `trace` 时仍可读取；新增溯源材料可能使旧结构的快照显示过期，不改写其内容。项目概览与任务页按同一记录展示 Step 的 `property`/`method_hint`、探索线索（`surface`/`why`/`suggested_property`/豁免理由）和逐 surface 完成覆盖表；完成后覆盖表来自完成 Step 的 `completion` 记录，旧项目回退为观测 surface 并标「未登记」。黑板工具栏提供「按测试域分框」（大图默认，Step / Fact / Finding 合计超过 40 时首屏启用）与「按节点类型汇总」（临时视图）：每个测试域是一张大方框，Step / Fact / Finding 作为真实节点放在框内；任务保留原来的圆圈「?」，事实与发现用紧凑卡片。框头写明「N 个节点」与任务 / 事实 / 发现数量，组内连线只计为「组内 N 条关联」，框与框之间只画跨域关联并标「N 条关联」，不再使用不解释的 `×N`。`post` 的 focus 前缀分布写在框头，不再多套一层二级框。Fact / Finding 跟随生产 Step 归组，起点、范围、目标与 Hint 保持独立锚点；类型汇总仍可点击框展开。大图首屏直接进入域分框，点击框内节点仍打开原节点详情；域分框使用固定卡片布局，「自动整理」只重新排列卡片，不会把框内节点拆散。黑板视图模式（完整图 / 按测试域分框 / 按节点类型）按「项目 + 图」记在本地，切去其他页面再回来保持原模式；工具栏把「按测试域分框」和「自动整理」排在最前，缩放与导出靠后。时间线页顶部按当前任务统计各测试域数量、已分类/未分类比例、核心域覆盖率与输入来自其他域的跨域任务数；只计未删除、未丢弃的任务，空域保留 0 条以便看出覆盖缺口，事实与发现按生产任务继承域。同一个统计实现也写进运行日志导出（`domain_coverage` 记录），网页与导出文件口径一致。
 
 热预算由两个预算同时决定：节点数 `hot_limit`（新项目默认 80，未设置过该项的旧项目仍按 200）与字符数 `hot_char_limit`（默认 64,000，0 关闭字符预算）。`hot_limit=0` 仍表示关闭冷却。未被预算移走的只有当前焦点 Step 的直接输入、待审 Review 的来源 Fact、focused Finding 的来源与人工 pinned 记录；其他未关闭 Step 的输入仍在 `open_step_index` 中，按需 `read_graph`。必显集合自身超预算时仍展示，只标 `over_budget`。`review_issues` 给出审核问题及其 `review_id`、零基 `issue_index`、风险等级与人工豁免状态、来源 Fact 全文（超长标 `truncated`）、证据 ID，长理由标明截断并给出原 Review 的读取入口；`unresolved_review_issues` 是完成前必须逐条处置的清单。冷池不设上限，提供精确计数与轮换预览，读取或被引用更新活跃轮次，列表搜索不回热。已关闭 Step 和 Evidence 是可检索历史，不算冷节点。`capacity_plan.projection_sections` 输出各段字符，用于先测量再收紧默认值。
 
@@ -121,7 +121,7 @@ Decide 可用 `finding_updates` 直接修订 Finding 内容，用 `finding_merge
 
 Runner、设置页模型目录和 API 检测共用 `packages/models/src/runtime.ts`。Tessera 只保存端点、协议、密钥和可选容量；模型由 Pi 的 `models.json` 组合，不再手工构造 `Model`、裁剪输出或在 Tessera 内推导压缩。官方模型通过 Pi 的 `modelOverrides` 覆盖容量，保留目录的 provider、协议兼容参数、推理配置、输入能力与请求传输；自定义端点写成 `providers.tessera.models`，由 Pi 应用 128000 / 16384 默认值和对应 API 传输。`provider` 留空时按完整 API 基础地址与协议匹配，基础地址末尾可选的 `/v1` 视为同一端点（例如 DeepSeek 的两种写法），`custom` 显式禁用识别。自定义或未知端点使用 Pi 默认的 128000 / 16384 上下文 / 输出值，并在设置页标明来源。
 
-Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，后续使用时每 4 小时检查一次，失败后 5 分钟可重试；设置页也提供手动刷新。每次刷新最多等待 8 秒，失败保留内置目录及本进程已有更新，进程重启后重新检查；`PI_OFFLINE` 环境变量可禁用联网，并由 Dispatcher 传给 Worker。显式选择「自定义 / 中转 API」的运行不参与目录匹配，也不触发公共目录刷新，因此本地 vLLM / 中转不会因每次 Run 等待目录超时。目录请求不使用部署 API 密钥，也不读取用户全局 Pi 配置或凭据。Runner 从同一份目录解析模型，再创建独立凭据运行时，避免主模型与审核模型串用密钥；Dispatcher 启动 Run 时把解析后的有效窗口与输出上限写入 Worker 配置，Runner 与设置页使用同一组容量，不再各自回退。设置页展示目录检查状态、匹配的供应商 / 模型、有效容量、来源与自动压缩触发阈值；输入框的 0 表示自动，实际值在下方展示。目录声明、API 声明和手动上限都不等于部署的真实上限；“检测 API”按当前声明发起一次真实容量请求，工具调用能力仍不在此验证。
+Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，后续使用时每 4 小时检查一次，失败后 5 分钟可重试；设置页也提供手动刷新。每次刷新最多等待 8 秒，失败保留内置目录及本进程已有更新，进程重启后重新检查；`PI_OFFLINE` 环境变量可禁用联网，并由 Dispatcher 传给 Worker。显式选择「自定义 / 中转 API」的运行不参与目录匹配，也不触发公共目录刷新，因此本地 vLLM / 中转不会因每次 Run 等待目录超时。目录请求不使用部署 API 密钥，也不读取用户全局 Pi 配置或凭据。Runner 从同一份目录解析模型，再创建独立凭据运行时，避免主模型与审核模型串用密钥；Dispatcher 启动 Run 时把解析后的有效窗口与输出上限写入 Worker 配置，Runner 与设置页使用同一组容量，不再各自回退。设置页展示目录检查状态、匹配的供应商 / 模型、有效容量、来源与自动压缩触发阈值；输入框的 0 表示自动，实际值在下方展示。目录声明、API 声明和手动上限都不等于部署的真实上限；设置页的「测试连接」只发一次极短请求（输出上限 128 tokens），确认地址、密钥与协议可达，不测量容量，工具调用能力也不在此验证。容量差异留给第一个真实 Run 反映。
 
 `context_window` / `max_output_tokens` 为 0 时使用 Pi 的模型定义或默认值；正数直接作为 Pi 模型的容量参数，不再由 Tessera 按目录裁剪。既有正数窗口保留，可在设置中改成 0。Pi 按每次剩余窗口控制输出，执行自动会话压缩与重试。压缩预算完全由 Pi 管理（默认预留 16,384 / 保留最近 20,000），Tessera 不按窗口比例改写，也不实现自己的压缩策略；窗口容纳不下「预留 + 保留最近」时会反复压缩，窗口不大于保留量时甚至找不到切点，设置页对这两种情况都会明确提示，本地小窗口模型应填写真实窗口或换用更大窗口的模型。1M 级模型如需更大的压缩预留，应使用 Pi 压缩设置中按模型名匹配的 `compaction.modelOverrides`；Tessera 不另设压缩策略，目前也不暴露该覆盖配置。Pi 内置工具自行截断与保存大输出；图、证据和工作区工具使用各自的分页契约。图事务、租约、结果校验和补交属于 Tessera。Tessera 不读取 Pi 的 `settings.json`，始终使用 `SettingsManager.inMemory`；除只读恢复关闭自动压缩外，不改 Pi 的模型能力、thinking、retry、transport 等默认值。
 
@@ -143,14 +143,14 @@ Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，�
 
 设置页的模型接入只保留两种方式：**按 API 地址识别**（`provider` 留空，按完整 API 基础地址与协议匹配 Pi 目录）和**自定义 / 中转 API**（`custom`，显式禁用目录匹配）。两种方式都必须填写 API 地址；官方端点可识别目录容量，中转端点容量取自接口声明或手动填写。两种方式最终都由 Pi 的 `models.json` 组合模型，Tessera 只写入端点、协议和容量。既有 Pi 原生供应商配置（`provider` 为 `zai` / `deepseek` / `minimax` 等）仍在设置页标明并继续按原方式解析，`PI_PROVIDER` / `PI_MAX_OUTPUT_TOKENS` 及对应 `PI_REVIEW_*` 环境变量也继续支持原生供应商；原生供应商可留空地址，由 Pi 选择默认端点与协议。主模型与审核模型分别保存凭据；切换原生供应商、API 地址或协议会清除旧连接密钥，仅在两种接入方式之间切换不会清除，关闭独立审核会移除其保存配置。
 
-“获取模型”向已填写的 API 地址查询 `/models`；既有 Pi 原生供应商配置在地址留空时仍从 Pi 目录读取模型。接口返回的 `max_model_len` / `context_length` 与 `max_tokens` 会填入上下文窗口和输出上限（自定义 / 中转模式同样适用），可手动修改或设为 0 回退 Pi 默认值。“检测 API”经 Pi 发起一次容量探测，并返回与 Runner 相同的有效 provider / API / 地址 / 容量 / 压缩设置。探测不再是 16 tokens 的连通性小请求：它按声明的窗口构造填充上下文（上限 32768 tokens，预留 4096 tokens 安全余量，下限 512），再带当前输出上限发出请求，因此请求规模与真实 Run 同量级，超时 180 秒。容量不足的部署往往仍回 HTTP 200、只是流内没有 `finish_reason`，探测因此以“未得到完整响应”失败，并给出实际发出的上下文与 `max_tokens` 及部署上报的提示词 tokens。探测覆盖容量与协议，工具调用能力仍需在真实任务中验证。密钥从对应主 / 审核配置按连接匹配复用，返回结果不含密钥。
+“获取模型”向已填写的 API 地址查询 `/models`；既有 Pi 原生供应商配置在地址留空时仍从 Pi 目录读取模型。接口返回的 `max_model_len` / `context_length` 与 `max_tokens` 会填入上下文窗口和输出上限（自定义 / 中转模式同样适用），可手动修改或设为 0 回退 Pi 默认值。“测试连接”经 Pi 发一次极短请求（提示词为固定的一句「只回复 OK。」，输出上限 128 tokens，超时 60 秒），只确认地址、密钥和协议可用，并返回与 Runner 相同的有效 provider / API / 地址 / 容量 / 压缩设置。它不再构造按声明窗口填充的大上下文：此前的容量探测每次点击要发送数万输入 tokens，一次操作的成本与真实 Run 相当，因此已取消。代价是设置页不再提前发现“声明窗口高于真实上限”的部署；这类部署在真实 Run 中仍会失败——请求往往仍回 HTTP 200 只是流内没有 `finish_reason`，Run 以“未得到完整响应”失败并进入待处理，诊断里保留实际发出的上下文与 `max_tokens` 及部署上报的提示词 tokens。容量与工具调用能力都以真实任务为准。密钥从对应主 / 审核配置按连接匹配复用，返回结果不含密钥。
 
-| 存储                                     | 内容                                       |
-| ---------------------------------------- | ------------------------------------------ |
-| 平台 `/data`，默认绑定 `./datas/tessera` | SQLite、归档证据、配置、登录和内部凭据     |
-| 项目 `/workspace` 命名卷                 | 会话、outbox、脚本、原始工具输出与工作文件 |
+| 存储                                        | 内容                                       |
+| ------------------------------------------- | ------------------------------------------ |
+| 平台 `/data` 命名卷（默认 `tessera-data`）  | SQLite、归档证据、配置、登录和内部凭据     |
+| 项目 `/workspace` 命名卷                    | 会话、outbox、脚本、原始工具输出与工作文件 |
 
-平台数据卷（默认 `tessera-data`，可由 `TESSERA_DATA_VOLUME` 改名）与各项目工作区卷都由 Docker 管理；`/data` 不再使用宿主机目录挂载。日常启动为 `docker compose up -d`，从旧目录迁移用 `scripts/ops/migrate-data-to-volume.ps1`。卷不会随 `docker compose down` 删除；备份同时覆盖平台卷和各项目工作区，SQLite 使用一致性备份或先停止写入。
+平台数据卷（默认 `tessera-data`，可由 `TESSERA_DATA_VOLUME` 改名）与各项目工作区卷都由 Docker 管理，命名卷是唯一形态，不再支持宿主机目录挂载。日常启动为 `docker compose up -d`。卷不会随 `docker compose down` 删除；备份同时覆盖平台卷和各项目工作区，SQLite 使用一致性备份或先停止写入。
 
 删除项目需操作员确认：暂停并锁定 → 等任务和文件操作退出 → 校验资源归属并删除项目容器 / 辅助容器 / 工作区卷 → 删除证据及数据库记录。失败保留删除标记，可原操作重试；共享镜像、网络、平台数据卷和其他项目不在删除范围内。
 
@@ -188,19 +188,18 @@ node /opt/tessera/dist/recover-closeout.mjs --file /workspace/runs/WORKER_ID/rec
 | `pnpm build`                                                  | Server、Dispatcher、Runner、恢复入口及 Web；不调用模型                                                               |
 | `pnpm export:work-prompts`                                    | 从当前源码与已安装 SDK 导出 `.tessera/work-prompts.md`，不生成第二份维护文档                                         |
 | `pnpm test:frontend-browser`                                  | 临时数据与本地服务的前端验收                                                                                         |
-| `pnpm observe:projects --output NEW_DIRECTORY`                | 对现有业务库作一致性只读观测；输出分角色 Run、用量、失败和诊断完整性摘要，不含目标、命令正文或凭据                   |
+| `pnpm observe:projects --db DB --output NEW_DIRECTORY`        | 对现有业务库副本作一致性只读观测；输出分角色 Run、用量、失败和诊断完整性摘要，不含目标、命令正文或凭据             |
 | `pnpm test:m6`                                                | 本地靶场答案、证据判定与请求预算网关测试，不调用真实模型                                                             |
 | `pnpm m6` / `pnpm m6 --run --id UNIQUE_ID`                    | 默认仅冻结源码、任务、模型标识与预算；显式 `--run` 才执行真实模型小集对照，结果在 `test-results/m6/`                 |
 | `pnpm m6:resume --id EXISTING_ID [--run]`                     | 默认只检查缺失样本及冻结文件；显式 `--run` 只执行从未启动的样本，复用原预算、原代码包和原镜像 ID，不重复已有付费用量 |
 | `pnpm test:browser` / `test:completion-browser`               | 已准备服务的工作台与完成流程                                                                                         |
 | `pnpm test:deletion-config-browser` / `test:usage-browser`    | 临时服务中的删除、配置与用量交互                                                                                     |
 | `pnpm test:docker`                                            | 独立 Compose 项目和模拟模型；需先构建应用 / Worker 镜像                                                              |
-| `pnpm test:models-browser`                                    | Pi 模型目录与运行配置一致性、检测 API、本地主 / 审核配置、窄屏设置页；仅使用本地模拟 API                             |
+| `pnpm test:models-browser`                                    | Pi 模型目录与运行配置一致性、测试连接、本地主 / 审核配置、窄屏设置页；仅使用本地模拟 API                             |
 | `pnpm test:memory-real-model` / `test:decide-real-model`      | 真实模型读取合成历史与决策；不连接测试目标                                                                           |
-| `pnpm test:capacity-real-model` / `test:capacity-runner-real` | Pi 会话窗口与压缩集成、收尾及结果契约；不验证 FGS 续图                                                               |
 | `pnpm test:model-observation` / `test:result-format-probe`    | 当前真实端点的公开响应对齐与输出格式对照                                                                             |
 
-真实模型脚本产生 API 费用，结果在 `test-results/`；不能用模拟模型通过或一次正常响应宣称真实任务效果已验证。Python 容器链路验收脚本为 `scripts/checks/traffic.py`，只允许在设置 `TESSERA_TEST_DISPOSABLE_CONTAINER=1` 的可销毁 Worker 内运行，`QA_UPSTREAM=direct|http|socks` 选择本地测试出口。
+真实模型脚本产生 API 费用，结果在 `test-results/`；不能用模拟模型通过或一次正常响应宣称真实任务效果已验证。这些脚本不猜测宿主机数据路径（`/data` 是命名卷）：模型配置由 `TESSERA_ACCEPTANCE_CONFIG`（从卷导出的 `runtime.json` 副本）或 `TESSERA_ACCEPTANCE_MODEL_JSON`（单行 JSON）提供，`observe:projects` 需要显式 `--db` 指向导出的库副本，导出时用 `docker run --rm -v tessera-data:/data -v ${PWD}:/out alpine cp /data/tessera.db /out/`。Python 容器链路验收脚本为 `scripts/checks/traffic.py`，只允许在设置 `TESSERA_TEST_DISPOSABLE_CONTAINER=1` 的可销毁 Worker 内运行，`QA_UPSTREAM=direct|http|socks` 选择本地测试出口。
 
 前端约定：颜色、字号和间距由 `styles/tokens.css` 管理；通用组件放 `components`，页面放 `pages`，页面专属样式放对应 `page-*.css`。保留可见焦点、窄屏适配和 reduced-motion（CSS 动画与过渡仍随系统减弱；黑板 canvas 动效默认开启，只由黑板工具栏开关控制，避免远程桌面等环境的系统设置让它静默失效），避免复制通用组件或再造探索完成率。静态品牌文件与 `brand-art.ts` 保持同组几何。
 

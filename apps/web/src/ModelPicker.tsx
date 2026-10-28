@@ -72,17 +72,8 @@ type Check = {
   model: ModelMetadata;
   elapsed_ms: number;
   compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number };
-  capacity: {
-    context_window: number;
-    output_limit: number;
-    context_probe_tokens: number;
-    context_probe_limit: number;
-    context_probe_capped: boolean;
-    max_tokens: number | null;
-    prompt_tokens: number | null;
-    cached_tokens: number | null;
-    completion_tokens: number | null;
-  };
+  reply: string;
+  usage: { prompt_tokens: number | null; completion_tokens: number | null };
 };
 const SOURCE_LABELS: Record<string, string> = {
   pi: "Pi 目录",
@@ -247,7 +238,9 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
           {!!catalogStatus?.failed_providers.length && (
             <p>刷新失败的供应商：{catalogStatus.failed_providers.join("、")}</p>
           )}
-          <p>启用联网时，使用模型目录会每 4 小时自动检查；失败后 5 分钟可重试。刷新目录不会探测中转的真实容量。</p>
+          <p>
+            启用联网时，使用模型目录会每 4 小时自动检查；失败后 5 分钟可重试。刷新目录只读取目录数据，不发送模型请求。
+          </p>
         </div>
         <button
           type="button"
@@ -301,11 +294,11 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
             {busy ? "获取中…" : "获取模型"}
           </button>
           <button type="button" disabled={busy || checking || !configured || !model.id} onClick={() => void test()}>
-            {checking ? "检测中…" : "检测 API"}
+            {checking ? "测试中…" : "测试连接"}
           </button>
         </div>
         <span className="settings-hint">
-          检测会发送一次真实容量请求：上下文检测加当前输出上限，可能需要几十秒；上下文最多探测 32,768 tokens。
+          只发送一次极短请求（输出上限 128 tokens），验证地址、密钥与协议是否可用；不发送大上下文，也不验证真实容量。
         </span>
       </label>
       {custom && (
@@ -425,32 +418,27 @@ export function ModelPicker({ model, onChange, readOnly = {}, scope = "model" }:
           </p>
           {!check && (
             <p>
-              目录与协议声明不等于部署真实上限；「检测 API」会按当前输出上限发起一次真实容量请求，上下文探测最多 32,768
-              tokens。
+              目录与协议声明不等于部署真实上限；「测试连接」只确认接口可达，不测量容量。容量是否够用由第一个真实 Run
+              反映，不足时该 Run 会失败并进入待处理。
             </p>
           )}
         </div>
       )}
       {check && (
         <p role="status">
-          容量探测通过（{check.elapsed_ms.toLocaleString()} ms）：按声明的{" "}
-          {check.capacity.context_window.toLocaleString()} tokens 窗口，发送了上下文检测{" "}
-          {check.capacity.context_probe_tokens.toLocaleString()} tokens + 输出上限{" "}
-          {(check.capacity.max_tokens ?? check.capacity.output_limit).toLocaleString()} tokens
-          {check.capacity.prompt_tokens === null
+          连接正常（{check.elapsed_ms.toLocaleString()} ms）：
+          {check.reply ? `模型回复「${check.reply}」` : "接口响应正常，但没有返回文本内容"}
+          {check.usage.prompt_tokens === null
             ? ""
-            : `（部署实测提示词 ${check.capacity.prompt_tokens.toLocaleString()} tokens${
-                check.capacity.cached_tokens ? `，其中缓存读 ${check.capacity.cached_tokens.toLocaleString()}` : ""
-              }、输出 ${(check.capacity.completion_tokens ?? 0).toLocaleString()} tokens）`}
+            : `，用量 提示词 ${check.usage.prompt_tokens.toLocaleString()} / 输出 ${(
+                check.usage.completion_tokens ?? 0
+              ).toLocaleString()} tokens`}
           。自动压缩{check.compaction.enabled ? "已启用" : "已关闭"}，预留{" "}
           {check.compaction.reserveTokens.toLocaleString()} tokens。
         </p>
       )}
-      {check?.capacity.context_probe_capped && (
-        <p className="settings-hint">
-          上下文探测上限为 {check.capacity.context_probe_limit.toLocaleString()} tokens：更大的声明窗口只验证到该上限，
-          完整窗口仍需在真实任务或专项容量测试中观察。
-        </p>
+      {check?.ok && (
+        <p className="settings-hint">连接测试只覆盖地址、密钥与协议，容量与工具调用能力仍需真实任务验证。</p>
       )}
       {error && (
         <p className="field-error" role="alert">

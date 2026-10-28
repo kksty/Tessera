@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  Bell,
   ChevronRight,
   Cpu,
   Download,
@@ -46,6 +47,7 @@ const SECTIONS = [
   ["runtime", "执行与调度"],
   ["capture", "流量采集"],
   ["budget", "收尾与预算"],
+  ["notifications", "飞书通知"],
   ["logs", "运行日志"],
 ] as const;
 
@@ -55,6 +57,7 @@ const sectionOf = (path: string): SectionKey => {
   if (path.startsWith("model.")) return "model";
   if (path.startsWith("review_model.") || path === "skip_informational_review") return "review";
   if (path === "capture_enabled") return "capture";
+  if (path.startsWith("notifications.")) return "notifications";
   if (path === "closeout_seconds" || path === "tool_timeout_seconds" || path === "result_repairs") return "budget";
   return "runtime";
 };
@@ -817,8 +820,8 @@ export function SettingsPage() {
             <NumberField
               id="settings-result-repairs"
               label="结果格式修复次数"
-              hint={lockedHint("result_repairs", "结果不合规时的自动修复轮数，0–3。")}
-              value={draft.result_repairs ?? 1}
+              hint={lockedHint("result_repairs", "结果不合规时的自动修复轮数，0–3，默认 2。")}
+              value={draft.result_repairs ?? 2}
               min={0}
               max={3}
               disabled={locked("result_repairs")}
@@ -826,6 +829,83 @@ export function SettingsPage() {
               onChange={(value) => setDraft({ ...draft, result_repairs: value })}
             />
           </div>
+        </Card>
+
+        <Card
+          id="settings-notifications"
+          title="飞书通知"
+          note="有新发现、需要人工处理时推送到飞书群"
+          icon={<Bell size={15} />}
+        >
+          <Field
+            label="飞书 Webhook"
+            htmlFor="settings-feishu-webhook"
+            error={locked("notifications.feishu_webhook") ? undefined : errors["notifications.feishu_webhook"]}
+            hint={lockedHint(
+              "notifications.feishu_webhook",
+              draft.notifications?.feishu_webhook_set
+                ? "已保存 Webhook，留空表示继续沿用；填 “-” 表示清空并停用通知。"
+                : "飞书自定义机器人的完整 Webhook 地址（https），保存后不回显。",
+            )}
+          >
+            <input
+              id="settings-feishu-webhook"
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              disabled={locked("notifications.feishu_webhook")}
+              value={draft.notifications?.feishu_webhook ?? ""}
+              placeholder={
+                draft.notifications?.feishu_webhook_set
+                  ? "••••••••（已保存）"
+                  : "https://open.feishu.cn/open-apis/bot/v2/hook/…"
+              }
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  notifications: { ...draft.notifications, feishu_webhook: event.target.value },
+                })
+              }
+            />
+          </Field>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={draft.notifications?.notify_new_finding === true}
+              disabled={locked("notifications.notify_new_finding") || saving}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  notifications: { ...draft.notifications, notify_new_finding: event.target.checked },
+                })
+              }
+            />
+            <span>有新发现时通知</span>
+          </label>
+          <p className="settings-hint">
+            {draft.notifications?.notify_new_finding === true
+              ? "已开启：每提交一条新的候选发现，都会推送一条飞书消息。"
+              : "关闭：新发现不再推送飞书消息。"}
+          </p>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={draft.notifications?.notify_needs_human === true}
+              disabled={locked("notifications.notify_needs_human") || saving}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  notifications: { ...draft.notifications, notify_needs_human: event.target.checked },
+                })
+              }
+            />
+            <span>需要人工处理时通知</span>
+          </label>
+          <p className="settings-hint">
+            {draft.notifications?.notify_needs_human === true
+              ? "已开启：出现待人工重试的运行、待批准资产或项目错误时推送一条汇总；同一批待处理项只提醒一次。"
+              : "关闭：待人工重试 / 待批准资产 / 项目错误不再推送。"}
+          </p>
         </Card>
 
         <Card id="settings-logs" title="运行日志" note="按项目导出诊断日志" icon={<FileText size={15} />}>

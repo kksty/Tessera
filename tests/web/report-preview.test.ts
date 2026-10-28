@@ -18,12 +18,19 @@ test("web and Markdown render the same report fields, scores, identity and reque
     const html = renderToStaticMarkup(createElement(ReportContent, { report: snapshot, stale: false }));
     const text = htmlText(html), markdown = new Reports(store).markdown(snapshot);
     const fields = [v.header.goal, v.header.origin, f.title, f.description, f.impact, f.severityReason, f.remediation,
-      f.expected, f.observed, ...f.conditions, f.cvss!.label, f.cvss!.rationale, f.reviews[0].reason,
+      f.expected, f.observed, ...f.conditions, f.cvss!.rationale, f.reviews[0].reason,
       snapshot.material.evidence[0].sha256];
     for (const value of fields) {
       assert.ok(text.includes(value), `web is missing ${value}`);
       assert.ok(markdown.includes(paragraph(value)), `Markdown is missing ${value}`);
     }
+    // CVSS renders differently per format: Markdown uses the combined label
+    // ("CVSS v4.0：9.3 · vector"); the web splits it into a version title, a
+    // score box and a vector <code> block, so assert those pieces instead.
+    assert.ok(markdown.includes(paragraph(f.cvss!.label)), "Markdown is missing the combined CVSS label");
+    assert.ok(text.includes(`CVSS v${f.cvss!.version || "4.0"} 评分`), "web is missing the CVSS title");
+    assert.ok(text.includes(f.cvss!.score.toFixed(1)), "web is missing the CVSS score");
+    assert.ok(text.includes(f.cvss!.vector), "web is missing the CVSS vector");
     for (const value of [f.identity!, f.evidence!.replace(/\r\n/g, "\n"), ...f.reproBlocks.map(block => block.text)]) {
       assert.ok(text.replace(/\r\n/g, "\n").includes(value), `web is missing literal ${value}`);
       assert.ok(markdown.includes(value), `Markdown is missing literal ${value}`);
@@ -31,7 +38,10 @@ test("web and Markdown render the same report fields, scores, identity and reque
     assert.ok(text.includes(snapshot.id)); assert.ok(markdown.includes("report\\_fixture"));
     assert.ok(text.includes(snapshot.source_hash));
     assert.match(html, /<pre class="report-code"><code>/);
-    assert.match(text, /复审前危险度（仅作历史标记）：高；最终危险度：严重/);
+    // Markdown states the severity transition in full; the web header shows it
+    // compactly ("复审前 高"), so assert each format's actual wording.
+    assert.match(markdown, /复审前危险度（仅作历史标记）：高；最终危险度：严重/);
+    assert.ok(text.includes("复审前 高"), "web is missing the compact previous-severity marker");
   } finally { store.close(); }
 });
 

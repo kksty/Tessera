@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { ExternalLink, RotateCcw } from "lucide-react";
 import type { Run } from "../../../../packages/protocol/src/index.js";
 import { fmt, fmtDate, fmtTime } from "../format.js";
-import { RUN_LIMITS, runAttention } from "../run-state.js";
+import { RUN_LIMITS, runAttention, runOutcome } from "../run-state.js";
 import { locateRecord, useWorkspace } from "../workspace.js";
 import { Badge, Card, EmptyState } from "./ui.js";
 
@@ -24,6 +24,17 @@ export function RunHistory({
 }) {
   const ws = useWorkspace();
   const steps = useMemo(() => new Map((ws.graph?.steps ?? []).map((step) => [step.id, step])), [ws.graph]);
+  // 同一种工作（Decide / 某个 Step / 某个发现）的最新 attempt：用来把已被接手的
+  // 失败记录降级成历史，而不是继续显示“待处理”。
+  const latestRuns = useMemo(() => {
+    const byWork = new Map<string, Run>();
+    for (const run of runs) {
+      const key = `${run.graph_id}:${run.kind}:${run.node_id ?? ""}`;
+      const current = byWork.get(key);
+      if (!current || run.attempt > current.attempt) byWork.set(key, run);
+    }
+    return byWork;
+  }, [runs]);
   const actionable = useMemo(
     () =>
       runs.filter((run) => {
@@ -74,16 +85,20 @@ export function RunHistory({
         );
         const step = run.node_id ? steps.get(run.node_id) : undefined;
         const attention = runAttention(run, step);
+        const outcome = runOutcome(run, step, {
+          latest: latestRuns.get(`${run.graph_id}:${run.kind}:${run.node_id ?? ""}`),
+          projectStatus: ws.graph?.project.status,
+        });
         return (
           <details className="run-row" key={run.id}>
             <summary>
               <span className="run-kind">{kinds[run.kind]}</span>
               <span className="mono">{run.node_id || "—"}</span>
               <span className="quiet">第 {run.attempt} 次</span>
-              {attention ? (
-                <span className="status-pill" data-tone={attention.actionable ? "danger" : "neutral"}>
+              {outcome ? (
+                <span className="status-pill" data-tone={outcome.tone}>
                   <i aria-hidden="true" />
-                  {attention.label}
+                  {outcome.label}
                 </span>
               ) : (
                 <Badge value={run.status} />
@@ -129,7 +144,7 @@ export function RunHistory({
               )}
               {run.session_path && <p className="mono quiet">会话：{run.session_path}</p>}
               {run.external_action_possible && <p className="run-warn">已放行 shell，外部动作可能已发生。</p>}
-              {attention && <p className={attention.actionable ? "run-warn" : "run-note"}>{attention.note}</p>}
+              {outcome && <p className={outcome.tone === "danger" ? "run-warn" : "run-note"}>{outcome.note}</p>}
               <div className="run-actions">
                 {run.node_id && run.kind !== "decide" && (
                   <button type="button" className="button small" onClick={() => locateRecord(ws, run.node_id!)}>

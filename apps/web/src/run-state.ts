@@ -43,6 +43,55 @@ export function runAttention(run: Run, step?: Step): RunAttention | null {
   return { actionable: true, label: "需人工检查", note: "先核对原始证据与外部动作，再决定重试或关闭。" };
 }
 
+export type RunOutcomeTone = "danger" | "warn" | "neutral";
+
+export interface RunOutcome {
+  label: string;
+  tone: RunOutcomeTone;
+  note: string;
+}
+
+/**
+ * 运行记录的展示口径：只有 needs_attention 真需要人。`failed` 只是那一次尝试的历史——
+ * 后面的 attempt 已经接手、或项目被连续失败暂停，都不该继续显示成“等你处理”。
+ * failed 且项目仍在跑时，调度器会在退避后重新领取，所以是“等待自动重试”。
+ */
+export function runOutcome(
+  run: Run,
+  step: Step | undefined,
+  options: { latest?: Run; projectStatus?: string } = {},
+): RunOutcome | null {
+  const attention = runAttention(run, step);
+  if (attention)
+    return { label: attention.label, tone: attention.actionable ? "danger" : "neutral", note: attention.note };
+  if (run.status !== "failed") return null;
+  // 失败的 Execute 也可能随任务关闭/废弃一起结案：这时不会再有自动重试。
+  if (run.kind === "execute" && step) {
+    if (step.deleted) return { label: "已处理", tone: "neutral", note: `任务 ${step.id} 已删除，此运行仅留档。` };
+    if (step.concluded_at || step.discarded)
+      return {
+        label: "已处理",
+        tone: "neutral",
+        note: `任务 ${step.id} 已${step.discarded ? "废弃" : "关闭"}，此运行仅留档。`,
+      };
+  }
+  if (options.latest && options.latest.attempt > run.attempt)
+    return {
+      label: `已被第 ${options.latest.attempt} 次接管`,
+      tone: "neutral",
+      note: `第 ${options.latest.attempt} 次已接手同一${run.kind === "decide" ? "决策" : run.kind === "review" ? "审核" : "任务"}；这条失败记录、证据与用量仅留档。`,
+    };
+  if (options.projectStatus === "stopped")
+    return {
+      label: "项目已暂停",
+      tone: "warn",
+      note: "连续失败已触发暂停；恢复项目后调度器才会继续重试。",
+    };
+  if (options.projectStatus === "active")
+    return { label: "等待自动重试", tone: "warn", note: "失败已记录，调度器会按退避重新领取。" };
+  return null;
+}
+
 /** 还需要人拍板的运行：没有结案标记，且 Step 仍在进行中的问题里。 */
 export function unsettledRun(run: Run, step?: Step) {
   return (

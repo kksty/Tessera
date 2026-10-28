@@ -522,13 +522,16 @@ export function domainSummaryElements(elements: ElementDefinition[], graph: Grap
       const countInRow = Math.min(card.stepCapacity, card.steps.length - row * card.stepCapacity);
       const rowWidth = countInRow * CARD.stepCell + (countInRow - 1) * CARD.stepGap;
       const rowLeft = card.left + (card.width - rowWidth) / 2;
-      (node as any).position = {
-        x: rowLeft + col * (CARD.stepCell + CARD.stepGap) + CARD.stepCell / 2,
-        y: contentTop + row * (CARD.stepCell + CARD.stepGap) + CARD.stepCell / 2,
+      const stepNode: ElementDefinition = {
+        ...node,
+        position: {
+          x: rowLeft + col * (CARD.stepCell + CARD.stepGap) + CARD.stepCell / 2,
+          y: contentTop + row * (CARD.stepCell + CARD.stepGap) + CARD.stepCell / 2,
+        },
+        data: { ...(node.data as any), group: card.domain },
       };
-      (node.data as any).group = card.domain;
-      grouped.set(nodeIdOf(node), frameId);
-      memberNodes.push(node);
+      grouped.set(nodeIdOf(stepNode), frameId);
+      memberNodes.push(stepNode);
     });
 
     if (card.outputs.length) {

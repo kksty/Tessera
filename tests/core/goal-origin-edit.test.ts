@@ -122,8 +122,8 @@ test("Hints enter the Decide view sorted by weight, with coverage, and block com
     const submit = decider(store, id, "planner");
     const view = memoryEntry(store.get(id), { kind: "decide" } as Job, undefined) as any;
     assert.deepEqual(view.unaddressed_hints, ["h002", "h001"], "weight, then id");
-    assert.match(view.hints[0], /^h002 p9 待人工确认 — 高权重提示：先看登录页再扫端口$/);
-    assert.match(view.hints[1], /^h001 p1 待人工确认 — 低权重提示$/);
+    assert.match(view.hints[0], /^h002 p9 待处置 — 高权重提示：先看登录页再扫端口$/);
+    assert.match(view.hints[1], /^h001 p1 待处置 — 低权重提示$/);
 
     const planned = submit({
       submission_id: "p1",
@@ -131,7 +131,7 @@ test("Hints enter the Decide view sorted by weight, with coverage, and block com
     });
     assert.equal(planned.settle.ok, true);
     const covered = memoryEntry(store.get(id), { kind: "decide" } as Job, undefined) as any;
-    assert.match(covered.hints[0], /→ s001.*仍待人工确认/);
+    assert.match(covered.hints[0], /→ s001.*待 hint_notes 说明或人工确认/);
     assert.deepEqual(covered.unaddressed_hints, ["h001"]);
     assert.deepEqual(covered.unresolved_hints, ["h002", "h001"]);
 
@@ -145,11 +145,11 @@ test("Hints enter the Decide view sorted by weight, with coverage, and block com
       complete: { from: ["origin"], description: "完成" },
     });
     assert.equal(refused.settle.ok, false);
-    assert.match(refused.settle.conflicts[0].reason, /Hint 需人工确认.*h001, h002, h003/);
+    assert.match(refused.settle.conflicts[0].reason, /Hint 需处置.*h001, h002, h003/);
     assert.equal(store.get(id).hints.find((h) => h.id === "h001")!.resolved, undefined);
 
-    // A model note is advice: it cannot close the directive, so the same batch
-    // is still rejected. (A successful note-only settlement is covered in hints.test.)
+    // h001 and h003 are explained here, but h002 has no disposition, so the whole
+    // batch is still rejected and nothing is applied (h001 stays open).
     const noted = submit2({
       submission_id: "c2",
       closes: [close],

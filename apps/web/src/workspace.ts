@@ -42,13 +42,17 @@ export type TrafficTarget = { flowId: string; findingId?: string; label?: string
 
 export type RuntimeModel = DispatchConfig["model"] & { api_key_set?: boolean };
 
+/** Redacted notification config: the webhook itself is masked to a "set" flag. */
+export type RuntimeNotifications = NonNullable<DispatchConfig["notifications"]> & { feishu_webhook_set?: boolean };
+
 export type RuntimeConfig = Omit<
   DispatchConfig,
-  "server" | "worker_image" | "network" | "volume_prefix" | "model" | "review_model"
+  "server" | "worker_image" | "network" | "volume_prefix" | "model" | "review_model" | "notifications"
 > & {
   read_only_fields?: string[];
   model: RuntimeModel;
   review_model?: RuntimeModel;
+  notifications?: RuntimeNotifications;
 };
 
 export const workspacePages: readOnlyPages = [
@@ -151,6 +155,8 @@ export interface Workspace {
   focusFinding: { projectId: string; findingId: string } | null;
   /** Set when a Finding opens its captured flow in the Traffic page. */
   trafficTarget: TrafficTarget | null;
+  /** 就地预览的真实流量：在当前页弹层里查看，不离开发现页，关闭后页面原样不动。 */
+  trafficPreview: TrafficTarget | null;
   paletteOpen: boolean;
   refreshing: boolean;
   node: any;
@@ -193,6 +199,9 @@ export interface Workspace {
   openFinding: (projectId: string, findingId: string) => void;
   /** Open an exact captured flow in the Traffic page. */
   openTraffic: (target: TrafficTarget) => void;
+  /** 在当前页就地弹层预览一条真实流量；关闭后不改变底层页面。 */
+  openTrafficPreview: (target: TrafficTarget) => void;
+  closeTrafficPreview: () => void;
   clearFocusFinding: () => void;
   setPaletteOpen: (open: boolean) => void;
   setTheme: (theme: "light" | "dark") => void;

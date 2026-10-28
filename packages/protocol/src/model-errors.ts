@@ -82,7 +82,7 @@ export function modelIssue(raw?: string): ModelIssue | null {
     return result(
       "context",
       "上下文预算不足",
-      "在设置中核对 Pi 识别的供应商和实际窗口；中转请填写实际上下文与输出上限，再检测 API。已提交的观测保留。",
+      "在设置中核对 Pi 识别的供应商和实际窗口；中转请填写实际上下文与输出上限，保存后用真实任务验证。已提交的观测保留。",
       false,
     );
   if (status === 404 || /model[_ -]not[_ -]found|unsupported.*(?:model|api)|invalid.*model/i.test(raw))

@@ -131,6 +131,31 @@ try {
   assert.equal(restored.stuck, "true");
   assert.equal(restored.beforeDisplay, "block");
 
+  // 飞书通知分区：Webhook 输入与两个开关都必须渲染出来。
+  await page.locator("#settings-notifications").scrollIntoViewIfNeeded();
+  await page.getByText("飞书通知", { exact: true }).first().waitFor();
+  assert.equal(await page.locator("#settings-feishu-webhook").count(), 1, "webhook input renders");
+  assert.equal(
+    await page.locator("#settings-feishu-webhook").getAttribute("type"),
+    "password",
+    "webhook input is masked",
+  );
+  const toggles = ["有新发现时通知", "需要人工处理时通知"];
+  for (const label of toggles) {
+    assert.equal(
+      (await page.locator(".settings-toggle", { hasText: label }).count()) >= 1,
+      true,
+      `toggle "${label}" renders`,
+    );
+  }
+  // 默认不配置 Webhook：输入框为空，占位提示 https。
+  assert.equal(await page.locator("#settings-feishu-webhook").inputValue(), "");
+  await page.screenshot({ path: join(output, "notifications-1280.png") });
+  await page.evaluate(() => {
+    (document.querySelector(".content") as HTMLElement).scrollTop = 0;
+  });
+  await page.waitForTimeout(200);
+
   assert.deepEqual(errors, []);
   process.stdout.write(
     JSON.stringify({

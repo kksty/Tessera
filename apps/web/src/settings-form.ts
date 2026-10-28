@@ -28,6 +28,9 @@ export const FIELD_LABELS: Record<string, string> = {
   result_repairs: "结果修复次数",
   capture_enabled: "录制代理",
   skip_informational_review: "信息类免审",
+  "notifications.feishu_webhook": "飞书 Webhook",
+  "notifications.notify_new_finding": "新发现通知",
+  "notifications.notify_needs_human": "人工处理通知",
 };
 
 function flatten(value: unknown, prefix = "", out: Record<string, unknown> = {}) {
@@ -112,11 +115,14 @@ export function runtimeFieldErrors(config: RuntimeConfig, reviewEnabled: boolean
   else if (config.task_timeout_seconds > 0 && closeout >= config.task_timeout_seconds)
     errors.closeout_seconds = "收尾预留必须小于单次任务超时";
   integerIn("tool_timeout_seconds", config.tool_timeout_seconds ?? 0, 0, 600, "命令上限需为 0–600 的整数");
-  integerIn("result_repairs", config.result_repairs ?? 1, 0, 3, "结果修复次数需为 0–3 的整数");
+  integerIn("result_repairs", config.result_repairs ?? 2, 0, 3, "结果修复次数需为 0–3 的整数");
   if (reviewEnabled && config.review_model) {
     if (!config.review_model.id) errors["review_model.id"] = "启用独立审核模型需要选择或填写模型";
     if (!config.review_model.base_url && (!config.review_model.provider || config.review_model.provider === "custom"))
       errors["review_model.base_url"] = "启用独立审核模型需要填写 API 地址";
   }
+  const webhook = config.notifications?.feishu_webhook?.trim() ?? "";
+  if (webhook && webhook !== "-" && !/^https:\/\/\S+$/i.test(webhook))
+    errors["notifications.feishu_webhook"] = "飞书 Webhook 必须是 HTTPS 地址";
   return errors;
 }

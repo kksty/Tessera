@@ -274,19 +274,12 @@ for (const useTool of [false, true])
       assert.equal(graph.project.last_error, undefined);
       assert.equal(graph.project.decide_retry_at, undefined);
       if (useTool) {
-        // The tool retry sees the rewritten Hint but a model note cannot close it.
+        // The tool retry sees the rewritten Hint and, because a hint_notes entry is
+        // now a model closure, settles completion itself without operator action.
         assert.equal(requests, 2);
-        assert.equal(graph.project.status, "active");
-        assert.equal(graph.hints[0].resolved, undefined);
-        // The operator confirms the directive before the next Decide round.
-        store.resolveHint(id, "h001", { note: "Operator confirmed the rewritten instruction" });
-        const next = store.claim(id, "next-planner", 0)!;
-        assert.equal(next.kind, "decide");
-        await runJob(next, config, new ApiClient(app.listeningOrigin, testWorkerToken), dir);
-        graph = store.get(id);
-        assert.equal(requests, 3);
         assert.equal(graph.project.status, "completed");
-        assert.equal(graph.hints[0].resolved?.note, "Operator confirmed the rewritten instruction");
+        assert.equal(graph.hints[0].resolved_by, "decide");
+        assert.equal(graph.hints[0].resolved?.note, "Answer to the rewritten instruction");
       } else {
         assert.equal(requests, 1);
         assert.equal(graph.project.status, "active");

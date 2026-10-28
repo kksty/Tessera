@@ -597,7 +597,83 @@ async function checkBoardSummary(page: Page) {
   await page.screenshot({ path: join(output, "board-summary.png"), fullPage: true });
 
   await page.getByRole("button", { name: "退出汇总", exact: true }).click();
-  await page.waitForTimeout(600);
+  await page
+    .waitForFunction(
+      () => {
+        const el = document.querySelector(".graph-canvas") as (HTMLElement & { _cyreg?: { cy: any } }) | null;
+        const cy = el?._cyreg?.cy;
+        return !!cy && cy.nodes().filter((item: any) => item.data("grouped")).length === 0;
+      },
+      undefined,
+      { timeout: 5000 },
+    )
+    .catch(() => undefined);
+  const afterExit = await page.locator(".graph-canvas").evaluate((el) => {
+    const cy = (el as unknown as { _cyreg: { cy: any } })._cyreg.cy;
+    const fact = cy
+      .nodes()
+      .filter((item: any) => item.data("type") === "fact")
+      .first();
+    const step = cy
+      .nodes()
+      .filter((item: any) => item.data("type") === "step")
+      .first();
+    return {
+      grouped: cy
+        .nodes()
+        .filter((item: any) => item.hasClass("grouped"))
+        .map((item: any) => ({ id: item.id(), type: item.data("type") })),
+      groups: cy
+        .nodes()
+        .filter((item: any) => item.data("group"))
+        .map((item: any) => ({
+          id: item.id(),
+          type: item.data("type"),
+          group: item.data("group"),
+        })),
+      factWidth: fact.length ? parseFloat(fact.style("width")) : 0,
+      factLabel: fact.length ? String(fact.data("label") || "") : "",
+      stepShape: step.length ? step.style("shape") : "",
+      stepLabel: step.length ? String(step.data("label") || "") : "",
+    };
+  });
+  assert.equal(
+    afterExit.grouped.length,
+    0,
+    `退出汇总后不残留事实/发现的汇总样式：${JSON.stringify(afterExit.grouped)}`,
+  );
+  assert.equal(afterExit.groups.length, 0, `退出汇总后不残留域分框标记：${JSON.stringify(afterExit.groups)}`);
+  assert.ok(afterExit.factWidth > 160, "事实恢复原来的宽卡片");
+  assert.ok(afterExit.factLabel && afterExit.factLabel !== "?", "事实恢复自己的标签，不是问号");
+  assert.equal(afterExit.stepShape, "ellipse", "退出汇总后任务仍是圆圈");
+  assert.equal(afterExit.stepLabel, "?", "退出汇总后任务仍显示问号");
+
+  // 视图模式记忆：切去其他页面再回来，仍是退出汇总后的完整图，不能又变回测试域。
+  await goRoute(page, `projects/${summaryId}/findings`);
+  await goRoute(page, `projects/${summaryId}/blackboard`);
+  await page.locator(".graph-canvas canvas").first().waitFor();
+  await page.waitForTimeout(400);
+  const restored = await page.locator(".graph-canvas").evaluate((el) => {
+    const cy = (el as unknown as { _cyreg: { cy: any } })._cyreg.cy;
+    return {
+      frames: cy.nodes().filter((item: any) => item.data("frame")).length,
+      facts: cy.nodes().filter((item: any) => item.data("type") === "fact").length,
+    };
+  });
+  assert.equal(restored.frames, 0, "返回黑板后保持退出汇总状态，不能又变回测试域");
+  assert.ok(restored.facts > 0, "返回黑板后完整图的真实节点都在");
+
+  // 反过来：进入测试域分框后离开再回来，也要保持分框。
+  await page.getByRole("button", { name: "按测试域汇总", exact: true }).click();
+  await page.locator('.graph-canvas[data-layout-ready="preset"]').waitFor();
+  await goRoute(page, `projects/${summaryId}/findings`);
+  await goRoute(page, `projects/${summaryId}/blackboard`);
+  await page.locator('.graph-canvas[data-layout-ready="preset"]').waitFor();
+  const restoredDomain = await page.locator(".graph-canvas").evaluate((el) => {
+    const cy = (el as unknown as { _cyreg: { cy: any } })._cyreg.cy;
+    return cy.nodes().filter((item: any) => item.data("frame")).length;
+  });
+  assert.ok(restoredDomain > 0, "返回黑板后保持测试域分框状态");
 }
 
 async function checkSearchCompletion(page: Page) {

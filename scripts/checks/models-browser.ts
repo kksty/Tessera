@@ -23,8 +23,8 @@ provider.post("/v1/chat/completions", (req: any, reply) => {
   calls++;
   assert.equal(req.headers.authorization, "Bearer fixture-key");
   const budget = req.body.max_tokens ?? req.body.max_completion_tokens;
-  assert.ok(budget > 400 && budget <= 512, `capacity probe spends the declared ceiling, got ${budget}`);
-  assert.ok(JSON.stringify(req.body).length > 30000, "capacity probe sends a context sized from the window");
+  assert.ok(budget > 0 && budget <= 128, `connection test keeps the output ceiling small, got ${budget}`);
+  assert.ok(JSON.stringify(req.body).length < 2000, "connection test sends one short prompt");
   reply.header("content-type", "text/event-stream");
   return `data: ${JSON.stringify({ id: "probe", choices: [{ index: 0, delta: { role: "assistant", content: "OK" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
 });
@@ -86,14 +86,15 @@ try {
   assert.equal(await main.getByLabel(/^上下文窗口/).inputValue(), "16000");
   assert.equal(await main.getByLabel(/^输出上限/).inputValue(), "512");
   const detection = page.waitForResponse((r) => r.url().endsWith("/api/runtime/model-check"));
-  await main.getByRole("button", { name: "检测 API", exact: true }).click();
+  await main.getByRole("button", { name: "测试连接", exact: true }).click();
   const detected = await detection;
   assert.equal(detected.status(), 200, await detected.text());
   const result = await detected.json();
   assert.equal(result.model.context_window, 16000);
   assert.equal(result.model.max_output_tokens, 512);
-  await main.getByRole("status").filter({ hasText: "容量探测通过" }).waitFor();
-  await main.getByRole("status").filter({ hasText: "输出上限" }).waitFor();
+  assert.equal(result.capacity, undefined);
+  await main.getByRole("status").filter({ hasText: "连接正常" }).waitFor();
+  await main.getByRole("status").filter({ hasText: "自动压缩" }).waitFor();
   assert.equal(calls, 1);
   const refresh = main.getByRole("button", { name: "刷新 Pi 目录", exact: true });
   await main
@@ -152,7 +153,7 @@ try {
   await main.locator(".model-picker").screenshot({ path: "test-results/models-effective-config-mobile.png" });
   assert.deepEqual(errors, []);
   console.log(
-    "Pi model settings browser checks passed: endpoint catalog matching, exact metadata, custom endpoint probe, endpoint normalization, independent review/save/disable and mobile layout.",
+    "Pi model settings browser checks passed: endpoint catalog matching, exact metadata, custom endpoint connection check, endpoint normalization, independent review/save/disable and mobile layout.",
   );
 } catch (error) {
   console.error((await page.locator("body").innerText()).slice(-4500));

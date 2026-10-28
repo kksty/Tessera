@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Run, Step } from "../../packages/protocol/src/index.js";
-import { runAttention, unsettledRun } from "../../apps/web/src/run-state.js";
+import { runAttention, runOutcome, unsettledRun } from "../../apps/web/src/run-state.js";
 
 const run = (patch: Partial<Run> = {}): Run => ({
   id: "run_1",
@@ -87,4 +87,58 @@ test("a Run is not actionable when its Step is gone, superseded or already claim
   assert.equal(runAttention(run(), step({ blocked_run_id: "run_2" }))?.actionable, false);
   assert.equal(runAttention(run(), step({ worker: "w_2" }))?.actionable, false);
   assert.equal(runAttention(run({ status: "succeeded" }), step()), null);
+});
+
+test("a failed Run is history once a later attempt takes over", () => {
+  const failed = run({
+    kind: "decide",
+    node_id: "main",
+    attempt: 37,
+    status: "failed",
+    external_action_possible: false,
+  });
+  const latest = run({
+    id: "run_39",
+    kind: "decide",
+    node_id: "main",
+    attempt: 39,
+    status: "running",
+    external_action_possible: false,
+  });
+  const superseded = runOutcome(failed, undefined, { latest, projectStatus: "active" });
+  assert.equal(superseded?.label, "已被第 39 次接管");
+  assert.equal(superseded?.tone, "neutral");
+  assert.match(superseded!.note, /仅留档/);
+
+  assert.equal(runOutcome(failed, undefined, { projectStatus: "stopped" })?.label, "项目已暂停");
+  assert.equal(runOutcome(failed, undefined, { projectStatus: "stopped" })?.tone, "warn");
+  assert.equal(runOutcome(failed, undefined, { projectStatus: "active" })?.label, "等待自动重试");
+  assert.equal(runOutcome(failed, undefined, { projectStatus: "completed" }), null);
+  assert.equal(runOutcome(run({ status: "succeeded" }), step(), { projectStatus: "active" }), null);
+});
+
+test("a failed Execute whose Step was closed is history, not a queued retry", () => {
+  const failed = run({ status: "failed" });
+  assert.equal(
+    runOutcome(failed, step({ concluded_at: "2026-10-20T14:40:00.000Z" }), { projectStatus: "active" })?.label,
+    "已处理",
+  );
+  assert.equal(
+    runOutcome(failed, step({ concluded_at: "2026-10-20T14:40:00.000Z" }), { projectStatus: "active" })?.note,
+    "任务 s001 已关闭，此运行仅留档。",
+  );
+  assert.equal(
+    runOutcome(failed, step({ discarded: true }), { projectStatus: "active" })?.note,
+    "任务 s001 已废弃，此运行仅留档。",
+  );
+});
+
+test("the human gate still outranks a later automatic attempt", () => {
+  const latest = run({ id: "run_2", attempt: 2, status: "running" });
+  const outcome = runOutcome(run(), step({ blocked_run_id: "run_1" }), {
+    latest,
+    projectStatus: "active",
+  });
+  assert.equal(outcome?.label, "需人工检查");
+  assert.equal(outcome?.tone, "danger");
 });

@@ -462,7 +462,7 @@ export function ProjectOverviewPage() {
           </div>
           {graph.hints.some((hint) => !hint.withdrawn_at && !hint.resolved) && (
             <p className="quiet">
-              {graph.hints.filter((hint) => !hint.withdrawn_at && !hint.resolved).length} 条提示待人工确认
+              {graph.hints.filter((hint) => !hint.withdrawn_at && !hint.resolved).length} 条提示待处置
             </p>
           )}
           {openLeads.length > 0 && (
