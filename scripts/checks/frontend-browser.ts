@@ -138,26 +138,50 @@ async function checkLogo(page: Page) {
     .locator(".logo-mark:visible")
     .first()
     .evaluate((el) => {
-      const pieces = [...el.querySelectorAll("path")].map((path) => {
-        const box = path.getBBox();
-        return { x: box.x, y: box.y, width: box.width, height: box.height, fill: getComputedStyle(path).fill };
-      });
+      // <defs> 里的裁切路径不可见：只有被它的 <g> 裁住的着色片才算记号本身。
+      const pieces = [...el.querySelectorAll("path")]
+        .filter((path) => !path.closest("defs"))
+        .map((path) => {
+          const box = (path as SVGGraphicsElement).getBBox();
+          return { x: box.x, y: box.y, width: box.width, height: box.height, fill: getComputedStyle(path).fill };
+        });
+      const clip = el.querySelector("clipPath path");
+      const clipBox = clip ? (clip as SVGGraphicsElement).getBBox() : null;
       const size = el.getBoundingClientRect();
-      return { pieces, viewBox: el.getAttribute("viewBox"), width: size.width, height: size.height };
+      return {
+        pieces,
+        clip: clipBox ? { x: clipBox.x, y: clipBox.y, width: clipBox.width, height: clipBox.height } : null,
+        viewBox: el.getAttribute("viewBox"),
+        width: size.width,
+        height: size.height,
+      };
     });
   assert.equal(mark.viewBox, "0 0 32 32", "Logo view box is 32");
   assert.equal(mark.pieces.length, 2, "Mark is one tile cut into two pieces");
   assert.ok(mark.width > 0 && Math.abs(mark.width - mark.height) < 0.5, "Logo renders square");
+  assert.ok(mark.clip, "Mark clips its two pieces to one tile outline");
   const [base, accent] = mark.pieces;
   assert.notEqual(base.fill, accent.fill, "Accent piece must use its own colour");
-  // 两片沿 45° 接缝错开，合起来正好是一片 25×25、居中于 32 画布的瓷砖。
+  // 两片沿 45° 接缝错开，右下那片是强调色；两片画满外轮廓并交给裁切框，
+  // 合起来正好是一片 26.8 见方、居中于 32 画布的瓷砖。
   assert.ok(accent.x > base.x && accent.y > base.y, "Accent piece sits at the bottom-right of the seam");
   const left = Math.min(base.x, accent.x),
     top = Math.min(base.y, accent.y);
   const right = Math.max(base.x + base.width, accent.x + accent.width);
   const bottom = Math.max(base.y + base.height, accent.y + accent.height);
-  assert.ok(Math.abs(right - left - 25) < 0.2 && Math.abs(bottom - top - 25) < 0.2, "Two pieces tile a 25×25 square");
-  assert.ok(Math.abs(left - 3.5) < 0.2 && Math.abs(top - 3.5) < 0.2, "Mark is centred in its 32 view box");
+  assert.ok(
+    Math.abs(right - left - 26.8) < 0.2 && Math.abs(bottom - top - 26.8) < 0.2,
+    "Two pieces tile a 26.8×26.8 square",
+  );
+  assert.ok(Math.abs(left - 2.6) < 0.2 && Math.abs(top - 2.6) < 0.2, "Mark is centred in its 32 view box");
+  const clip = mark.clip!;
+  assert.ok(
+    Math.abs(clip.x - left) < 0.2 &&
+      Math.abs(clip.y - top) < 0.2 &&
+      Math.abs(clip.width - 26.8) < 0.2 &&
+      Math.abs(clip.height - 26.8) < 0.2,
+    "Clip outline matches the tiled square exactly",
+  );
 }
 
 /** 侧栏不再借用登录页的墨面：浅色必须是纸面，项目名在两套主题下都要读得清。
