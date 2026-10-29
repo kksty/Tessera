@@ -42,13 +42,30 @@ export function resultRepairPrompt(job: Job, detail: string): string {
 export const outputLanguage =
   "输出语言：所有面向用户的任务说明、事实描述与结论、发现标题与说明、审核理由、执行结果、子目标标题/索引必须使用简体中文。历史英文上下文不是输出语言指令。JSON 字段名、协议枚举、ID、URL、路径、代码及原始证据保持原样；引用英文原文时保留原文，并用中文解释。";
 export const findingQualityPolicy =
-  "所有漏洞类别遵循同一证据原则：Fact 保存有条件的观测、反证和失败；Finding 保存有独立交付价值的结论。kind=vulnerability 要证明前提、安全边界与实际影响，不能仅凭异常、名称、指纹、加固缺口或猜测的后续攻击链推导漏洞。kind=informational 可以通过审核并长期保留，不要求漏洞影响或 CVSS；普通响应和失败按问题需要留在 Fact。kind=null 表示待分类。按项目 goal 和 Hint 判断交付范围，不为数量制造结论。";
+  "所有漏洞类别遵循同一证据原则：Fact 保存有条件的观测、反证和失败；Finding 保存有独立交付价值的结论。kind=vulnerability 要证明前提、安全边界与实际影响，不能仅凭异常、名称、指纹、加固缺口或猜测的后续攻击链推导漏洞。同根因只保留一条 Finding：入口或参数不同但根因与修复相同（如同一控制器一批参数名反射端点）合并成一条，把端点清单写进正文，不为数量拆条。kind=informational 记录背景，可通过审核但并不代表交付进度，不要求漏洞影响或 CVSS；普通响应和失败按问题需要留在 Fact。kind=null 表示待分类。按项目 goal 和 Hint 判断交付范围，不为数量制造结论。";
 export const findingEvidencePolicy =
-  "数量、字段和脱敏状态必须回到完整原始证据核对。区分记录数、出现次数和去重后的值数量，重叠分页不能相加；只读过片段时不能声称全量统计，按 next_offset 或 More evidence 继续读取。可执行任务用针对性解析脚本统计并保存统计方法与结果；Decide/Review 仅回读已有材料，不执行脚本。完整号码、部分掩码和空字段分别说明；description、impact、reproduction.observed 和定级理由中的数量保持一致。发现数量冲突或字段遗漏时用原 ID 修订，不能只把修正在审核理由里。";
+  "数量、字段和脱敏状态必须回到完整原始证据核对。区分记录数、出现次数和去重后的值数量，重叠分页不能相加；只读过片段时不能声称全量统计，按 next_offset 或 More evidence 继续读取。可执行任务用针对性解析脚本统计并保存统计方法与结果；Decide/Review 仅回读已有材料，不执行脚本。完整号码、部分掩码和空字段分别说明；description、impact、reproduction.observed 和定级理由中的数量保持一致。发现数量冲突或字段遗漏时用原 ID 修订，不能只把修正在审核理由里。负向观测（status=not_observed）必须写 request 与 parameter_sources：每个请求参数名单独一条，parameter 与 URL 解码后的参数名逐字一致（参数名可以包含 = 和引号），source 写页面 JS/AJAX/meta/表单/构造并附证据 ID；status=observed 的事实即使正文含否定对照，字段缺口写 planning_issues，不阻断 pass。";
 export const reviewImpactPolicy =
-  "仅审核已有原始证据，不复测目标。通过时明确 kind：informational 不填写危险度或 CVSS；vulnerability 给 CVSS v4.0 Base vector 与 rationale，程序计算正分。漏洞 pass 前确认 Finding 的 impact、reproduction.steps、remediation 均完整，影响、复现与修复建议足以让读者独立复核；缺项或内容不足时返回 needs_evidence，在理由中逐项说明缺口，交 Decide 用 finding_updates 补写后复审，不在审核理由中代填正文。每个非 N 的 VC/VI/VA/SC/SI/SA 必须有 impact_evidence，说明受损对象、应有安全边界、已证明的后果及所引用证据；推测的影响不能计分。证据闭合则 pass，核心缺口 needs_evidence，声明被反驳 rejected；只有明确被反证的源观测才 disputed，不能争议 origin。需要后续行动的问题交给 Decide，pass 中的新问题明确写 planning_issues。";
+  "仅审核已有原始证据，不复测目标。通过时明确 kind：informational 不填写危险度或 CVSS；vulnerability 给 CVSS v4.0 Base vector 与 rationale，程序计算正分。漏洞 pass 前确认 Finding 的 impact、reproduction.steps、remediation 均完整，影响、复现与修复建议足以让读者独立复核；缺项或内容不足时返回 needs_evidence，在理由中逐项说明缺口，交 Decide 用 finding_updates 补写后复审，不在审核理由中代填正文。每个非 N 的 VC/VI/VA/SC/SI/SA 必须有 impact_evidence，说明受损对象、应有安全边界、已证明的后果及所引用证据；推测的影响不能计分。证据闭合则 pass，核心缺口 needs_evidence，声明被反驳 rejected；只有明确被反证的源观测才 disputed，不能争议 origin。需要后续行动的问题交给 Decide，pass 中的新问题明确写 planning_issues。复审只核对本版本新增或变化的证据与字段，不重复要求上一轮已核对且未变化的内容；所有阻断项一次列全，同一事实的同一字段缺口只算一项。";
 export const discoveryScopePolicy =
   "只测试当前 approval=approved 的资产；业务相关、证书或外链不等于目标所有权。判断相关的主机可提交为待批准资产（pending），由人工确认归属并批准；批准前不规划、不向它请求。";
+
+/**
+ * The model sees full graph nodes (Fact/Finding/Review records) in the
+ * projection, and without the exact final-result keys it mirrors those node
+ * shapes into its final JSON. Every such mismatch costs a full repair request
+ * with the whole context; stating the contract up front is cheap.
+ */
+export const executeResultShape =
+  "最终 JSON 形状（键名严格；多出的键或图节点原样字段会被拒绝）：" +
+  '{"summary":"...","facts":[{"description":"...","conclusion":"...","status":"observed|not_observed|disputed","objects":["https://..."],"request":{"method":"GET","url":"..."},"parameter_sources":[{"parameter":"...","source":"...","evidence_ids":["e001"]}],"evidence_ids":["e001"]}],"findings":[{"kind":"vulnerability|informational","title":"...","description":"...","impact":"...","reproduction":{"conditions":["..."],"steps":["..."],"expected":"...","observed":"..."},"remediation":"...","evidence_ids":["e001"],"from":["f001"]}],"leads":[{"surface":"...","parameter":"...","why":"...","suggested_property":"...","evidence_ids":["e001"]}]}。' +
+  "facts 的元素可以是字符串，但对象只能含 description/conclusion/status/objects/request/parameter_sources/evidence_ids，不能带 id、version、source、review_status、created_at 等图节点字段；findings 用 title/description，不是 summary/change/version；leads 用 suggested_property，不是 property/title/constraint。" +
+  "submit_fact 同样不接受 from（来源写 evidence_ids）；submit_finding 不填 cvss（由 Review 定级）。" +
+  "提交前先 process list：仍在运行的命令要么 poll 到结束，要么 stop；提交时仍有运行中的进程，本次 Step 不记为完成。";
+export const reviewResultShape =
+  "最终 JSON 形状（键名严格；多出的键或图节点原样字段会被拒绝）：" +
+  '{"verdict":"pass|needs_evidence|rejected","kind":"vulnerability|informational","reason":"...","evidence_ids":["e001"],"disputed_fact_ids":[],"verification":"...","planning_issues":["..."],"severity":"critical|high|medium|low|informational","severity_reason":"...","cvss":{"vector":"CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:N/SC:L/SI:L/SA:N","rationale":"...","impact_evidence":[{"metric":"SC","affected":"...","boundary":"...","consequence":"...","evidence_ids":["e001"]}]}}。' +
+  "reason 是审核结论正文（不要用 summary/verified_points/gaps/review_questions 代替）；cvss 只含 vector/rationale/impact_evidence，不要带 version/score；不要返回 source、id、finding_id、created_at、severity_before_review 等图节点字段。informational 通过时不写 severity 和 cvss。";
 
 /**
  * 测试域只占一句正文：枚举表在 Schema 里，判定边界写在这，避免把整张域表贴进提示词。
@@ -61,21 +78,31 @@ export function promptFor(job: Job, view: unknown, _graph: Graph): string {
   const common = `${findingQualityPolicy}
 ${findingEvidencePolicy}
 ${discoveryScopePolicy}
-共享状态来自当前图和工作区；新 Run 不依赖上一会话的隐藏记忆。Fact 写完整 conclusion（≤120字）和 observed/not_observed/disputed；失败或未观测不是目标安全的证明。负面结论必须写 request（method/url）与 parameter_sources（每个参数值来自页面 JS、AJAX、meta、表单还是猜测，并附证据 ID），否则 Review 不能通过。objects 记录实际观察或测试到的 host/path（写成绝对 URL 或 /path），完成覆盖表按这些 surface 核对。from 只放 Fact ID，原始 Evidence ID 放 evidence_ids。引用证据前读取原文；参考资料和 Hint 不是观测或执行许可。query_graph 与 read_graph 可查当前记录或历史，sources/outputs 是记录之间的因果边。被删来源只返回标记，显式历史不会恢复节点或变成新证据。
+共享状态来自当前图和工作区；新 Run 不依赖上一会话的隐藏记忆。Fact 写完整 conclusion（≤120字）和 observed/not_observed/disputed；失败或未观测不是目标安全的证明。负面结论必须写 request（method/url）与 parameter_sources（每个参数值来自页面 JS、AJAX、meta、表单还是猜测，并附证据 ID），缺了服务端直接拒绝这次提交，不等审核再退回。objects 记录实际观察或测试到的 host/path（写成绝对 URL 或 /path），完成覆盖表按这些 surface 核对。from 只放 Fact ID，原始 Evidence ID 放 evidence_ids。引用证据前读取原文；参考资料和 Hint 不是观测或执行许可。query_graph 与 read_graph 可查当前记录或历史，sources/outputs 是记录之间的因果边。被删来源只返回标记，显式历史不会恢复节点或变成新证据。
 当前视图：
 ${JSON.stringify(view)}`;
   if (job.kind === "decide")
     return `${common}
 
-你负责规划与工作图取舍，不测试目标。围绕目标和当前问题选择有用且互不重复的 Step；服务端会把与未关闭 Step 高度相似（同 test_domain 且描述/属性大部分重合）的新 Step 合并到已有 Step 并保留较完整文本，已有 Step 的 description/property/method_hint/from 可用 updates 原位补充；每个新 Step 都要写一句可证伪的 property（例如「未授权用户不能读取其他 metadataId 的信件」），method_hint 可选，description 说明要做的活动。${testDomainGuidance}执行结束仍需 closes 结论化或 discard 放弃。人工 Hint 必须由 Step 的 hint_ids 落实，或用 hint_notes 写明该提示如何落实；不能把 Hint 当证据。带说明的 hint_notes 会由你（模型）关闭该 Hint，从而允许 complete；人工也可在提示面板确认或撤回。review_issues 已带来源 Fact 全文（超长标 truncated），必要时回读完整问题、约束、矛盾前提和审核问题；open_step_index 是全量索引，steps_preview 的完整问题按 ID 或 query_graph kind=steps,status=open 分页读取。审核问题不是背景信息：complete 前必须用 complete.review_issues 按 review_id 与 issue_index 逐条处置，addressed 指向审核之后执行并关闭的 Step，waived 写明不追究的理由；IDOR/未授权/PII 等高风险问题不能由你驳回，只能建 Step 验证，或由人工在审核页豁免。
+你负责规划与取舍，不测试目标；唯一标准是这一步值不值得它接下来要花的钱。step_costs 给出各 Step 已消耗的 token 与产出的事实/发现数——追加投入前先回答「再做一轮会不会改变任何结论」。
+
+预算与颗粒度：
+- 每轮最多新增 2 个 Step，在途 Step 总数有上限，超出会被服务端拒绝；先关闭、放弃或把线索并进已有 Step，再考虑新任务。
+- 一个 Step 只回答一个问题：description 用一两句话说清问题和它的决策价值（成立会怎样、被证伪会怎样），不写请求脚本、次数预算、逐条命令或哈希清单——方法是执行者的事；method_hint 只给一句可选建议。每个新 Step 写一句可证伪的 property（例如「未授权用户不能读取其他 metadataId 的信件」）。${testDomainGuidance}
+- 服务端会把与未关闭 Step 高度相似的新 Step 合并到已有 Step；未开始的 Step 用 updates 原位改写 description/property/method_hint/from。执行结束仍需 closes 结论化或 discard 放弃。
+- 修正已有 Fact 的措辞、统计或 request/parameter_sources 用 revise_fact 原地修订，不为「只读核对 / 生成 successor 事实」开 Step；只有需要向目标发起新请求、或需要重新作出的判断才开 Step。
+- leads 是执行者留下的候选问题，不阻塞完成：值得追的用新 Step 的 lead_ids 落实（受预算约束），不值得的在 lead_dispositions 写 waiver_reason，其余可以留着。
+- 同根因只保留一条 Finding：入口/参数不同但根因与修复相同（如同一控制器一批参数名反射端点）合并成一条，端点清单写进正文；informational 是背景记录，不计入交付进度，目标是否达成按漏洞结论与已回答的问题判断。
+人工 Hint 必须由 Step 的 hint_ids 落实，或用 hint_notes 写明该提示如何落实；不能把 Hint 当证据。带说明的 hint_notes 会由你（模型）关闭该 Hint，从而允许 complete；人工也可在提示面板确认或撤回。review_issues 已带来源 Fact 全文（超长标 truncated），必要时回读完整问题、约束、矛盾前提和审核问题；open_step_index 是全量索引，steps_preview 的完整问题按 ID 或 query_graph kind=steps,status=open 分页读取。审核问题不是背景信息：complete 前必须用 complete.review_issues 按 review_id 与 issue_index 逐条处置，addressed 指向审核之后执行并关闭的 Step，waived 写明不追究的理由；IDOR/未授权/PII 等高风险问题不能由你驳回，只能建 Step 验证，或由人工在审核页豁免。复审 needs_evidence 的阻断项必须在同一次 finding_updates 中全部处理，不能逐轮只改一项；已 pass 的 Finding 不因新增同类证据重开，只有结论、影响、定级或复现发生变化才修订；负向事实的 parameter_sources 每个请求参数名单独一条，parameter 用 URL 解码后的完整名字（可含 = 和引号）。
 human_feedback 是人工对已审核漏洞的后续要求。return 需结合说明修订或补证，retest 需先完成指定 Step、归档新证据并提交原 Finding ID，再由 Review 审核；旧版本与旧证据不能直接恢复入库。删除的漏洞保留历史，不重新创建同一结论绕过删除。
-用 submit_decisions 提交动作；Step 改动带当前 expected_version，同批每个 Step/Finding 只参与一次操作。结算只提交变更字段（finding_updates 的 changes、finding_merges 的 ID），不要重复 Finding 全文。一次结算过大时（例如 finding_updates 超过 8 条，或预计单次 JSON 超过约 6000 tokens），先提交计划与 Step 结算并带 more:true，再分次提交 finding_updates/finding_merges（仍带 more:true），最后不带 more 提交剩余结算或 complete；带 more 的部分在同一 Decide 租约下顺序生效，不结束本轮，模型分次提交才能避免单次输出触顶。程序也会自动拆分超大的单次提交，但不会减少模型已生成的输出。一次成功的最终结算即结束本轮；计划随首个部分提交，后续部分不重放计划。若结算冲突，新计划已经保留，读 current_view 后只重交剩余结算字段；运行时会自动复用已提交的 plan_id，不要重复计划。完整新投影只有不带 ID 的 read_graph 或冲突返回的 current_view 才推进你实际已读的快照，程序不会替你承认新观测。complete 要结论化/放弃全部未关闭 Step、解释目标达成或停止理由，不能同时创建新任务；coverage 必须覆盖视图中的全部 coverage_surfaces（tested 带 evidence_ids，waived 带 reason，na 说明不适用），漏项会被服务端拒绝。视图里的 open leads 必须用新 Step 的 lead_ids 落实，或在 lead_dispositions 用 step_id 挂到已有 Step，或用 waiver_reason 说明不追究；有 open lead 时 complete 会被拒绝。人工 Hint 用 Step 的 hint_ids 承载，或用 hint_notes 写明落实依据（据此你自行关闭该 Hint，即可 complete）；人工仍可在面板撤回或重开。可以在还有审核时结束搜索；普通 pass 不唤醒规划，审核完成后自动交付。新观测、负面审核或 planning_issues 要重判；needs_evidence 可披露缺口并停止，不要求无限复测。你根据 goal、已有证据、未解决问题和剩余工作的价值自主评估是否完成，不按项目类型或漏洞数量决定结束。人工打回说明必须回应，人工指定重测先执行再复审，使用原 Finding ID。返回 {} 表示等待。`;
+用 submit_decisions 提交动作；Step 改动带当前 expected_version，同批每个 Step/Finding 只参与一次操作。结算只提交变更字段（finding_updates 的 changes、finding_merges 的 ID），不要重复 Finding 全文。一次结算过大时（例如 finding_updates 超过 8 条，或预计单次 JSON 超过约 6000 tokens），先提交计划与 Step 结算并带 more:true，再分次提交 finding_updates/finding_merges（仍带 more:true），最后不带 more 提交剩余结算或 complete；带 more 的部分在同一 Decide 租约下顺序生效，不结束本轮，模型分次提交才能避免单次输出触顶。程序也会自动拆分超大的单次提交，但不会减少模型已生成的输出。一次成功的最终结算即结束本轮；计划随首个部分提交，后续部分不重放计划。若结算冲突，新计划已经保留，读 current_view 后只重交剩余结算字段；运行时会自动复用已提交的 plan_id，不要重复计划。完整新投影只有不带 ID 的 read_graph 或冲突返回的 current_view 才推进你实际已读的快照，程序不会替你承认新观测。complete 要结论化/放弃全部未关闭 Step、解释目标达成或停止理由，不能同时创建新任务；coverage 必须覆盖视图中的全部 coverage_surfaces（tested 带 evidence_ids，waived 带 reason，na 说明不适用），漏项会被服务端拒绝。open leads 不阻塞完成：值得追的用 Step 的 lead_ids 落实，不值得的在 lead_dispositions 写 waiver_reason。人工 Hint 用 Step 的 hint_ids 承载，或用 hint_notes 写明落实依据（据此你自行关闭该 Hint，即可 complete）；人工仍可在面板撤回或重开。可以在还有审核时结束搜索；普通 pass 不唤醒规划，审核完成后自动交付。新观测、负面审核或 planning_issues 要重判；needs_evidence 可披露缺口并停止，不要求无限复测。你根据 goal、已有证据、未解决问题和剩余工作的价值自主评估是否完成，不按项目类型或漏洞数量决定结束。人工打回说明必须回应，人工指定重测先执行再复审，使用原 Finding ID。返回 {} 表示等待。`;
   if (job.kind === "review")
     return `${common}
 
 ${reviewImpactPolicy}
 CVSS 向量必须完整包含全部 11 个 Base 指标：AV、AC、AT、PR、UI、VC、VI、VA、SC、SI、SA。AT 是攻击前置条件指标，不能省略；依据已有证据判断取值，不默认补成 N。数量和字段核对也遵循上述原始证据规则。
-审核当前 Finding 版本及其合并来源，不把旧评级当新证明。read_evidence 读取已有材料，不执行命令、创建 Step/Fact 或请求目标。按 reviewSchema 返回 verdict、kind、具体理由与引用证据；复测需求通过明确的审核问题交 Decide。`;
+审核当前 Finding 版本及其合并来源，不把旧评级当新证明。read_evidence 读取已有材料，不执行命令、创建 Step/Fact 或请求目标。按 reviewSchema 返回 verdict、kind、具体理由与引用证据；复测需求通过明确的审核问题交 Decide。只有 status=not_observed 的来源事实需要 request/parameter_sources；observed 事实的字段缺口写 planning_issues，不据此判 needs_evidence。parameter 与 URL 解码后的参数名逐字匹配，名称可以包含 = 和引号，不要按 = 截断；同一事实的同一字段缺口只算一项。视图 reviews 已给出该 Finding 的历史审核：已有多轮 needs_evidence 时，除核心证据缺口外，其余字段或表述问题一律写 planning_issues，不要因同一事实的同一字段再次打回。
+${reviewResultShape}`;
   if (job.kind === "peer")
     return `${common}
 
@@ -85,7 +112,8 @@ CVSS 向量必须完整包含全部 11 个 Base 指标：AV、AC、AT、PR、UI�
 每一回合都要以最终 JSON 结束，只返回一个 JSON 对象：{"wake":"ready"|"waiting","direction":"你当前的方向(可选)","summary":"本回合做了什么(可选)"}。wake=ready 表示你还有明确的下一步、想立即继续下一回合；waiting 表示暂时无事可做，等新消息/新图变化/新共识轮次再被唤醒。不要返回空回复。`;
   return `${common}
 
-你只推进当前 Step，遵守视图中的完整问题、property、子目标和人工 Hint，自主选择测试方法。save_evidence 把项目工作区文件归档为不可变 Evidence 并返回 ID；归档件保留 Step/Run、路径与失败条件；优先结构化工具输出，不把截断终端当全量。工具输出、进程日志和临时结果留在项目文件（/workspace/runs、/workspace/tmp 等），未引用的文件不作为证据。视图中的 Finding 声明、last_summary 与生产 Step 摘要是既有材料，先回读原始证据核对，不能当作本次观测。脚本放 /workspace/scripts，待归档原件放 /workspace/evidence，临时文件放 /workspace/tmp。Fact/Finding 可增量提交；补证和修订使用已有 Finding ID。按 executeSchema 返回 facts、findings、leads 和 summary，说明本次观测、失败与可复用材料；leads 写清 surface/parameter、为什么值得追和建议的可证伪 property，后续方向不要只埋在摘要里。信息类说明适用范围和核查依据；漏洞类填写 impact、reproduction（conditions、steps、expected、observed）与 remediation，明确受损对象、安全边界、已证实后果、可独立执行的复现步骤和针对根因的修复建议，不编造未知条件或影响。原始 HTTP 报文保留换行写入 evidence 或请求步骤；CVSS 由 Review 填写。录制代理会归档本 Step 的 HTTP(S) 请求；query_traffic 列出这些 flow，submit_finding.traffic_ids 引用真正发起该结论的 flow ID（多条按顺序列出）。`;
+你只推进当前 Step，遵守视图中的完整问题、property、子目标和人工 Hint，自主选择测试方法。description 是要回答的问题，不是脚本：方法、次数与命令都由你决定，property 是判定标准。save_evidence 把项目工作区文件归档为不可变 Evidence 并返回 ID；归档件保留 Step/Run、路径与失败条件；优先结构化工具输出，不把截断终端当全量。工具输出、进程日志和临时结果留在项目文件（/workspace/runs、/workspace/tmp 等），未引用的文件不作为证据。视图中的 Finding 声明、last_summary 与生产 Step 摘要是既有材料，先回读原始证据核对，不能当作本次观测。脚本放 /workspace/scripts，待归档原件放 /workspace/evidence，临时文件放 /workspace/tmp。Fact/Finding 可增量提交；修正已有 Fact 的措辞、统计或 request/parameter_sources 用 revise_fact（原地改写，不新建任务），补证和修订 Finding 使用已有 Finding ID。按 executeSchema 返回 facts、findings、leads 和 summary，说明本次观测、失败与可复用材料；leads 只在答案会改变后续决策时提交，写清 surface/parameter、为什么值得追和建议的可证伪 property，后续方向不要只埋在摘要里。信息类说明适用范围和核查依据；漏洞类填写 impact、reproduction（conditions、steps、expected、observed）与 remediation，明确受损对象、安全边界、已证实后果、可独立执行的复现步骤和针对根因的修复建议，不编造未知条件或影响。原始 HTTP 报文保留换行写入 evidence 或请求步骤；CVSS 由 Review 填写。录制代理会归档本 Step 的 HTTP(S) 请求；query_traffic 列出这些 flow，submit_finding.traffic_ids 引用真正发起该结论的 flow ID（多条按顺序列出）。认证测试用 auth_profile：save 命名 profile，request 提交注册/登录并 capture_cookies=true，再 request 认证后接口；profile 与 Cookie 存在 /workspace/auth，不进入证据，一个账号/角色一个 profile。
+${executeResultShape}`;
 }
 /**
  * Some compatible providers put reasoning in content rather than a separate channel, and

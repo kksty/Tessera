@@ -62,6 +62,10 @@ export const configSchema = z
     result_repairs: z.number().int().min(0).max(3).default(2),
     capture_enabled: z.boolean().default(true),
     skip_informational_review: z.boolean().default(false),
+    /** 0 = unlimited. Default 2 forces Decide to prioritise instead of queueing more work. */
+    max_new_steps_per_round: z.number().int().min(0).max(64).default(2),
+    /** 0 = unlimited. Default 8 caps the open queue so a project cannot drift sideways. */
+    max_open_steps: z.number().int().min(0).max(256).default(8),
     notifications: notificationSchema.default({
       feishu_webhook: "",
       notify_new_finding: false,
@@ -101,6 +105,8 @@ export class RuntimeConfig {
     task_timeout_seconds: 0,
     capture_enabled: true,
     skip_informational_review: false,
+    max_new_steps_per_round: 2,
+    max_open_steps: 8,
     notifications: {
       // Empty by default: tests and fresh installs never deliver until an operator
       // pastes a webhook in Settings. Both switches start on so filling the webhook
@@ -141,6 +147,8 @@ export class RuntimeConfig {
       ["TESSERA_TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds", true],
       ["TESSERA_RESULT_REPAIRS", "result_repairs", true],
       ["TESSERA_SKIP_INFORMATIONAL_REVIEW", "skip_informational_review", "boolean"],
+      ["TESSERA_MAX_NEW_STEPS_PER_ROUND", "max_new_steps_per_round", true],
+      ["TESSERA_MAX_OPEN_STEPS", "max_open_steps", true],
       ["TESSERA_FEISHU_WEBHOOK", "notifications.feishu_webhook"],
       ["TESSERA_NOTIFY_NEW_FINDING", "notifications.notify_new_finding", "boolean"],
       ["TESSERA_NOTIFY_NEEDS_HUMAN", "notifications.notify_needs_human", "boolean"],

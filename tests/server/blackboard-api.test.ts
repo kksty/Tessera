@@ -189,3 +189,48 @@ test("HTTP observations and discovery bind provenance to the validated lease and
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Fact revisions are exposed as an in-place bookkeeping write", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-fact-revision-api-"));
+  const store = new Store(join(dir, "graph.db"));
+  const id = store.create(createProjectSchema.parse({ title: "Revision", origin: "https://example.test", goal: "Assess" }))
+    .project.id;
+  const step = store.manualStep(id, { from: ["origin"], description: "Collect counts", creator: "human", claim: true });
+  const fact = store.fact(id, step.id, { worker: "human", description: "共 5 个身份证号", evidence_ids: [] });
+  const app = buildApp(store, new RuntimeConfig(join(dir, "config.json")), join(dir, "no-web"));
+  await app.listen({ host: "127.0.0.1", port: 0 });
+  const worker = { "x-tessera-worker-token": testWorkerToken };
+  try {
+    const revised = await app.inject({
+      method: "POST",
+      url: `/api/projects/${id}/fgs/facts/${fact.id}/revisions`,
+      headers: worker,
+      payload: { worker: "worker-1", description: "共 4 个身份证号" },
+    });
+    assert.equal(revised.statusCode, 200, revised.body);
+    assert.equal(store.get(id).facts.find((f) => f.id === fact.id)!.description, "共 4 个身份证号");
+    assert.equal(store.get(id).facts.find((f) => f.id === fact.id)!.edits?.length, 1);
+    // No Step is created by a revision.
+    assert.equal(store.get(id).steps.length, 1);
+
+    const origin = await app.inject({
+      method: "POST",
+      url: `/api/projects/${id}/fgs/facts/origin/revisions`,
+      headers: worker,
+      payload: { worker: "worker-1", description: "x" },
+    });
+    assert.equal(origin.statusCode, 422, origin.body);
+
+    const unknown = await app.inject({
+      method: "POST",
+      url: `/api/projects/${id}/fgs/facts/f999/revisions`,
+      headers: worker,
+      payload: { worker: "worker-1", description: "x" },
+    });
+    assert.equal(unknown.statusCode, 404, unknown.body);
+  } finally {
+    await app.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

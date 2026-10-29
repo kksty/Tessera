@@ -29,6 +29,8 @@ test("任务提示词不规定何时删除或使用工具，只保留数据契�
   assert.match(decide, /coverage_surfaces/);
   assert.match(decide, /hint_ids/);
   assert.match(decide, /合并到已有 Step/, "Decide must know that a near-duplicate is merged");
-  assert.match(decide, /lead_dispositions[^。]*step_id/, "an existing Step may carry a lead");
+  assert.match(decide, /lead_ids/, "a new Step may carry a lead");
+  assert.match(decide, /lead_dispositions[^。]*waiver_reason/, "an open lead can be waived instead of pursued");
+  assert.match(decide, /不阻塞完成/, "an open lead is advisory, not a completion gate");
   assert.match(execute, /traffic_ids/);
 });

@@ -113,13 +113,13 @@ test("execution leads and step properties enter the Decide view", () => {
   }
 });
 
-test("open leads block completion until a Step carries them", () => {
+test("an open lead is advisory: completion succeeds and the lead stays on the board", () => {
   const { store, id, evidence } = executedLeadProject();
   try {
     const planner = store.claim(id, "planner-2", 0)!;
-    let step = store.get(id).steps[0];
+    const step = store.get(id).steps[0];
     const close = { id: step.id, reason: "Page read", evidence_ids: [evidence.id], expected_version: step.version };
-    const blocked = submit(store, id, planner.worker, {
+    const completed = submit(store, id, planner.worker, {
       closes: [close],
       complete: {
         from: ["origin"],
@@ -130,9 +130,22 @@ test("open leads block completion until a Step carries them", () => {
         ],
       },
     });
-    assert.equal(blocked.settle.ok, false);
-    assert.ok(blocked.settle.conflicts.some((conflict) => /Open leads.*l001/.test(conflict.reason)));
+    assert.equal(completed.settle.ok, true, JSON.stringify(completed.settle.conflicts));
+    assert.equal(completed.settle.completed, true);
+    assert.equal(store.get(id).project.status, "completed");
+    // Leaving an unexamined suggestion is allowed; it is not a hidden obligation.
+    assert.equal(store.get(id).leads?.[0].status, "open");
+  } finally {
+    store.close();
+  }
+});
 
+test("a Step can still carry an open lead into follow-up work", () => {
+  const { store, id, evidence } = executedLeadProject();
+  try {
+    const planner = store.claim(id, "planner-2", 0)!;
+    const step = store.get(id).steps[0];
+    const close = { id: step.id, reason: "Page read", evidence_ids: [evidence.id], expected_version: step.version };
     const planned = submit(store, id, planner.worker, {
       closes: [close],
       steps: [
@@ -144,12 +157,11 @@ test("open leads block completion until a Step carries them", () => {
         },
       ],
     });
-    assert.equal(planned.settle.ok, true);
+    assert.equal(planned.settle.ok, true, JSON.stringify(planned.settle.conflicts));
     let graph = store.get(id);
     assert.equal(graph.leads?.[0].status, "converted");
     assert.equal(graph.leads?.[0].converted_step_id, graph.steps[1].id);
 
-    // Close the follow-up Step, then a fresh Decide can complete.
     const followUp = graph.steps[1];
     store.closeStep(id, followUp.id, {
       worker: "human",
@@ -157,7 +169,6 @@ test("open leads block completion until a Step carries them", () => {
       evidence_ids: [evidence.id],
       expected_version: followUp.version,
     });
-    graph = store.get(id);
     const next = store.claim(id, "planner-3", 0)!;
     const completed = submit(store, id, next.worker, {
       complete: {
@@ -169,50 +180,24 @@ test("open leads block completion until a Step carries them", () => {
         ],
       },
     });
-    assert.equal(completed.settle.ok, true);
+    assert.equal(completed.settle.ok, true, JSON.stringify(completed.settle.conflicts));
     assert.equal(store.get(id).project.status, "completed");
   } finally {
     store.close();
   }
 });
 
-test("a lead can be waived with a reason instead of becoming a Step", () => {
-  const { store, id, evidence } = executedLeadProject();
-  try {
-    const planner = store.claim(id, "planner-2", 0)!;
-    const step = store.get(id).steps[0];
-    const close = { id: step.id, reason: "Page read", evidence_ids: [evidence.id], expected_version: step.version };
-    const completed = submit(store, id, planner.worker, {
-      closes: [close],
-      lead_dispositions: [{ lead_id: "l001", waiver_reason: "需要已授权账号，本轮范围不包含认证测试" }],
-      complete: {
-        from: ["origin"],
-        description: "Done",
-        coverage: [
-          { surface: "example.test/hdjl/", status: "tested", evidence_ids: [evidence.id] },
-          { surface: "example.test/IGI/nbhd/openGovmsgbox.do", status: "waived", reason: "认证前提不在本轮范围" },
-        ],
-      },
-    });
-    assert.equal(completed.settle.ok, true);
-    assert.equal(store.get(id).leads?.[0].status, "waived");
-    assert.match(store.get(id).leads?.[0].waiver_reason ?? "", /认证/);
-  } finally {
-    store.close();
-  }
-});
-
-test("a lead disposition cannot hide a Step discarded in the same settlement", () => {
+test("a lead attached to a Step discarded in the same settlement goes back to open", () => {
   const { store, id, evidence } = executedLeadProject();
   try {
     const extra = store.manualStep(id, { from: ["origin"], description: "noise", creator: "human" });
     const planner = store.claim(id, "planner-2", 0)!;
     const step = store.get(id).steps[0];
-    const blocked = submit(store, id, planner.worker, {
+    const settled = submit(store, id, planner.worker, {
       closes: [{ id: step.id, reason: "Page read", evidence_ids: [evidence.id], expected_version: step.version }],
       updates: [{ id: extra.id, discard: true, reason: "noise", expected_version: extra.version }],
-      // The only Step named for this lead is discarded by the same batch, so it
-      // cannot possibly answer the question.
+      // The Step named for this lead is discarded by the same batch; the lead
+      // must not be left invisibly "converted" to work that never happened.
       lead_dispositions: [{ lead_id: "l001", step_id: extra.id }],
       complete: {
         from: ["origin"],
@@ -223,11 +208,11 @@ test("a lead disposition cannot hide a Step discarded in the same settlement", (
         ],
       },
     });
-    assert.equal(blocked.settle.ok, false);
-    assert.ok(blocked.settle.conflicts.some((conflict) => /Open leads.*l001/.test(conflict.reason)));
+    assert.equal(settled.settle.ok, true, JSON.stringify(settled.settle.conflicts));
     const graph = store.get(id);
-    assert.equal(graph.project.status, "active");
+    assert.equal(graph.project.status, "completed");
     assert.equal(graph.leads?.[0].status, "open");
+    assert.equal(graph.leads?.[0].converted_step_id, undefined);
   } finally {
     store.close();
   }

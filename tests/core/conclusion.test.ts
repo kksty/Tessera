@@ -22,7 +22,7 @@ test("every write path records a full conclusion and a three-state status", () =
       worker: executor.worker,
       facts: [
         { description: "GET /admin returned 200 with the login page. Body length 4211.", conclusion: "/admin 无需认证即可访问", status: "observed", objects: ["example.test:443/admin"], evidence_ids: [] },
-        { description: "POST /admin rejected anonymous writes.", conclusion: "匿名写入被拒绝", status: "not_observed", evidence_ids: [] },
+        { description: "POST /admin rejected anonymous writes.", conclusion: "匿名写入被拒绝", status: "not_observed", request: { method: "POST", url: "https://example.test/admin" }, evidence_ids: [] },
         { description: "Two responses disagreed about the session cookie.", conclusion: "会话状态存在争议", status: "disputed", evidence_ids: [] },
         "Legacy string observation without an explicit conclusion. More detail follows.",
       ],

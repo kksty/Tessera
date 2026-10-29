@@ -523,6 +523,34 @@ export const factSubmissionSchema = z
     evidence_ids: z.array(text).default([]),
   })
   .strict();
+/**
+ * In-place bookkeeping revision of an existing Fact: fix counts or wording, add
+ * the request/parameter_sources provenance a negative claim was missing, or
+ * attach evidence that was archived later. This replaces the old "open a
+ * zero-request Step to restate a Fact" pattern. Status, objects and the origin
+ * Fact are not revisable; every changed field keeps the replaced value in
+ * `edits`.
+ */
+export const factRevisionSchema = z
+  .object({
+    description: text.optional(),
+    conclusion: conclusionSchema.optional(),
+    request: factRequestSchema.optional(),
+    parameter_sources: z.array(parameterSourceSchema).max(100).optional(),
+    /** Appended to the existing list; existing ids are kept. */
+    evidence_ids: z.array(text).max(200).optional(),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.description !== undefined ||
+      v.conclusion !== undefined ||
+      v.request !== undefined ||
+      v.parameter_sources !== undefined ||
+      (v.evidence_ids?.length ?? 0) > 0,
+    "Fact revision cannot be empty",
+  );
 export const executeSchema = z
   .object({
     worker: text,

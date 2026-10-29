@@ -38,6 +38,7 @@ import {
   reviewIssueWaiverSchema,
   bookmarkInputSchema,
   factSubmissionSchema,
+  factRevisionSchema,
   submitDecisionsSchema,
   deletionPreviewSchema,
   peerMessageSchema,
@@ -106,6 +107,12 @@ export function buildApp(
   // Review scope is a persisted platform setting; mirror it into the store so
   // submission, revision and scheduling all apply the same rule.
   store.skipInformationalReview = runtime.value.skip_informational_review === true;
+  // Planning budget mirrors the same persisted setting: one Decide round cannot
+  // flood the queue, and a project cannot hold unbounded open Steps.
+  store.stepBudget = {
+    maxNewStepsPerRound: runtime.value.max_new_steps_per_round ?? 0,
+    maxOpenSteps: runtime.value.max_open_steps ?? 0,
+  };
   // Feishu notifications read the live runtime config on every send, so a switch
   // toggled in Settings takes effect immediately without a restart.
   const notifier = new Notifier(() => runtime.value.notifications ?? {});
@@ -785,6 +792,18 @@ export function buildApp(
           (b) => store.fact(req.params.id, req.params.step, b),
           "execute",
           req.params.step,
+        );
+      });
+      // In-place Fact bookkeeping: wording, conclusion or request/parameter_sources
+      // provenance. No Step is created and no executor is woken; this replaces the
+      // "zero-request reconciliation Step" pattern.
+      api.post<{ Params: { id: string; fact: string } }>("/projects/:id/fgs/facts/:fact/revisions", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `fact-revision:${req.params.fact}`,
+          z.object({ worker: text, ...factRevisionSchema.shape }).strict(),
+          (b) => store.reviseFact(req.params.id, req.params.fact, b),
         );
       });
       api.get<{ Params: { id: string; step: string }; Querystring: { limit?: string; run_id?: string } }>(
@@ -1663,6 +1682,10 @@ export function buildApp(
       });
       registerRuntimeRoutes(api, runtime, operatorCheck, workerCheck, (value) => {
         store.setSkipInformationalReview(value.skip_informational_review === true);
+        store.stepBudget = {
+          maxNewStepsPerRound: value.max_new_steps_per_round ?? 0,
+          maxOpenSteps: value.max_open_steps ?? 0,
+        };
       });
       api.post<{ Params: { id: string } }>("/projects/:id/jobs/claim", async (req) => {
         workerCheck(req, req.params.id);

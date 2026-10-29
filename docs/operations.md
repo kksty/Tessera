@@ -133,7 +133,9 @@ Server 默认输出结构化错误日志、鉴权失败和超过 500 ms 的慢�
 
 ## 审核范围与信息类免审
 
-`skip_informational_review` 默认 `false`（`configSchema` 与新建部署一致）。本部署保留操作员原有选择：平台卷内的 `/data/runtime.json` 为 `true`，即明确标注为信息类且引用原始证据的发现直接归档、不启动 Review。开启后独立审核对信息类失效，这是审核范围的收窄，不应在未确认时改动。部署可用 `TESSERA_SKIP_INFORMATIONAL_REVIEW=true|false` 强制该值，设置页随后显示该项只读。
+`skip_informational_review` 默认 `false`（`configSchema` 与新建部署一致）。2026-10-29 起本部署改为 `false`（`.env` 的 `TESSERA_SKIP_INFORMATIONAL_REVIEW=false` 强制只读）：免审会让廉价的加固笔记即时归档、而真正的漏洞还在排队复审，形成错误的进度梯度；信息类现在同样经过 Review（按 `kind=informational` 快速审核，不打分）。部署可用 `TESSERA_SKIP_INFORMATIONAL_REVIEW=true|false` 强制该值，设置页随后显示该项只读。
+
+同时新增规划预算 `TESSERA_MAX_NEW_STEPS_PER_ROUND`（默认 2）与 `TESSERA_MAX_OPEN_STEPS`（默认 8），0 表示不限制。超限的 Decide 计划会被整体拒绝且不写入任何节点；近似重复合并与 `updates` 原位改写不计入。人工建单不受该预算限制。
 
 此前免审的发现不会被自动重审；本部署也**不做**重审。若以后需要重新审核，仍可用显式接口（会保留旧 system Review 与证据）：
 

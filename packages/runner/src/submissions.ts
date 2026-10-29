@@ -100,8 +100,13 @@ function validate(record: SavedSubmission) {
   // The runner also archives oversized read-tool output for Decide/Review; this is not a model write capability.
   allowed.push(`${prefix}/evidence`);
   allowed.push(`${prefix}/fgs/bookmarks`);
+  // In-place Fact bookkeeping is a model write only for Decide and Execute.
+  // Operation carries the Fact id, so it is matched by shape rather than listed.
+  const revisionPath = `${prefix}/fgs/facts/`;
+  const canReviseFacts = job.kind === "decide" || job.kind === "execute";
   if (
-    !allowed.includes(operation) ||
+    (!allowed.includes(operation) &&
+      !(canReviseFacts && operation.startsWith(revisionPath) && operation.endsWith("/revisions"))) ||
     "submission_id" in payload ||
     "run_id" in payload ||
     (payload.worker !== undefined && payload.worker !== job.worker)

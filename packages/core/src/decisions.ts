@@ -60,6 +60,8 @@ export interface DecisionContext {
   next(items: { id: string }[], prefix: string): string;
   /** Operator review scope: informational findings are accepted without a Review run. */
   skipInformationalReview: boolean;
+  /** Planning budget; 0 means unlimited. Enforced while a plan is committed. */
+  stepBudget: { maxNewStepsPerRound: number; maxOpenSteps: number };
 }
 const now = () => new Date().toISOString();
 
@@ -106,33 +108,6 @@ function leadDispositionConflicts(g: Graph, body: z.infer<typeof decideSchema>):
       conflicts.push({ kind: "lead", id: lead.id, reason: "Lead disposition needs a Step or a waiver reason" });
   }
   return conflicts;
-}
-
-/** Open leads that no live Step, waiver or conversion in this batch resolves. */
-function unresolvedLeads(g: Graph, body: z.infer<typeof decideSchema>, removed: Set<string> = new Set()) {
-  const waived = new Set(body.lead_dispositions.filter((d) => d.waiver_reason?.trim()).map((d) => d.lead_id));
-  // A disposition only answers the lead if its Step survives the batch. A Step
-  // discarded or deleted in the same settlement cannot carry the next question,
-  // otherwise completion could pass while the lead is reopened moments later.
-  const attached = new Set(
-    body.lead_dispositions
-      .filter((d) => {
-        if (!d.step_id || removed.has(d.step_id)) return false;
-        const target = g.steps.find((step) => step.id === d.step_id);
-        return !!target && !target.deleted && !target.discarded;
-      })
-      .map((d) => d.lead_id),
-  );
-  const live = new Set(
-    g.steps.filter((step) => !step.deleted && !step.discarded && !removed.has(step.id)).map((step) => step.id),
-  );
-  for (const step of g.steps) if (live.has(step.id)) for (const leadId of step.lead_ids ?? []) attached.add(leadId);
-  return (g.leads ?? []).filter((lead) => {
-    if (lead.status === "waived") return false;
-    if (waived.has(lead.id) || attached.has(lead.id)) return false;
-    if (lead.status === "converted" && lead.converted_step_id && live.has(lead.converted_step_id)) return false;
-    return lead.status === "open" || lead.status === "converted";
-  });
 }
 
 function applyLeadDispositions(g: Graph, body: z.infer<typeof decideSchema>) {
@@ -374,6 +349,8 @@ export function submitDecisionBatch(
     // Asset cooling/warming is a settlement mutation: a settle conflict must not
     // leave the graph half-changed.
     const requestedIds = new Set(body.delete_nodes.map((node) => node.id));
+    const budget = ctx.stepBudget;
+    const beforeStepIds = new Set(g.steps.map((step) => step.id));
     const steps = [
       ...new Set(
         body.steps.map((s) => {
@@ -386,6 +363,24 @@ export function submitDecisionBatch(
         }),
       ),
     ];
+    // Budget is enforced on the plan, not the settle: a round that would queue
+    // more work than the executor can answer is refused before anything is
+    // created. Merged near-duplicates keep their existing id and do not count.
+    const created = steps.filter((id) => !beforeStepIds.has(id));
+    if (budget.maxNewStepsPerRound > 0 && created.length > budget.maxNewStepsPerRound)
+      fail(
+        422,
+        `每轮最多新增 ${budget.maxNewStepsPerRound} 个 Step（本次 ${created.length} 个）；` +
+          "相近问题用 updates 原位改写未开始的 Step，或把要追的线索并进已有 Step，先关闭/放弃在途工作",
+      );
+    if (budget.maxOpenSteps > 0) {
+      const open = g.steps.filter((step) => !step.deleted && !step.concluded_at && !step.discarded).length;
+      if (open > budget.maxOpenSteps)
+        fail(
+          422,
+          `在途 Step 已达上限 ${open}/${budget.maxOpenSteps}；先 closes 结论化或 discard 放弃，或等执行完再规划新工作`,
+        );
+    }
     const plan: DecisionPlanResult = {
       plan_id: `plan_${randomUUID()}`,
       steps,
@@ -726,18 +721,9 @@ export function submitDecisionBatch(
             "complete.coverage 逐项标记 tested（带 evidence_ids）、waived（带 reason）或 na",
         });
       }
-      const openLeads = unresolvedLeads(g, body, new Set([...deletion.ids, ...discardedIds]));
-      if (openLeads.length)
-        result.conflicts.push({
-          kind: "complete",
-          reason:
-            `Open leads 阻止完成：${openLeads
-              .slice(0, 12)
-              .map((lead) => lead.id)
-              .join(", ")}` +
-            `${openLeads.length > 12 ? ` 等（共 ${openLeads.length} 项）` : ""}；` +
-            "用新 Step 的 lead_ids 落实，或用 lead_dispositions 的 waiver_reason 说明不追究",
-        });
+      // Leads are advisory candidates, not a checklist: an open lead no longer
+      // blocks completion. A lead worth pursuing becomes a Step (budget applies);
+      // anything else can be waived later or simply left as a note on the board.
       // A Review planning issue is a queued question, not a note. Completion must
       // either name follow-up work executed after that Review or explain why the
       // question is dismissed; high-risk dismissals need an operator waiver.

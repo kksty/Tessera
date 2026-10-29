@@ -40,10 +40,11 @@ export function validateReviewResult(g: Graph, f: Finding, body: z.infer<typeof 
     // A negative observation is only usable when the exact request and the
     // origin of every parameter are recorded; otherwise "not found" may just be
     // the wrong siteId, path casing or default query.
+    // Only the Finding's declared sources gate the review. Facts produced by the
+    // same Step stay readable to the reviewer but are not implicitly attributed
+    // to this claim: otherwise one unrelated negative observation can make a
+    // complete Finding impossible to pass, no matter how often it is revised.
     const sourceIds = new Set(f.from);
-    for (const stepId of [f.step_id, f.revision_step_id])
-      if (stepId)
-        for (const factId of g.steps.find((step) => step.id === stepId)?.fact_ids ?? []) sourceIds.add(factId);
     for (const fact of g.facts) {
       if (!sourceIds.has(fact.id) || fact.deleted || fact.status !== "not_observed") continue;
       // Facts created before the provenance contract remain reviewable; facts
@@ -58,19 +59,16 @@ export function validateReviewResult(g: Graph, f: Finding, body: z.infer<typeof 
         throw new Error(
           `Negative observation ${fact.id} lacks request/parameter_sources; record the exact request and where each parameter came from before passing, or return needs_evidence`,
         );
-      const sourced = new Set(
-        (fact.parameter_sources ?? []).map((source) =>
-          source.parameter
-            .trim()
-            .replace(/^[?&]+/, "")
-            .split("=", 1)[0]
-            .trim(),
-        ),
-      );
+      const known = new Set(parameters);
+      const sourced = new Set<string>();
+      for (const source of fact.parameter_sources ?? []) {
+        const matched = requestedParameter(source.parameter, known);
+        if (matched) sourced.add(matched);
+      }
       const missing = parameters.filter((parameter) => !sourced.has(parameter));
       if (missing.length)
         throw new Error(
-          `Negative observation ${fact.id} does not explain where these request parameters came from: ${missing.join(", ")}; add a parameter_sources entry for each or return needs_evidence`,
+          `Negative observation ${fact.id} does not explain where these request parameters came from: ${missing.join(", ")}; add one parameter_sources entry per exact URL-decoded parameter name (names may contain "=" or quotes)`,
         );
     }
     if (body.disputed_fact_ids.length) throw new Error("Passing review cannot dispute source observations");
@@ -101,8 +99,70 @@ export function validateReviewResult(g: Graph, f: Finding, body: z.infer<typeof 
   return cvss;
 }
 
+/**
+ * Submission-time contract for a negative claim, checked when the Fact is
+ * written rather than weeks later at Review. Returns the problem text, or
+ * undefined when the claim carries a parseable request and one provenance
+ * entry per URL parameter.
+ */
+export function negativeClaimProblem(
+  claim: {
+    request?: { method?: string; url?: string };
+    parameter_sources?: readonly { parameter: string }[];
+  },
+  origin: string,
+): string | undefined {
+  if (!claim.request?.method?.trim() || !claim.request.url?.trim())
+    return "negative claim lacks request: record the exact request (method/url) that produced it";
+  let parameters: string[];
+  try {
+    parameters = requestParameters(claim.request.url, origin);
+  } catch (error) {
+    return error instanceof Error ? error.message : "negative claim request URL is not parseable";
+  }
+  if (parameters.length && !claim.parameter_sources?.length)
+    return "negative claim lacks parameter_sources: one entry per exact URL-decoded parameter name";
+  const known = new Set(parameters);
+  const sourced = new Set<string>();
+  for (const source of claim.parameter_sources ?? []) {
+    const matched = requestedParameter(source.parameter, known);
+    if (matched) sourced.add(matched);
+  }
+  const missing = parameters.filter((parameter) => !sourced.has(parameter));
+  if (missing.length)
+    return `negative claim does not explain where these request parameters came from: ${missing.join(", ")}; add one parameter_sources entry per exact URL-decoded parameter name (names may contain "=" or quotes)`;
+  return undefined;
+}
+
+/**
+ * Match one provenance entry to an actual request parameter name. An injected
+ * parameter name may itself contain "=" (for example
+ * `<script>document.title='P1'</script>`), so never split at the first "=" in a
+ * way that truncates a legitimate name. Exact matches win; a `name=value` form
+ * is accepted only when the prefix is one of the request's parameters.
+ */
+export function requestedParameter(raw: string, known: Set<string>): string | undefined {
+  const value = raw.trim().replace(/^[?&]+/, "");
+  if (!value) return undefined;
+  const candidates = [value];
+  try {
+    const decoded = decodeURIComponent(value);
+    if (decoded !== value) candidates.push(decoded);
+  } catch {
+    // A malformed escape is just not a match; it cannot become a parameter name.
+  }
+  for (const candidate of candidates) {
+    if (known.has(candidate)) return candidate;
+    const separator = candidate.indexOf("=");
+    if (separator <= 0) continue;
+    const name = candidate.slice(0, separator).trim();
+    if (known.has(name)) return name;
+  }
+  return undefined;
+}
+
 /** Query parameter names that a negative claim must be able to justify. */
-function requestParameters(raw: string, origin: string): string[] {
+export function requestParameters(raw: string, origin: string): string[] {
   let url: URL;
   try {
     url = new URL(raw, origin ? `https://${origin}/` : undefined);

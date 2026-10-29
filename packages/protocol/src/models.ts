@@ -149,8 +149,15 @@ export interface Step {
 export interface TextEdit {
   at: string;
   editor: string;
-  field: "description" | "property" | "method_hint";
-  from: string;
+  field:
+    | "description"
+    | "property"
+    | "method_hint"
+    | "conclusion"
+    | "request"
+    | "parameter_sources";
+  /** The replaced text. A first-time provenance addition has nothing to replace. */
+  from?: string;
 }
 export type FindingIdentity = z.infer<typeof findingIdentitySchema>;
 export type Reproduction = z.infer<typeof reproductionSchema>;
@@ -814,6 +821,13 @@ export interface DispatchConfig {
    * Review run; vulnerability and unclassified claims are always reviewed.
    */
   skip_informational_review?: boolean;
+  /**
+   * Planning budget. New Steps a single Decide round may create (0 = unlimited,
+   * default 2). Merging a near-duplicate into an existing Step does not count.
+   */
+  max_new_steps_per_round?: number;
+  /** Open (unclosed, not discarded) Steps a project may hold before Decide must close, discard or wait (0 = unlimited, default 8). */
+  max_open_steps?: number;
   model: import("./model-config.js").ModelConfig;
   review_model?: import("./model-config.js").ModelConfig;
   /** Feishu (Lark) webhook notifications for operator-facing events. */

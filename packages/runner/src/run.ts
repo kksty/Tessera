@@ -18,6 +18,7 @@ import {
   reviewSchema,
   findingSchema,
   factSubmissionSchema,
+  factRevisionSchema,
   submitDecisionsBase,
   deletionPreviewSchema,
   peerTurnSchema,
@@ -41,6 +42,7 @@ import { admitCloseoutTool, admitRepairTool, closeoutReads } from "./closeout.js
 import { useAtomicResult, withResultFormat } from "./result-format.js";
 import { queryReferences, readReference } from "./references.js";
 import { ProcessSessions, processTools } from "./process-sessions.js";
+import { authProfileExcerpt, authProfileTools } from "./auth-profile.js";
 import { configuredModel, modelSettings } from "../../models/src/runtime.js";
 import { repairFinalResult, validateFinalResult } from "./result-validation.js";
 import { withModelRelay } from "../../models/src/relay-transport.js";
@@ -762,6 +764,33 @@ async function runJobInternal(
       },
     },
   ];
+  // `revise_fact` is bookkeeping, not exploration: it edits an existing Fact's
+  // wording or provenance in place so neither Decide nor Execute has to open a
+  // zero-request Step just to restate what is already known.
+  if (job.kind === "decide" || job.kind === "execute")
+    tools.push(
+      tool(
+        "revise_fact",
+        "Revise an existing Fact in place instead of opening a bookkeeping Step: correct counts or wording, add the request/parameter_sources provenance a negative claim was missing, or attach evidence archived later. Cannot change status or the origin Fact; each changed field keeps the replaced value.",
+        Type.Unsafe(
+          z.toJSONSchema(factRevisionSchema.extend({ fact_id: z.string().trim().min(1) }), { io: "input" }),
+        ),
+        async (args) => {
+          const parsed = factRevisionSchema.extend({ fact_id: z.string().trim().min(1) }).safeParse(args);
+          if (!parsed.success)
+            throw new Error(
+              `Invalid fact revision: ${parsed.error.issues
+                .map((i) => `${i.path.join(".") || "revision"}: ${i.message}`)
+                .join("; ")}`,
+            );
+          const { fact_id, ...changes } = parsed.data;
+          return submit<Fact>(`/fgs/facts/${encodeURIComponent(fact_id)}/revisions`, {
+            worker: job.worker,
+            ...changes,
+          });
+        },
+      ),
+    );
   if (job.kind === "decide") {
     tools.push(
       tool(
@@ -804,9 +833,11 @@ async function runJobInternal(
           "withdraw:true withdraws a Finding; restore:true with changes restores a withdrawn ID as a new version for review. An operator-approved current version cannot be withdrawn or merged away as a source; the operator must withdraw the approval first. " +
           "hint_ids on a Step carries an active Hint; a hint_notes entry that states how the directive was handled closes it (the Decider may settle it this way), and a human can still confirm or withdraw it in the hint panel. " +
           "complete.coverage accounts for every coverage_surfaces entry: tested requires evidence_ids, waived requires a reason, na means it is not a testable surface. Omitted surfaces reject the settlement and name the missing entries. " +
-          "Open leads block completion: lead_ids on a new Step, lead_dispositions.step_id on an existing Step, or lead_dispositions with waiver_reason. " +
+          "Open leads are advisory candidates, not a completion gate: pursue one with a new Step's lead_ids (subject to the per-round budget), or record lead_dispositions.waiver_reason to dismiss it; leaving the rest is allowed. " +
           "Review planning_issues block completion too: complete.review_issues accounts for each with its review_id and zero-based issue_index. addressed requires a Step executed and concluded after that Review; waived requires a reason, and IDOR / authorization / PII issues can only be waived by the operator. " +
           "A successful final settlement ends the Decide run and blocks further tool calls. " +
+          "Each round may create at most max_new_steps_per_round Steps and the open queue has a cap; a plan that exceeds either is rejected, so close or discard unfinished Steps before queueing more. " +
+          "Use revise_fact to fix an existing Fact's wording, counts or request/parameter_sources instead of opening a zero-request bookkeeping Step. " +
           "New Steps are planned first and are never rolled back by a settlement conflict. Pass expected_version (the v shown in the entry) for every update/close/reopen. " +
           "If the response lists a settle conflict, read current_view, reconsider, and resend only the settlement fields with explicit current versions (omit steps); the runtime reuses the committed plan_id.",
         Type.Unsafe(z.toJSONSchema(decisionParams, { io: "input" })),
@@ -1067,6 +1098,12 @@ async function runJobInternal(
     effectiveCompaction.keepRecentTokens,
   );
   if (processes) tools.push(...processTools(processes));
+  if (job.kind === "execute" || job.kind === "peer") {
+    const approvedHosts = new Set(
+      graph.assets.filter((asset) => asset.approval === "approved").map((asset) => asset.hostname.toLowerCase()),
+    );
+    tools.push(...authProfileTools(workspace, approvedHosts));
+  }
   // peer 回合跨回合恢复同一持久会话：用指针文件记录 Pi 生成的会话路径。
   let peerSessionManager: SessionManager | undefined;
   if (job.kind === "peer" && !recoverySession) {
@@ -1118,6 +1155,9 @@ async function runJobInternal(
   let leaseError: Error | undefined;
   let closing = !!recoverySession,
     repairing = !!recoverySession;
+  // One submission-time cleanup turn per Run; never loop on a model that keeps
+  // resubmitting while its command is still alive.
+  let processCleanupPrompted = false;
   let recoveryNeeded = false;
   // Set when the gateway hands us a tool call whose name/arguments contain the
   // provider's native chat control tokens. That is a protocol mismatch, not a
@@ -1529,7 +1569,7 @@ async function runJobInternal(
         closing,
         repairing,
         tool: event.toolName,
-        args_excerpt: excerpt(event.args),
+        args_excerpt: excerpt(event.toolName === "auth_profile" ? authProfileExcerpt(event.args) : event.args),
       });
     }
     if (event.type === "tool_execution_end") {
@@ -1712,14 +1752,50 @@ async function runJobInternal(
     await Promise.all(pending);
     if (leaseError) throw leaseError;
     if (captureError) throw captureError;
-    // Only a command that is still running when the model submits means the Step
-    // is unfinished. Commands stopped by closeout were already handled above.
+    const assertProviderOk = () => {
+      const last = session.messages.filter((m) => m.role === "assistant").at(-1);
+      if (last?.stopReason === "error")
+        throw new Error(
+          `Model provider failure: ${redactModelError(last.errorMessage || last.stopReason, [cfg.api_key])}`,
+        );
+    };
+    // A provider failure is the Run's real cause; never spend a cleanup turn on
+    // top of an errored final answer.
+    assertProviderOk();
+    // A command still running at submission means the Step is unfinished. Before
+    // accepting that verdict, give the model exactly one turn to poll or stop it:
+    // the most expensive failure observed in long runs is a fully finished Step
+    // discarded because a background command outlived the report writing. The
+    // second check below keeps the original contract — if the process is still
+    // live after the cleanup turn, the Step is not recorded as complete.
+    if (processes && !processCleanupPrompted && Date.now() < deadline - 1_000) {
+      const live = processes.list().filter((row) => row.status === "running");
+      if (live.length) {
+        processCleanupPrompted = true;
+        diagnose("submission", {
+          stage: "process_cleanup",
+          processes: live.map((row) => row.process_id),
+          tools: live.map((row) => row.command),
+          note: "Submission paused once for live shell processes; the model may poll or stop them and restate the final JSON",
+        });
+        const elapsed = (iso: string) => Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+        await session.prompt(
+          `提交前仍有进程在运行：${live
+            .map(
+              (row) =>
+                `${row.process_id}（已运行 ${elapsed(row.started_at)} 秒，日志 ${relative(workspace, row.log_path).replaceAll("\\", "/")}）`,
+            )
+            .join("；")}。\n` +
+            "本次 Step 只有在这些命令结束时才算完成：仍需要输出就用 process poll（可用 offset 续读）等它结束；不再需要就用 process stop 结束，并在 summary 写明已停止及日志路径。\n" +
+            "处理完后重新返回最终 execute JSON（不要重复已提交的 Fact/Finding）。提交时仍有运行中的进程，本次 Step 将不记为完成。",
+        );
+        await Promise.all(pending);
+        if (leaseError) throw leaseError;
+        if (captureError) throw captureError;
+        assertProviderOk();
+      }
+    }
     const runningAtSubmit = processes ? await processes.close() : [];
-    const last = session.messages.filter((m) => m.role === "assistant").at(-1);
-    if (last?.stopReason === "error")
-      throw new Error(
-        `Model provider failure: ${redactModelError(last.errorMessage || last.stopReason, [cfg.api_key])}`,
-      );
     // A provider turn can end with no text and no tool call — observed with
     // reasoning-only qwen completions and right after a rejected tool argument.
     // Ask for one concrete answer before counting this as a model failure; the

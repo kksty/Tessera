@@ -55,6 +55,9 @@ services:
       TESSERA_RESULT_REPAIRS: ${TESSERA_RESULT_REPAIRS:-}
       # 部署侧强制关闭信息类免审（true/false）；设置后该项在 UI 只读。
       TESSERA_SKIP_INFORMATIONAL_REVIEW: ${TESSERA_SKIP_INFORMATIONAL_REVIEW:-}
+      # 规划预算：每轮新增 Step 上限与在途 Step 上限；0 表示不限制。
+      TESSERA_MAX_NEW_STEPS_PER_ROUND: ${TESSERA_MAX_NEW_STEPS_PER_ROUND:-}
+      TESSERA_MAX_OPEN_STEPS: ${TESSERA_MAX_OPEN_STEPS:-}
       # 控制面/模型超时预算；默认值见 packages/protocol/src/timeouts.ts。
       TESSERA_LEASE_SECONDS: ${TESSERA_LEASE_SECONDS:-}
       TESSERA_COMMIT_TIMEOUT_MS: ${TESSERA_COMMIT_TIMEOUT_MS:-}
@@ -119,6 +122,19 @@ services:
         condition: service_healthy
       worker-image:
         condition: service_completed_successfully
+    healthcheck:
+      # The image-level HEALTHCHECK targets the server's 8000; the dispatcher
+      # serves its liveness route on 8001, so override it here.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
     # Let running tasks finish their abort/release path instead of being killed.
     stop_grace_period: 30s

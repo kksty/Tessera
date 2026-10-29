@@ -2400,6 +2400,53 @@ test("Execute can poll a yielded Pi shell process and keeps its complete origina
   }
 });
 
+test("Execute pauses once for a live process and accepts the restated result after stop", async () => {
+  const f = await sdkFixture();
+  let calls = 0,
+    processId = "";
+  f.model.post("/v1/chat/completions", async (req: any, reply) => {
+    ++calls;
+    if (calls === 1)
+      streamFixture(
+        reply,
+        {
+          role: "assistant",
+          tool_calls: [
+            toolCall("bash", {
+              command: "node -e \"setTimeout(()=>console.log('late'),30000)\"",
+              yield_time_ms: 0,
+            }),
+          ],
+        },
+        1000,
+      );
+    else if (calls === 2) {
+      const running = JSON.parse(req.body.messages.filter((m: any) => m.role === "tool").at(-1).content);
+      assert.equal(running.status, "running");
+      processId = running.process_id;
+      streamFixture(reply, { role: "assistant", content: JSON.stringify({ summary: "提前结束", facts: [] }) }, 1000);
+    } else if (calls === 3) {
+      assert.match(JSON.stringify(req.body.messages), /提交前仍有进程在运行/);
+      streamFixture(
+        reply,
+        { role: "assistant", tool_calls: [toolCall("process", { action: "stop", process_id: processId })] },
+        1000,
+      );
+    } else
+      streamFixture(reply, { role: "assistant", content: JSON.stringify({ summary: "进程已停止", facts: [] }) }, 1000);
+  });
+  try {
+    await f.run();
+    assert.equal(calls, 4);
+    const graph = f.store.get(f.graph.project.id);
+    assert.ok(graph.steps[0].executed_at, "the Step records its execution after the model stops the live command");
+    assert.match(graph.steps[0].summary!, /进程已停止/);
+    assert.equal(f.store.runs(f.graph.project.id)[0].status, "succeeded");
+  } finally {
+    await f.close();
+  }
+});
+
 test("Execute final submission stops unfinished commands without completing the Step", async () => {
   const f = await sdkFixture();
   let calls = 0;

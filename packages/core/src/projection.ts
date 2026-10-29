@@ -165,6 +165,7 @@ export function projectionSections(entry: Record<string, unknown>): Record<strin
     review_issues: size(entry.review_issues),
     hints: size(entry.hints),
     coverage_surfaces: size(entry.coverage_surfaces),
+    step_costs: size(entry.step_costs),
     cold: size(entry.cold),
     instructions: size(entry.instructions),
   };
@@ -483,6 +484,46 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
   const coldPool = coldNodes(graph, [focusId], view);
   const coldIds = view.cold;
   const cold = coldSummary(graph, coldPool, view);
+  // What each Step has already cost and produced. Decide cannot price "one more
+  // round" without it: a step that burned 20M tokens for one informational note
+  // looks exactly like a productive one in the node list alone.
+  const stepCosts = (() => {
+    const per = new Map<string, { runs: Set<string>; input: number; output: number }>();
+    for (const usage of graph.usage ?? []) {
+      if (usage.kind !== "execute" || !usage.node_id) continue;
+      const entry = per.get(usage.node_id) ?? { runs: new Set<string>(), input: 0, output: 0 };
+      if (usage.run_id) entry.runs.add(usage.run_id);
+      entry.input += usage.input ?? 0;
+      entry.output += usage.output ?? 0;
+      per.set(usage.node_id, entry);
+    }
+    const compact = (n: number) =>
+      n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`;
+    const rows = [...per.entries()]
+      .map(([stepId, cost]) => {
+        const step = steps.find((s) => s.id === stepId);
+        const produced = step?.fact_ids.length ?? 0;
+        const claimed = findings.filter((f) => f.step_id === stepId || f.revision_step_id === stepId).length;
+        return {
+          stepId,
+          input: cost.input,
+          output: cost.output,
+          line: `${stepId} 运行${cost.runs.size}次 输入${compact(cost.input)} 输出${compact(cost.output)} 事实${produced} 发现${claimed}`,
+        };
+      })
+      .filter((row) => row.input > 0)
+      .sort((a, b) => b.input - a.input);
+    const shown = rows.slice(0, 15);
+    const rest = rows.slice(15);
+    return {
+      total_input: rows.reduce((sum, row) => sum + row.input, 0),
+      total_output: rows.reduce((sum, row) => sum + row.output, 0),
+      steps: shown.map((row) => row.line),
+      ...(rest.length
+        ? { more_steps: rest.length, more_input: rest.reduce((sum, row) => sum + row.input, 0) }
+        : {}),
+    };
+  })();
   return {
     // The first line is a fact, not a cap: the decider must see progress towards closure.
     unclosed: open.length,
@@ -508,6 +549,13 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
       review_corrections: findings.filter((f) => ["needs_evidence", "rejected"].includes(f.review_status)).length,
       active_hints: graph.hints.filter((h) => !h.withdrawn_at).length,
       approved_assets: graph.assets.filter((a) => a.approval === "approved").length,
+      // Informational notes are background, not delivery progress: count them apart.
+      confirmed_vulnerabilities: findings.filter(
+        (f) => f.review_status === "pass" && findingKind(f) === "vulnerability",
+      ).length,
+      confirmed_informational: findings.filter(
+        (f) => f.review_status === "pass" && findingKind(f) === "informational",
+      ).length,
     },
     focus_id: focusId,
     deleted_sources: graph.deleted_nodes?.filter((ref) => sourceIds.has(ref.id)) ?? [],
@@ -518,7 +566,15 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
     steps: orderedOpen.slice(0, OPEN_STEP_PREVIEW_LIMIT).map((s) => stepLine(s, effectiveStepPriority(graph, s))),
     // A lead is a concrete next question, not a confirmed observation. Open
     // leads are the mandatory bridge between execution findings and planning.
-    leads: (graph.leads ?? []).filter((lead) => lead.status === "open").map(leadLine),
+    // A lead is a candidate next question, never a checklist item: it does not
+    // block completion. The list is capped so a long tail of stale suggestions
+    // stops crowding the entry; anything omitted is one read_graph away.
+    leads: (graph.leads ?? [])
+      .filter((lead) => lead.status === "open")
+      .slice(0, 20)
+      .map(leadLine),
+    open_leads_total: (graph.leads ?? []).filter((lead) => lead.status === "open").length,
+    step_costs: stepCosts,
     ...(orderedOpen.length > OPEN_STEP_PREVIEW_LIMIT
       ? {
           open_step_index: orderedOpen.map((s) => ({
@@ -634,6 +690,6 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
     cold,
     ...(changes ? { changes } : {}),
     instructions:
-      "未关闭 Step 超过 200 条时，open_step_index 保留全部 ID/版本，steps 是前 200 条预览；按 steps_preview.query 分页或按 ID 读完整问题。conclusion 完整，正文只保留首句（≤300）。review_issues 给出当前审核问题（review_id#issue_index、risk）、直接来源 Fact 全文（超长标 truncated）与证据 ID，审核理由全文用 review_id 回读；unresolved_review_issues 未处置前 complete 会被拒绝：complete.review_issues 的 addressed 必须指向审核之后执行并关闭的 Step，waived 必须写理由，授权/越权/个人信息类高风险问题只能由人工在审核页豁免。执行完不等于答够，只能由你用 closes 关闭。用 read_graph 按 id 读原始记录与完整正文，query_graph 检索全部历史（含已关闭节点与证据正文）。failures 是上一轮的失败清单（最后错误、决策冲突、模型失败、被阻塞的 Step），先处理它再规划。assets 是可规划的资产；cooled_assets 是你判定与当前目标无关、已移出列表的资产（仍是 approved，可用 submit_decisions 的 assets 恢复）。hints 按 p 从大到小（数字越大越先）；unaddressed_hints 里的 Hint 还没有任何 Step 承载，应建 Step 或在 hint_notes 说明理由。unresolved_hints 里的每条 Hint 尚未处置；用 Step 的 hint_ids 承载它，或用 hint_notes 写明该提示如何落实——带说明的 hint_notes 会让你（模型）关闭该 Hint 从而允许 complete；人工也可在提示面板确认或撤回。leads 是执行阶段发现、必须处置的下一问题：用新 Step 的 lead_ids 落实，或在 lead_dispositions 用 step_id 挂到已有 Step，或用 waiver_reason 说明不追究；存在 open lead 时 complete 会被拒绝。complete 的 coverage 还要逐项覆盖 coverage_surfaces（tested 带 evidence_ids，waived 带 reason，na 说明不适用）。",
+      "未关闭 Step 超过 200 条时，open_step_index 保留全部 ID/版本，steps 是前 200 条预览；按 steps_preview.query 分页或按 ID 读完整问题。conclusion 完整，正文只保留首句（≤300）。review_issues 给出当前审核问题（review_id#issue_index、risk）、直接来源 Fact 全文（超长标 truncated）与证据 ID，审核理由全文用 review_id 回读；unresolved_review_issues 未处置前 complete 会被拒绝：complete.review_issues 的 addressed 必须指向审核之后执行并关闭的 Step，waived 必须写理由，授权/越权/个人信息类高风险问题只能由人工在审核页豁免。执行完不等于答够，只能由你用 closes 关闭。用 read_graph 按 id 读原始记录与完整正文，query_graph 检索全部历史（含已关闭节点与证据正文）。failures 是上一轮的失败清单（最后错误、决策冲突、模型失败、被阻塞的 Step），先处理它再规划。assets 是可规划的资产；cooled_assets 是你判定与当前目标无关、已移出列表的资产（仍是 approved，可用 submit_decisions 的 assets 恢复）。hints 按 p 从大到小（数字越大越先）；unaddressed_hints 里的 Hint 还没有任何 Step 承载，应建 Step 或在 hint_notes 说明理由。unresolved_hints 里的每条 Hint 尚未处置；用 Step 的 hint_ids 承载它，或用 hint_notes 写明该提示如何落实——带说明的 hint_notes 会让你（模型）关闭该 Hint 从而允许 complete；人工也可在提示面板确认或撤回。leads 是执行阶段留下的候选问题，不阻塞完成：值得追的用新 Step 的 lead_ids 落实（受每轮新增上限约束），不值得的在 lead_dispositions 用 waiver_reason 说明，其余可以留在列表里。每轮新增 Step 数与在途 Step 数都有上限，超限的规划会被拒绝：先把未开始的 Step 用 updates 改写或 discard，或等执行完再规划。step_costs 给出每个 Step 已消耗的 token 与它产出的事实/发现数，追加投入前先判断再做一轮会不会改变结论。修正已有 Fact 的措辞、统计或 request/parameter_sources 用 revise_fact 原地修订，不要为记账新建 Step。complete 的 coverage 还要逐项覆盖 coverage_surfaces（tested 带 evidence_ids，waived 带 reason，na 说明不适用）。",
   };
 }

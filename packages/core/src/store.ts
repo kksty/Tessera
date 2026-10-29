@@ -16,7 +16,11 @@ import { pendingReviews } from "../../protocol/src/review-scheduling.js";
 import { previewNodeDeletions, planNodeDeletions, applyNodeDeletions } from "./node-deletion.js";
 import { activeGraph, isActiveNode } from "../../protocol/src/node-lifecycle.js";
 import { reportMaterial } from "./report-material.js";
-import { validateReviewResult, ReviewValidationError } from "../../protocol/src/review-validation.js";
+import {
+  validateReviewResult,
+  ReviewValidationError,
+  negativeClaimProblem,
+} from "../../protocol/src/review-validation.js";
 import { effectiveStepPriority, stepCoversHint } from "./hint-coverage.js";
 import { isNearDuplicateStep, stepTextContainment, type StepDraft } from "./step-similarity.js";
 import { reopenLeadsForStep } from "./leads.js";
@@ -166,6 +170,15 @@ export class Store {
    * already cite evidence are accepted without starting a Review run.
    */
   skipInformationalReview = false;
+  /**
+   * Planning budget mirrored from the runtime config. 0 disables the check, which
+   * is the store default so unit fixtures can build large boards directly; the
+   * server sets finite defaults from `max_new_steps_per_round` / `max_open_steps`.
+   */
+  stepBudget: { maxNewStepsPerRound: number; maxOpenSteps: number } = {
+    maxNewStepsPerRound: 0,
+    maxOpenSteps: 0,
+  };
   constructor(
     file: string,
     public leaseSeconds = TIMEOUT_DEFAULTS.lease_seconds,
@@ -1566,6 +1579,13 @@ export class Store {
     },
   ): Fact {
     const evidence_ids = input.evidence_ids ?? [];
+    // Provenance is a write-time contract, not a Review-time surprise: a negative
+    // claim without the exact request and one source per URL parameter is rejected
+    // here, so the executor fixes it while the request is still in hand.
+    if ((input.status ?? "observed") === "not_observed") {
+      const problem = negativeClaimProblem(input, originHost(g));
+      if (problem) fail(422, `负向观测被拒绝：${problem}`);
+    }
     this.evidenceIds(g, evidence_ids);
     this.evidenceIds(
       g,
@@ -1840,6 +1860,7 @@ export class Store {
       evidenceIds: this.evidenceIds.bind(this),
       next: this.next.bind(this),
       skipInformationalReview: this.skipInformationalReview,
+      stepBudget: this.stepBudget,
     };
   }
   previewDeletions(id: string, inputs: z.infer<typeof decideSchema>["delete_nodes"]) {
@@ -1979,6 +2000,66 @@ export class Store {
       return this.insertFact(g, s, body);
     });
   }
+  /**
+   * Rewrite an existing Fact in place: wording, conclusion, request or parameter
+   * provenance, plus append-only evidence. This is the bookkeeping path that used
+   * to be a zero-request Step: no graph node is created and no executor is woken.
+   * A negative claim must still satisfy the provenance contract after the edit.
+   */
+  reviseFact(
+    id: string,
+    factId: string,
+    body: {
+      worker: string;
+      description?: string;
+      conclusion?: string;
+      request?: Fact["request"];
+      parameter_sources?: Fact["parameter_sources"];
+      evidence_ids?: string[];
+      reason?: string;
+    },
+  ) {
+    return this.mutate(id, "fact.revised", false, (g) => {
+      this.active(g);
+      const fact = g.facts.find((f) => f.id === factId) || fail(404, "Fact not found");
+      if (fact.deleted) fail(409, "Fact deleted; use explicit history");
+      if (fact.id === "origin") fail(422, "The origin Fact is revised by editing the project, not this endpoint");
+      const edit = (field: NonNullable<Fact["edits"]>[number]["field"], from?: string) => {
+        (fact.edits ??= []).push({ at: now(), editor: body.worker, field, from });
+      };
+      if (body.description !== undefined && body.description.trim() !== fact.description) {
+        edit("description", fact.description);
+        fact.description = body.description.trim();
+      }
+      if (body.conclusion !== undefined && body.conclusion.trim() !== (fact.conclusion ?? "")) {
+        edit("conclusion", fact.conclusion);
+        fact.conclusion = body.conclusion.trim().slice(0, MAX_CONCLUSION_LENGTH);
+        delete fact.conclusion_inferred;
+      }
+      if (body.request !== undefined) {
+        edit("request", fact.request ? JSON.stringify(fact.request) : undefined);
+        fact.request = body.request;
+      }
+      if (body.parameter_sources !== undefined) {
+        edit("parameter_sources", fact.parameter_sources ? JSON.stringify(fact.parameter_sources) : undefined);
+        fact.parameter_sources = body.parameter_sources;
+      }
+      if (body.evidence_ids?.length) {
+        const added = body.evidence_ids.filter((eid) => !fact.evidence_ids.includes(eid));
+        if (added.length) {
+          this.evidenceIds(g, added);
+          this.markReferenced(g, added);
+          fact.evidence_ids = [...fact.evidence_ids, ...added];
+        }
+      }
+      if ((fact.status ?? "observed") === "not_observed") {
+        const problem = negativeClaimProblem(fact, originHost(g));
+        if (problem) fail(422, `负向观测被拒绝：${problem}`);
+      }
+      fact.last_referenced_round = g.project.decision_round ?? 0;
+      return fact;
+    });
+  }
   submitFinding(id: string, input: z.infer<typeof findingSchema>, graphId?: string) {
     return this.mutate(id, "finding.submitted", true, (g) => {
       this.active(g);
@@ -2024,6 +2105,10 @@ export class Store {
         }
       }
       const evidence_ids = body.evidence_ids ?? [];
+      if ((body.status ?? "observed") === "not_observed") {
+        const problem = negativeClaimProblem(body, originHost(g));
+        if (problem) fail(422, `负向观测被拒绝：${problem}`);
+      }
       this.evidenceIds(g, evidence_ids);
       this.evidenceIds(
         g,
