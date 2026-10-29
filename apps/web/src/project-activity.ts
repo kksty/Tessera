@@ -88,6 +88,16 @@ export const activityLabels: Record<string, string> = {
   "report.created": "生成报告快照",
   "report.stale": "报告快照已过期",
   "bookmark.updated": "更新回访书签",
+  "peer.spawn": "执行者裂变",
+  "peer.retire": "执行者退出",
+  "peer.message": "执行者消息",
+  "peer.turn_end": "执行者回合",
+  "peer.stuck": "执行者停顿",
+  "peer.retry": "重试执行者",
+  "round.proposed": "开启完成共识",
+  "round.opinion": "执行者表态",
+  "round.committed": "完成共识达成",
+  "round.invalidated": "完成共识失效",
 };
 /** 事件类型的中文名；未知类型也回落到中文，界面不再直接显示英文 kind。 */
 export function kindLabel(kind: string): string {

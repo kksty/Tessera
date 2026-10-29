@@ -20,7 +20,7 @@ import { validateReviewResult, ReviewValidationError } from "../../protocol/src/
 import { effectiveStepPriority, stepCoversHint } from "./hint-coverage.js";
 import { isNearDuplicateStep, stepTextContainment, type StepDraft } from "./step-similarity.js";
 import { reopenLeadsForStep } from "./leads.js";
-import { normalizeSurface, originHost } from "../../protocol/src/coverage.js";
+import { normalizeSurface, originHost, validateCoverage } from "../../protocol/src/coverage.js";
 import { DatabaseSync } from "node:sqlite";
 import { controlPlane } from "./control-plane.js";
 import { GraphStorage } from "./graph-storage.js";
@@ -46,6 +46,8 @@ import type {
   ProjectSummary,
   Run,
   SecurityOverview,
+  Peer,
+  SwarmRound,
 } from "../../protocol/src/index.js";
 import { ExecutionRecords, digest } from "./execution.js";
 import { normalizeFindingIdentity } from "../../protocol/src/finding-identity.js";
@@ -64,6 +66,15 @@ import { planningChanged } from "./planning-changes.js";
 import { reviewIssueConflicts } from "./review-issues.js";
 import { allOverviewFindings, confirmedInformational, confirmedVulnerability, securityOverview } from "./overview.js";
 import { MemorySearch, SEARCH_SCHEMA_VERSION, type PeekPage } from "./search.js";
+import {
+  SwarmRecords,
+  activePeers,
+  openRound,
+  peerId as newPeerId,
+  peerTurnDue,
+  roundId as newRoundId,
+  roundValid,
+} from "./swarm.js";
 import { bookmarkInputSchema, MAX_CONCLUSION_LENGTH, type Bookmark } from "../../protocol/src/index.js";
 import type {
   createProjectSchema,
@@ -74,6 +85,12 @@ import type {
   findingActionSchema,
   evidenceSchema,
   submitDecisionsSchema,
+  peerMessageSchema,
+  peerSpawnSchema,
+  peerRetireSchema,
+  peerTurnSchema,
+  completionProposeSchema,
+  completionRespondSchema,
 } from "../../protocol/src/index.js";
 const now = () => new Date().toISOString();
 /** Bumped whenever a startup migration changes the persisted graph shape. */
@@ -85,10 +102,25 @@ const executeCapacityFailure = (error?: string) =>
   modelIssue(error)?.kind === "context" ||
   /^(?:Closeout budget exhausted|Read-only recovery closeout timeout)/i.test(error || "");
 /**
+ * Per-peer failure buckets keep one broken swarm member from consuming the
+ * shared "peer" counter that pauses the whole project. Non-peer kinds keep
+ * their historical single bucket.
+ */
+const jobFailureKey = (kind: Job["kind"], peerId?: string | null) =>
+  kind === "peer" && peerId ? `peer:${peerId}` : kind;
+/**
  * Coldness bookkeeping is memory management, not material change: it must never
  * bump a revision, invalidate a pending completion or pollute the change index.
  */
-const metadataFields = new Set(["last_referenced_round", "last_read_round", "cooldown_override"]);
+const metadataFields = new Set([
+  "last_referenced_round",
+  "last_read_round",
+  "cooldown_override",
+  // swarm 持久身份与共识轮次的变化通过显式事件与显式唤醒驱动，不参与图版本推进，
+  // 否则每次表态/开轮都会唤醒所有 peer。仍会正常持久化（GraphStorage.save 全量写）。
+  "peers",
+  "rounds",
+]);
 const material = (value: unknown) => JSON.stringify(value, (key, item) => (metadataFields.has(key) ? undefined : item));
 export function hostname(value: string): string {
   const raw = value.trim().replace(/^\*\./, "");
@@ -114,6 +146,8 @@ const collections = [
   "reviews",
   "usage",
   "bookmarks",
+  "peers",
+  "rounds",
 ] as const;
 type StepInsert = StepDraft & { hint_ids?: string[]; lead_ids?: string[] };
 export class Store {
@@ -123,6 +157,7 @@ export class Store {
   readonly execution: ExecutionRecords;
   readonly traffic: TrafficRecords;
   readonly search: MemorySearch;
+  readonly swarm: SwarmRecords;
   private readonly graphs: GraphStorage;
   readonly retention: Retention;
   private transactionDepth = 0;
@@ -169,6 +204,7 @@ export class Store {
     this.retention = new Retention(this.db, this.evidenceRoot);
     this.execution = new ExecutionRecords(this.db);
     this.traffic = new TrafficRecords(this.db, this.evidenceRoot);
+    this.swarm = new SwarmRecords(this.db);
     this.search = new MemorySearch(this.db);
     this.rebuildSearch();
     this.migrateLeaseDefaults();
@@ -273,6 +309,8 @@ export class Store {
     if (job.kind === "decide") g.project.reason!.run_id = claimed.run_id;
     if (job.kind === "execute") g.steps.find((s) => s.id === job.step_id)!.run_id = claimed.run_id;
     if (job.kind === "review") g.findings.find((f) => f.id === job.finding_id)!.review_run_id = claimed.run_id;
+    // peer 回合：租约在 platform_runs，回合开始冻结交付水位。
+    if (job.kind === "peer" && job.peer_id) this.swarm.startTurn(g.project.id, job.peer_id, g.revision);
     return claimed;
   }
   private rebuildSearch() {
@@ -298,6 +336,18 @@ export class Store {
     });
   }
   private ownsJob(g: Graph, job: Job) {
+    if (job.kind === "peer") {
+      const run = job.run_id
+        ? this.execution.get(g.project.id, job.run_id)
+        : this.execution.worker(g.project.id, job.worker);
+      return (
+        !!run &&
+        run.kind === "peer" &&
+        run.worker === job.worker &&
+        run.node_id === job.peer_id &&
+        (run.status === "running" || run.status === "succeeded")
+      );
+    }
     const lease =
       job.kind === "decide"
         ? g.project.reason
@@ -612,7 +662,7 @@ export class Store {
     if (status === "succeeded") {
       g.project.model_failures = 0;
       g.project.model_retry_at = undefined;
-      (g.project.job_failures ??= {})[run.kind] = 0;
+      (g.project.job_failures ??= {})[jobFailureKey(run.kind, run.node_id)] = 0;
       // A successful Run means the control plane is reachable again; do not leave
       // a permanent "retrying" banner from an earlier infrastructure failure.
       g.project.infra_failures = 0;
@@ -653,7 +703,13 @@ export class Store {
     run.resolved_by = by;
     this.execution.save(run);
   }
-  private failedJob(g: Graph, kind: Job["kind"], error: string, failureKind?: FailureKind): string {
+  private failedJob(
+    g: Graph,
+    kind: Job["kind"],
+    error: string,
+    failureKind?: FailureKind,
+    peerId?: string | null,
+  ): string {
     const classified = classifyFailure(error, failureKind);
     g.project.last_failure_kind = classified;
     g.project.last_error = error.slice(0, 1500);
@@ -668,11 +724,24 @@ export class Store {
     }
     g.project.infra_failures = 0;
     g.project.infra_retry_at = undefined;
+    // swarm: a model/provider blip is a control-plane problem, not evidence that this
+    // peer's work is bad. Counting it would later park a healthy peer as "stuck" on
+    // its first real business failure (the project-level model backoff still applies).
+    if (kind === "peer" && classified === "model") return new Date(Date.now() + 30_000).toISOString();
     const failures = (g.project.job_failures ??= {});
-    failures[kind] = (failures[kind] || 0) + 1;
-    const retry = new Date(Date.now() + Math.min(300000, 5000 * 2 ** Math.min(6, failures[kind]! - 1))).toISOString();
+    const key = jobFailureKey(kind, peerId);
+    failures[key] = (failures[key] || 0) + 1;
+    const retry = new Date(Date.now() + Math.min(300000, 5000 * 2 ** Math.min(6, failures[key]! - 1))).toISOString();
     if (kind === "decide") g.project.decide_retry_at = retry;
-    if (!modelIssue(error) && !(kind === "execute" && executeCapacityFailure(error)) && failures[kind]! >= 3) {
+    if (!modelIssue(error) && !(kind === "execute" && executeCapacityFailure(error)) && failures[key]! >= 3) {
+      if (kind === "peer" && peerId) {
+        // A single peer that keeps failing is parked, not the whole swarm: equal
+        // peers must not be halted by one broken member. The operator can retry it
+        // from the Peers page once the cause is fixed.
+        this.swarm.setWake(g.project.id, peerId, "stuck");
+        this.swarmAudit(g, "peer.stuck", { peer_id: peerId, failures: failures[key]! });
+        return retry;
+      }
       for (const run of this.execution.list(g.project.id, 1000000).filter((r) => r.status === "running"))
         this.endRun(g, run.worker, "cancelled", "Project paused after repeated execution failures", run.id);
       g.project.status = "stopped";
@@ -745,6 +814,7 @@ export class Store {
         step_id: run.kind === "execute" ? run.node_id! : undefined,
         finding_id: run.kind === "review" ? run.node_id! : undefined,
         finding_version: run.finding_version,
+        peer_id: run.kind === "peer" ? run.node_id! : undefined,
       })
     )
       fail(409, "Run lease lost");
@@ -754,8 +824,9 @@ export class Store {
     return this.transaction(() => {
       const g = this.get(id);
       this.active(g);
-      if (job.kind !== "execute") fail(409, "Only Execute may start an external action");
-      this.openStep(g, job.step_id!, job.worker);
+      if (job.kind !== "execute" && job.kind !== "peer")
+        fail(409, "Only Execute or a peer turn may start an external action");
+      if (job.kind === "execute") this.openStep(g, job.step_id!, job.worker);
       const run = this.runFor(job, id);
       if (!this.ownsJob(g, job)) fail(409, "Run lease lost");
       if (run.status !== "running") fail(409, "Run is no longer running");
@@ -905,6 +976,7 @@ export class Store {
       }
       if (g.project.status !== "active") g.project.pending_completion = undefined;
       this.finalizeCompletion(g);
+      if ((g.project.mode ?? "classic") === "swarm") this.swarmEvaluate(g, kind);
       this.finishReaudit(g);
       let indexed: Record<string, unknown> | undefined;
       if (kind && material(before) !== material(g)) {
@@ -1034,6 +1106,7 @@ export class Store {
         title: input.title,
         status: "active",
         created_at: time,
+        ...(input.mode === "swarm" ? { mode: "swarm" as const } : {}),
         reason: null,
         decision_round: 0,
         pool_revision: 0,
@@ -1095,6 +1168,20 @@ export class Store {
       evidence: [],
       reviews: [],
       usage: [],
+      ...(input.mode === "swarm"
+        ? {
+            peers: [
+              {
+                id: "p001",
+                graph_id: "main",
+                origin: "initial" as const,
+                status: "active" as const,
+                created_at: time,
+              },
+            ],
+            rounds: [],
+          }
+        : {}),
     };
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -1905,6 +1992,75 @@ export class Store {
       return this.stepFinding(g, step, input);
     });
   }
+  /** swarm：peer 提交一条观测（无 Step）。服务端从回合租约记录 run_id。 */
+  swarmFact(
+    id: string,
+    peerId: string,
+    body: {
+      worker: string;
+      description: string;
+      conclusion?: string;
+      status?: Fact["status"];
+      objects?: string[];
+      request?: Fact["request"];
+      parameter_sources?: Fact["parameter_sources"];
+      evidence_ids: string[];
+      asset_id?: string;
+    },
+    runId?: string,
+  ) {
+    return this.mutate(id, "fact.observed", true, (g) => {
+      this.active(g);
+      this.swarmLease(g, id, peerId, runId);
+      // 资产归属：只有显式给出且已批准的资产才记录，防止把相对 surface 误归到根域。
+      let assetId: string | undefined;
+      if (body.asset_id) {
+        const asset = g.assets.find((value) => value.id === body.asset_id);
+        if (!asset) fail(422, `Unknown asset: ${body.asset_id}`);
+        else {
+          if (asset.approval !== "approved") fail(422, `Asset ${asset.id} is not approved`);
+          assetId = asset.id;
+          this.asset(g, asset.id);
+        }
+      }
+      const evidence_ids = body.evidence_ids ?? [];
+      this.evidenceIds(g, evidence_ids);
+      this.evidenceIds(
+        g,
+        (body.parameter_sources ?? []).flatMap((source) => source.evidence_ids ?? []),
+      );
+      const conclusion = body.conclusion?.trim() || conclusionFrom(body.description);
+      this.markReferenced(g, evidence_ids);
+      const run = runId ? this.execution.get(id, runId) : undefined;
+      const f: Fact = {
+        id: this.next(g.facts, "f"),
+        description: body.description,
+        conclusion: conclusion.slice(0, MAX_CONCLUSION_LENGTH),
+        ...(body.conclusion?.trim() ? {} : { conclusion_inferred: true }),
+        status: body.status ?? "observed",
+        ...((body.status ?? "observed") === "not_observed" ? { negative_claim_version: 1 as const } : {}),
+        ...(body.objects?.length ? { objects: body.objects } : {}),
+        ...(body.request ? { request: body.request } : {}),
+        ...(body.parameter_sources?.length ? { parameter_sources: body.parameter_sources } : {}),
+        graph_id: "main",
+        ...(assetId ? { asset_id: assetId } : {}),
+        ...(run ? { run_id: run.id } : {}),
+        created_at: now(),
+        evidence_ids,
+        last_referenced_round: g.project.decision_round ?? 0,
+      };
+      g.facts.push(f);
+      return f;
+    });
+  }
+  /** swarm：peer 提交一条发现（无 Step）。 */
+  swarmFinding(id: string, peerId: string, input: z.infer<typeof findingSchema>, runId?: string) {
+    return this.mutate(id, "finding.submitted", true, (g) => {
+      this.active(g);
+      this.swarmLease(g, id, peerId, runId);
+      return this.finding(g, input, "main");
+    });
+  }
   /**
    * Traffic attached to a Finding: explicit capture ids first, then a best-effort
    * match from the producing Step/Run and the Finding's entry surface.
@@ -2344,6 +2500,9 @@ export class Store {
         g.project.decide_retry_at = undefined;
         for (const step of g.steps) step.retry_at = undefined;
         for (const finding of g.findings) finding.retry_at = undefined;
+        // 恢复 swarm 项目时让所有在岗执行者重新可领取，否则它们会停留在等待态。
+        if ((g.project.mode ?? "classic") === "swarm")
+          for (const peer of activePeers(g)) this.swarm.setWake(id, peer.id, "ready");
       }
       for (const s of g.steps) if (!s.concluded_at) s.worker = null;
       for (const f of g.findings) {
@@ -2476,7 +2635,7 @@ export class Store {
   discover(
     id: string,
     items: { hostname: string; source: string; evidence_ids: string[] }[],
-    options: { relatedOnly?: boolean; producer?: { step_id: string; worker: string } } = {},
+    options: { producer?: { step_id: string; worker: string } } = {},
   ) {
     return this.mutate(id, "assets.discovered", true, (g) => {
       this.active(g);
@@ -2505,33 +2664,8 @@ export class Store {
       for (const input of items) {
         const host = hostname(input.hostname);
         this.evidenceIds(g, input.evidence_ids);
-        if (options.relatedOnly) {
-          // Discovery scope is anchored to explicit targets, never inferred from
-          // a shared suffix, a certificate, a link or a third-party integration.
-          const roots = g.assets.filter((a) => a.seed || a.approval === "approved").map((a) => a.hostname);
-          const related = roots.some(
-            (root) =>
-              host === root || (!root.includes(":") && !/^\d+\.\d+\.\d+\.\d+$/.test(root) && host.endsWith(`.${root}`)),
-          );
-          if (!related) {
-            let fact = g.facts.find(
-              (f) =>
-                !f.deleted &&
-                f.objects?.includes(host) &&
-                f.conclusion === `范围外主机 ${host}，仅作关联线索`.slice(0, MAX_CONCLUSION_LENGTH),
-            );
-            if (!fact) {
-              fact = observe({
-                description: `范围外主机：${host}（来源 ${input.source || "discovery"}）。仅保留关联线索，不创建待批准资产，不对其发起请求；如需纳入测试，先由人工明确扩展目标范围。`,
-                conclusion: `范围外主机 ${host}，仅作关联线索`.slice(0, MAX_CONCLUSION_LENGTH),
-                objects: [host],
-                evidence_ids: [],
-              });
-            }
-            fact.evidence_ids = [...new Set([...fact.evidence_ids, ...input.evidence_ids])];
-            continue;
-          }
-        }
+        // 提交即登记为待批准资产：模型判断是否值得纳入，人工批准决定是否授权
+        // 规划与测试。范围不再按共同域名后缀自动推断，也不在此处静默丢弃。
         let a = g.assets.find((a) => a.hostname === host);
         if (!a) {
           a = {
@@ -2546,7 +2680,7 @@ export class Store {
           // 发现本身是观测：写一条事实，决策者才能在自己的入口里看到这次发现，
           // 而不是只看到一行待批准资产。批准与否仍由人决定。
           observe({
-            description: `发现未批准主机：${host}（来源 ${input.source || "discovery"}）`,
+            description: `发现未批准主机：${host}（来源 ${input.source || "discovery"}）。已登记为待批准资产；人工批准前不规划、不向其发起请求。`,
             conclusion: `发现主机 ${host}，待批准`.slice(0, MAX_CONCLUSION_LENGTH),
             asset_id: a.id,
             evidence_ids: [...input.evidence_ids],
@@ -2846,6 +2980,7 @@ export class Store {
       if (g.project.status !== "active" || !ready(g.project.model_retry_at) || !ready(g.project.infra_retry_at))
         return null;
       if (this.execution.worker(id, worker)?.status === "running") return null;
+      if (g.project.mode === "swarm") return this.claimSwarm(g, id, worker, limits, claimId);
       const projectLimit = limits.max_project_workers ?? 4;
       const reviewLimit = Math.min(projectLimit, limits.max_project_review_workers ?? 1);
       const activeCount =
@@ -2950,6 +3085,376 @@ export class Store {
       return null;
     });
   }
+  // ───────────────────────────── swarm 模式 ─────────────────────────────
+  /** swarm 项目的回合调度：Review 照常；未进入“搜索结束”时派发到期的 peer 回合。 */
+  private claimSwarm(
+    g: Graph,
+    id: string,
+    worker: string,
+    limits: { max_project_workers?: number; max_project_review_workers?: number },
+    claimId?: string,
+  ): Job | null {
+    const projectLimit = limits.max_project_workers ?? 4;
+    const reviewLimit = Math.min(projectLimit, limits.max_project_review_workers ?? 1);
+    const runs = this.execution.list(id, 5000);
+    const expiredRuns = new Set<string>();
+    for (const run of runs)
+      if (run.kind === "peer" && run.status === "running" && expired(run.heartbeat_at, this.leaseSeconds)) {
+        expiredRuns.add(run.id);
+        this.endRun(g, run.worker, "interrupted", "Peer turn lease expired", run.id, "infrastructure");
+        this.failedJob(g, "peer", "Peer turn lease expired", "infrastructure", run.node_id);
+        if (run.node_id && g.project.status === "active" && this.swarm.state(id, run.node_id).wake !== "stuck")
+          this.swarm.setWake(id, run.node_id, "ready");
+      }
+    const live = runs.filter((run) => !expiredRuns.has(run.id));
+    const runningPeer = live.filter((run) => run.kind === "peer" && run.status === "running").length;
+    const activeCount = runningPeer + g.findings.filter((f) => f.review_worker).length;
+    if (activeCount >= projectLimit) return null;
+    const reviewing = pendingReviews(g, reviewLimit).find((row) => row.gate === "ready")?.finding;
+    if (reviewing) {
+      reviewing.review_worker = worker;
+      reviewing.review_heartbeat = now();
+      g.project.last_work_kind = "review";
+      return this.claimRun(
+        g,
+        {
+          kind: "review",
+          project_id: id,
+          worker,
+          graph_id: reviewing.graph_id,
+          finding_id: reviewing.id,
+          finding_version: reviewing.version,
+        },
+        claimId,
+      );
+    }
+    // 共识已提交（搜索结束、审核中）时冻结 peer 回合，等待审核清零后由 finalizeCompletion 收尾。
+    if (g.project.pending_completion) return null;
+    // 重新审核窗口只允许 Review（与 classic 的 reaudit 语义一致），不能再派发执行者回合。
+    if (g.project.reaudit) return null;
+    const states = this.swarm.states(id);
+    const busy = new Set(
+      live.filter((run) => run.kind === "peer" && run.status === "running").map((run) => run.node_id),
+    );
+    const peer = activePeers(g)
+      .filter((candidate) => !busy.has(candidate.id))
+      .filter((candidate) => {
+        const state = states.get(candidate.id) ?? this.swarm.state(id, candidate.id);
+        const hasUnread = this.swarm.inbox(id, candidate.id, state.seen_message_seq, 1).length > 0;
+        return peerTurnDue(g, candidate, state, hasUnread);
+      })
+      .sort(
+        (a, b) =>
+          (states.get(a.id)?.last_turn_at ?? "").localeCompare(states.get(b.id)?.last_turn_at ?? "") ||
+          a.id.localeCompare(b.id),
+      )[0];
+    if (!peer) return null;
+    return this.claimRun(g, { kind: "peer", project_id: id, worker, graph_id: "main", peer_id: peer.id }, claimId);
+  }
+  /** 校验 peer 存在且（若给了 runId）属于该 peer 的活跃回合。 */
+  private swarmLease(g: Graph, id: string, peerId: string, runId?: string, allowRetired = false) {
+    const peer = (g.peers ?? []).find((value) => value.id === peerId) || fail(404, "Peer not found");
+    if (!allowRetired && peer.status !== "active") fail(409, "Peer is not active");
+    if (runId) {
+      const run = this.execution.get(id, runId) || fail(409, "Run not found");
+      if (run.kind !== "peer" || run.node_id !== peerId || run.status !== "running")
+        fail(409, "Submission does not belong to the active peer turn");
+    }
+    return peer;
+  }
+  private swarmAudit(g: Graph, kind: string, data: Record<string, unknown>) {
+    this.audit(g.project.id, kind, data, g.revision);
+  }
+  /**
+   * 把只增不改的消息日志限制在运营可读窗口内。只删除所有在岗 peer 都已确认投递
+   * （seq ≤ 各自 seen_message_seq）的旧消息，保留最近 N 条；因此不会丢任何尚未
+   * 投递的消息，也不会删除运营时间线正在展示的尾部。顺带清理图里已不存在的
+   * peer 的回合水位行。keep 可用 TESSERA_SWARM_MESSAGE_KEEP 覆盖（至少保留 1 条）。
+   */
+  private pruneSwarm(g: Graph) {
+    const id = g.project.id;
+    const raw = Number(process.env.TESSERA_SWARM_MESSAGE_KEEP ?? 5000);
+    const keep = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 5000;
+    const maxSeq = this.swarm.maxSeq(id);
+    if (maxSeq > keep) {
+      let through = maxSeq - keep;
+      for (const peer of activePeers(g)) {
+        through = Math.min(through, this.swarm.state(id, peer.id).seen_message_seq);
+      }
+      if (through > 0) this.swarm.deleteThrough(id, through);
+    }
+    this.swarm.retainPeerStates(
+      id,
+      (g.peers ?? []).map((peer) => peer.id),
+    );
+  }
+  swarmView(id: string) {
+    const graph = this.get(id);
+    const states = this.swarm.states(id);
+    return {
+      mode: graph.project.mode ?? "classic",
+      peers: (graph.peers ?? []).map((peer) => ({ ...peer, state: states.get(peer.id) })),
+      rounds: graph.rounds ?? [],
+      messages: this.swarm.list(id, Math.max(0, this.swarm.maxSeq(id) - 1000), 1000),
+      max_message_seq: this.swarm.maxSeq(id),
+    };
+  }
+  swarmMessages(id: string, afterSeq = 0, limit = 500) {
+    this.get(id);
+    return this.swarm.list(id, afterSeq, limit);
+  }
+  swarmInbox(id: string, peerId: string, afterSeq?: number) {
+    const graph = this.get(id);
+    const state = this.swarm.state(id, peerId);
+    return this.swarm.inbox(id, peerId, afterSeq ?? state.seen_message_seq);
+  }
+  swarmSendMessage(id: string, peerId: string, input: z.infer<typeof peerMessageSchema>, runId?: string) {
+    return this.mutate(id, "peer.message", false, (g) => {
+      this.active(g);
+      const peer = this.swarmLease(g, id, peerId, runId);
+      if (input.to) {
+        if (input.to === peer.id) fail(422, "不能给自己发消息");
+        const target = (g.peers ?? []).find((value) => value.id === input.to);
+        if (!target || target.status !== "active") fail(409, "Recipient peer is not active");
+      }
+      const message = this.swarm.append(id, {
+        from: peer.id,
+        to: input.to ?? null,
+        kind: input.kind,
+        body: input.body,
+        refs: input.refs,
+      });
+      this.swarmAudit(g, "peer.message", {
+        message_id: message.id,
+        from: peer.id,
+        to: input.to ?? "all",
+        seq: message.seq,
+      });
+      this.pruneSwarm(g);
+      return message;
+    });
+  }
+  swarmSpawn(id: string, peerId: string, input: z.infer<typeof peerSpawnSchema>, runId?: string) {
+    return this.mutate(id, "peer.spawn", false, (g) => {
+      this.active(g);
+      const parent = this.swarmLease(g, id, peerId, runId);
+      const peers = (g.peers ??= []);
+      const created: Peer = {
+        id: newPeerId(peers),
+        graph_id: "main",
+        origin: "spawn",
+        parent_peer_id: parent.id,
+        spawn_reason: input.reason,
+        ...(input.direction ? { direction: input.direction } : {}),
+        status: "active",
+        created_at: now(),
+      };
+      peers.push(created);
+      // 新执行者加入是共享状态变化：让在岗同伴重新评估（会看到新的同伴）。
+      // 但 stuck 是操作员闸门，不能被一次 spawn 顺手解除。
+      for (const other of activePeers(g))
+        if (this.swarm.state(id, other.id).wake !== "stuck") this.swarm.setWake(id, other.id, "ready");
+      // 系统消息让同伴在收件箱里就知道新执行者加入了（from 为空 = 运行时，
+      // 模型无法伪造 system 消息：peerMessageSchema 不放行这个 kind）。
+      this.swarm.append(id, {
+        from: null,
+        to: null,
+        kind: "system",
+        body: `执行者 ${created.id} 加入（由 ${parent.id} 裂变）：${input.reason}`,
+        refs: [created.id, parent.id],
+      });
+      if (input.start_message)
+        this.swarm.append(id, {
+          from: parent.id,
+          to: created.id,
+          kind: "handoff",
+          body: input.start_message,
+          refs: [],
+        });
+      this.swarmAudit(g, "peer.spawn", { peer_id: created.id, parent_peer_id: parent.id, reason: input.reason });
+      this.pruneSwarm(g);
+      return created;
+    });
+  }
+  swarmRetire(id: string, peerId: string, input: z.infer<typeof peerRetireSchema>, runId?: string) {
+    return this.mutate(id, "peer.retire", false, (g) => {
+      this.active(g);
+      const peer = this.swarmLease(g, id, peerId, runId);
+      peer.status = "retired";
+      peer.retired_at = now();
+      peer.retire_reason = input.reason;
+      this.swarm.setWake(id, peer.id, "waiting");
+      for (const other of activePeers(g))
+        if (this.swarm.state(id, other.id).wake !== "stuck") this.swarm.setWake(id, other.id, "ready");
+      // 退出同样是共享状态变化：同伴在收件箱里收到系统消息，共识轮次由
+      // swarmEvaluate 按参与集合变化失效。
+      this.swarm.append(id, {
+        from: null,
+        to: null,
+        kind: "system",
+        body: `执行者 ${peer.id} 退出：${input.reason}`,
+        refs: [peer.id],
+      });
+      this.swarmAudit(g, "peer.retire", { peer_id: peer.id, reason: input.reason });
+      this.pruneSwarm(g);
+      return peer;
+    });
+  }
+  /**
+   * Operator retry for a peer parked by repeated failures (wake='stuck'). Clears
+   * only that peer's failure bucket, re-arms it for a turn, and resolves the last
+   * failed run so it leaves the attention list. Requires an active project; a
+   * retired peer cannot be revived (spawn a replacement instead).
+   */
+  retryPeer(id: string, peerId: string) {
+    return this.mutate(id, "", false, (g) => {
+      if ((g.project.mode ?? "classic") !== "swarm") fail(409, "Only a swarm project has peers");
+      const peer = (g.peers ?? []).find((value) => value.id === peerId) || fail(404, "Peer not found");
+      if (peer.status !== "active") fail(409, "Peer is retired; spawn a new peer instead");
+      if (g.project.status !== "active") fail(409, "Project is not active; resume it before retrying a peer");
+      const failures = (g.project.job_failures ??= {});
+      failures[jobFailureKey("peer", peerId)] = 0;
+      delete failures.peer; // legacy pre-split global bucket
+      this.swarm.setWake(id, peerId, "ready");
+      const last = this.execution
+        .list(id, 1000)
+        .find(
+          (run) =>
+            run.kind === "peer" &&
+            run.node_id === peerId &&
+            (run.status === "failed" || run.status === "interrupted") &&
+            !run.resolved_at,
+        );
+      if (last) {
+        last.resolved_at = now();
+        last.resolved_by = "operator";
+        this.execution.save(last);
+      }
+      this.swarmAudit(g, "peer.retry", { peer_id: peerId });
+      return { ok: true, peer_id: peerId };
+    });
+  }
+  swarmTurnEnd(id: string, peerId: string, input: z.infer<typeof peerTurnSchema>, runId: string) {
+    return this.mutate(id, "peer.turn_end", false, (g) => {
+      this.active(g);
+      // 回合结束允许已退休的 peer 收尾，否则 retire_peer 之后的终局提交会失败。
+      const peer = this.swarmLease(g, id, peerId, runId, true);
+      const run = this.execution.get(id, runId) || fail(409, "Run not found");
+      if (input.worker && run.worker !== input.worker) fail(409, "Turn-end worker does not own the run");
+      // 运行时水位只能落在真实存在的消息上；超过 maxSeq 的值会把未来的消息
+      // 永久标记为已投递。
+      const seenMessageSeq =
+        input.seen_message_seq === undefined ? undefined : Math.min(input.seen_message_seq, this.swarm.maxSeq(id));
+      this.swarm.finishTurn(id, peer.id, { wake: input.wake, summary: input.summary, seenMessageSeq }, g.revision);
+      if (input.direction !== undefined) peer.direction = input.direction;
+      // 回合结果已落库；租约仍留到 release，避免同一 peer 的下一回合与正在退出的
+      // Worker 并行。release 见到该标记后把 Run 记为 succeeded（并清零失败计数）。
+      run.peer_turn_ended_at = now();
+      this.execution.save(run);
+      this.swarmAudit(g, "peer.turn_end", { peer_id: peer.id, wake: input.wake });
+      this.pruneSwarm(g);
+      return { ok: true, wake: input.wake };
+    });
+  }
+  swarmProposeCompletion(id: string, peerId: string, input: z.infer<typeof completionProposeSchema>, runId?: string) {
+    return this.mutate(id, "round.proposed", false, (g) => {
+      this.active(g);
+      const peer = this.swarmLease(g, id, peerId, runId);
+      const participants = activePeers(g).map((value) => value.id);
+      if (!participants.length) fail(409, "没有可参与共识的执行者");
+      // 质量门槛：未确认的人工 Hint 必须由操作员在提示面板确认或撤回后才能完成。
+      if (g.hints.some((hint) => !hint.withdrawn_at && !hint.resolved))
+        fail(422, "仍有未确认的 Hint；请先由操作员在提示面板确认或撤回后再发起完成共识");
+      const check = validateCoverage(g, input.coverage);
+      if (check.missing.length) fail(422, `完成覆盖表缺少已观测 surface：${check.missing.slice(0, 20).join("、")}`);
+      if (check.invalid.length) fail(422, `完成覆盖表无效：${check.invalid.slice(0, 20).join("；")}`);
+      const rounds = (g.rounds ??= []);
+      const existing = rounds.find(
+        (round) =>
+          round.status === "open" &&
+          round.revision === g.revision &&
+          round.message_seq === this.swarm.maxSeq(id) &&
+          participants.every((value) => round.peer_ids.includes(value)) &&
+          round.peer_ids.length === participants.length,
+      );
+      if (existing) return existing;
+      for (const round of rounds) if (round.status === "open") round.status = "invalidated";
+      const round: SwarmRound = {
+        id: newRoundId(rounds),
+        graph_id: "main",
+        proposer_peer_id: peer.id,
+        ...(input.reason ? { reason: input.reason } : {}),
+        revision: g.revision,
+        message_seq: this.swarm.maxSeq(id),
+        peer_ids: participants,
+        opinions: {},
+        status: "open",
+        created_at: now(),
+        coverage: input.coverage,
+      };
+      rounds.push(round);
+      for (const participant of participants)
+        if (this.swarm.state(id, participant).wake !== "stuck") this.swarm.setWake(id, participant, "ready");
+      this.swarmAudit(g, "round.proposed", { round_id: round.id, proposer: peer.id, participants });
+      return round;
+    });
+  }
+  swarmRespondCompletion(id: string, peerId: string, input: z.infer<typeof completionRespondSchema>, runId?: string) {
+    return this.mutate(id, "round.opinion", false, (g) => {
+      this.active(g);
+      const peer = this.swarmLease(g, id, peerId, runId);
+      const round = (g.rounds ?? []).find((value) => value.id === input.round_id) || fail(404, "Round not found");
+      if (round.status !== "open") fail(409, "该共识轮次已结束或失效");
+      const participants = activePeers(g).map((value) => value.id);
+      if (!roundValid(g, round, this.swarm.maxSeq(id), participants))
+        fail(409, "共享状态或参与集合已变化，请重新查看并表态");
+      if (!round.peer_ids.includes(peer.id)) fail(409, "Peer is not a participant of this round");
+      round.opinions[peer.id] = { opinion: input.opinion, ...(input.note ? { note: input.note } : {}), at: now() };
+      this.swarmAudit(g, "round.opinion", { round_id: round.id, peer_id: peer.id, opinion: input.opinion });
+      return { round_id: round.id, opinion: input.opinion };
+    });
+  }
+  /**
+   * 评估共识提交。任何图变化、消息、参与集合变化都会使开放轮次失效；全体 active peer
+   * 明确 agree 且无在途 peer 回合时，写入 pending_completion（搜索结束、审核中），
+   * 后续由 finalizeCompletion 在审核清零后完成项目。沉默不等于同意。
+   */
+  private swarmEvaluate(g: Graph, kind?: string) {
+    if ((g.project.mode ?? "classic") !== "swarm" || g.project.status !== "active") return;
+    // 高频且与完成无关的写入（用量、领取、放弃领取）无需评估共识，避免每次模型请求都扫描 Runs。
+    if (kind === "usage.recorded" || kind === "jobs.state" || kind === "jobs.claim_abandoned") return;
+    const id = g.project.id;
+    const seq = this.swarm.maxSeq(id);
+    const ids = activePeers(g).map((value) => value.id);
+    for (const round of g.rounds ?? [])
+      if (round.status === "open" && !roundValid(g, round, seq, ids)) {
+        round.status = "invalidated";
+        round.closed_at = now();
+        round.close_reason = "共享状态、消息或参与集合已变化，原共识失效";
+        this.swarmAudit(g, "round.invalidated", { round_id: round.id });
+      }
+    if (g.project.pending_completion) return;
+    const round = openRound(g);
+    if (!round || !roundValid(g, round, seq, ids) || !ids.length) return;
+    if (!ids.every((value) => round.opinions[value]?.opinion === "agree")) return;
+    if (this.execution.running(id, "peer") > 0) return;
+    round.status = "committed";
+    round.closed_at = now();
+    round.close_reason = "全体执行者一致同意";
+    g.project.pending_completion = {
+      planning_revision: planningRevision(g),
+      from: [],
+      description: round.reason?.trim() || "全体执行者一致同意：探索结束，进入审核",
+      coverage: round.coverage ?? [],
+      graph_id: "main",
+      worker: "peer",
+      observation_revision: g.observation_revision,
+    };
+    g.decided_planning_revision = planningRevision(g);
+    this.swarm.parkAll(id, g.revision);
+    this.swarmAudit(g, "round.committed", { round_id: round.id, participants: ids });
+    this.finalizeCompletion(g);
+  }
   /**
    * Idempotent cancel for a claim the dispatcher abandoned after a timeout. Only
    * the Run created by this exact (worker, claim_id) pair is interrupted; a later
@@ -2996,6 +3501,8 @@ export class Store {
         lease.last_heartbeat_at = now();
       } else if (job.kind === "execute") {
         this.openStep(g, job.step_id!, job.worker).last_heartbeat_at = now();
+      } else if (job.kind === "peer") {
+        // peer 回合的租约只存在于 platform_runs，由下方统一的 run 心跳维护。
       } else {
         const f = g.findings.find((f) => f.id === job.finding_id) || fail(404, "Finding not found");
         if (f.review_worker !== job.worker || f.version !== job.finding_version) fail(409, "Review lease lost");
@@ -3020,15 +3527,27 @@ export class Store {
         const owned = this.ownsJob(g, job);
         if (!owned) return { ok: true };
         const failureKind = error ? classifyFailure(error) : undefined;
+        // swarm 回合在 turn-end 时已经提交终局；租约留到 Worker 退出（本方法）才释放。
+        // 这一段没有普通任务那样的“提交即结束”节点，所以在这里把完成了回合的 Run
+        // 记为 succeeded：否则每次成功回合都会被记成 cancelled，而且成功也不会清零
+        // 该执行者的连续失败计数（最终被误判为 stuck）。
+        const peerRun =
+          job.kind === "peer"
+            ? job.run_id
+              ? this.execution.get(id, job.run_id)
+              : this.execution.worker(id, job.worker)
+            : undefined;
+        const peerTurnCompleted = !!peerRun?.peer_turn_ended_at;
         this.endRun(
           g,
           job.worker,
-          conflict ? "interrupted" : error ? "failed" : "cancelled",
+          conflict ? "interrupted" : peerTurnCompleted ? "succeeded" : error ? "failed" : "cancelled",
           error,
           job.run_id,
           failureKind,
         );
-        const retry = error ? this.failedJob(g, job.kind, error, failureKind) : undefined;
+        const retry =
+          error && !peerTurnCompleted ? this.failedJob(g, job.kind, error, failureKind, job.peer_id) : undefined;
         // 已经升级为 needs_attention 的 Execute 是人工闸门，不是模型连续故障的证据：
         // 把它再记一次连击，等于一个阻塞任务加两次 Decide 抖动就暂停整个项目。
         const humanGated =
@@ -3056,9 +3575,16 @@ export class Store {
             if (error) f.retry_at = retry;
           }
         }
+        // 失败的 peer 回合要重新可领取，否则它会停在等待态再也不推进；但已被
+        // 判为 stuck 的执行者保持停下，等待操作员手动重试。已经 turn-end 的回合
+        // 是成功的（收尾阶段的错误不改写回合结果）。
+        if (job.kind === "peer" && job.peer_id && error && !peerTurnCompleted)
+          if (this.swarm.state(id, job.peer_id).wake !== "stuck") this.swarm.setWake(id, job.peer_id, "ready");
         if (error) g.project.last_error = error.slice(0, 1500);
         const issue =
-          owned && !humanGated && !(job.kind === "execute" && executeCapacityFailure(error)) ? modelIssue(error) : null;
+          owned && !humanGated && !peerTurnCompleted && !(job.kind === "execute" && executeCapacityFailure(error))
+            ? modelIssue(error)
+            : null;
         if (issue) {
           g.project.model_failures = (g.project.model_failures || 0) + 1;
           g.project.model_retry_at = new Date(

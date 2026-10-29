@@ -19,6 +19,7 @@ import { z } from "zod";
 import { DiagnosticRecords, diagnosticBuild } from "./diagnostics.js";
 import { DomainError, fail } from "./errors.js";
 import { GraphStorage } from "./graph-storage.js";
+import { activePeers } from "./swarm.js";
 import { readZip, safeArchiveName, writeZip, type ZipEntry } from "./archive.js";
 import type { Store } from "./store.js";
 import type { Graph, Run } from "../../protocol/src/index.js";
@@ -163,6 +164,7 @@ const README = `Tessera 项目完整备份
 - diagnostics-*.ndjson：每个 Run 的模型/工具诊断日志；项目日志的主要部分。
 - runs-*.ndjson、run-models-*.ndjson、request-usage-*.ndjson：Run 记录、模型固定信息、逐请求用量。
 - receipts-*.ndjson、submissions-*.ndjson、plans-*.ndjson、pools-*.ndjson：幂等回执、提交与规划快照。
+- messages-*.ndjson、peer-state-*.ndjson：swarm 执行者之间的消息与回合投递水位（旧项目为空）。
 - reports-*.ndjson：已生成的报告快照（含原始材料）。
 - traffic-*.ndjson、traffic-status.json、traffic-bodies/*：HTTP/HTTPS 流量记录与正文原件。
 - evidence/*：证据原件（与 graph.json 中的 SHA-256 一致）。
@@ -221,6 +223,10 @@ export async function exportProjectBundle(store: Store, projectId: string, file:
       evidence: graph.evidence.length,
       reviews: graph.reviews.length,
       usage: graph.usage.length,
+      peers: graph.peers?.length ?? 0,
+      rounds: graph.rounds?.length ?? 0,
+      messages: count("SELECT COUNT(*) AS n FROM project_messages WHERE project_id=?", projectId),
+      peer_state: count("SELECT COUNT(*) AS n FROM project_peer_state WHERE project_id=?", projectId),
       events: count(
         "SELECT COUNT(*) AS n FROM platform_event_history WHERE project_id=? AND seq<=?",
         projectId,
@@ -257,6 +263,8 @@ export async function exportProjectBundle(store: Store, projectId: string, file:
         "events-*.ndjson",
         "diagnostics-*.ndjson",
         "runs-*.ndjson",
+        "messages-*.ndjson",
+        "peer-state-*.ndjson",
         "reports-*.ndjson",
         "traffic-*.ndjson",
         "evidence/*",
@@ -329,6 +337,23 @@ export async function exportProjectBundle(store: Store, projectId: string, file:
         "runs",
         db
           .prepare("SELECT id,worker,kind,node_id,status,data FROM platform_runs WHERE project_id=? ORDER BY rowid")
+          .iterate(projectId) as IterableIterator<any>,
+      );
+      // swarm：平等执行者的消息与回合水位（独立表，不属于图集合）。
+      yield* category(
+        "messages",
+        db
+          .prepare(
+            "SELECT seq,id,from_peer,to_peer,kind,body,refs,created_at FROM project_messages WHERE project_id=? ORDER BY seq",
+          )
+          .iterate(projectId) as IterableIterator<any>,
+      );
+      yield* category(
+        "peer-state",
+        db
+          .prepare(
+            "SELECT peer_id,wake,seen_revision,seen_message_seq,turn_start_revision,turn_start_message_seq,turns,last_turn_at,summary FROM project_peer_state WHERE project_id=? ORDER BY peer_id",
+          )
           .iterate(projectId) as IterableIterator<any>,
       );
       yield* category(
@@ -442,6 +467,21 @@ function bundleGraph(raw: unknown): Graph {
   if (graph.project.deletion) throw new DomainError(409, "备份包含正在删除的项目");
   for (const key of graphCollections)
     if (!Array.isArray(graph[key])) throw new DomainError(422, `备份的 graph.json 缺少 ${key} 集合`);
+  // swarm 身份的持久部分随 graph.json 导出；旧备份不含这两段，缺失视为空。
+  for (const key of ["peers", "rounds"] as const)
+    if (graph[key] !== undefined && !Array.isArray(graph[key]))
+      throw new DomainError(422, `备份的 graph.json 的 ${key} 必须是数组`);
+  for (const peer of graph.peers ?? [])
+    if (
+      !peer ||
+      typeof peer.id !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,64}$/.test(peer.id) ||
+      (peer.status !== "active" && peer.status !== "retired")
+    )
+      throw new DomainError(422, "备份包含非法的执行者记录");
+  for (const round of graph.rounds ?? [])
+    if (!round || typeof round.id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(round.id))
+      throw new DomainError(422, "备份包含非法的共识轮次记录");
   for (const evidence of graph.evidence) {
     if (!evidence || typeof evidence.id !== "string" || !/^[a-zA-Z0-9_-]{1,160}$/.test(evidence.id))
       throw new DomainError(422, "备份包含非法的证据 ID");
@@ -685,6 +725,44 @@ export async function importProjectBundle(store: Store, file: string): Promise<B
           projectId,
           (row) => [row.id, projectId, row.data],
         );
+        // swarm 的消息与回合水位；旧备份不含这些分节时 insertRows 自然为空。
+        insertRows(
+          store,
+          "INSERT INTO project_messages(project_id,seq,id,from_peer,to_peer,kind,body,refs,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+          entries,
+          "messages",
+          projectId,
+          (row) => [
+            projectId,
+            row.seq,
+            row.id,
+            row.from_peer ?? null,
+            row.to_peer ?? null,
+            row.kind,
+            row.body,
+            row.refs,
+            row.created_at,
+          ],
+        );
+        insertRows(
+          store,
+          "INSERT INTO project_peer_state(project_id,peer_id,wake,seen_revision,seen_message_seq,turn_start_revision,turn_start_message_seq,turns,last_turn_at,summary) VALUES(?,?,?,?,?,?,?,?,?,?)",
+          entries,
+          "peer-state",
+          projectId,
+          (row) => [
+            projectId,
+            row.peer_id,
+            row.wake,
+            row.seen_revision,
+            row.seen_message_seq,
+            row.turn_start_revision ?? 0,
+            row.turn_start_message_seq ?? 0,
+            row.turns ?? 0,
+            row.last_turn_at ?? null,
+            row.summary ?? null,
+          ],
+        );
         const insertTraffic = store.db.prepare(
           "INSERT INTO project_traffic(project_id,flow_id,created_at,updated_at,data,bytes) VALUES(?,?,?,?,?,?)",
         );
@@ -718,6 +796,13 @@ export async function importProjectBundle(store: Store, file: string): Promise<B
           finding.review_heartbeat = null;
           finding.retry_at = undefined;
         }
+        // swarm 的租约同样属于源实例。把在岗执行者重新置为 ready，否则一个导出时
+        // 处于 waiting、水位又已追平的执行者导入后再也不会被领取，项目静默停摆。
+        // stuck 是操作员的明确闸门，原样保留。
+        if ((current.project.mode ?? "classic") === "swarm" && current.project.status === "active")
+          for (const peer of activePeers(current))
+            if (store.swarm.state(projectId, peer.id).wake !== "stuck")
+              store.swarm.setWake(projectId, peer.id, "ready");
         new GraphStorage(store.db).save(current);
         move(stagingPath, target);
         result = {

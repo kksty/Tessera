@@ -79,7 +79,9 @@ export function runOutcome(
     return {
       label: `已被第 ${options.latest.attempt} 次接管`,
       tone: "neutral",
-      note: `第 ${options.latest.attempt} 次已接手同一${run.kind === "decide" ? "决策" : run.kind === "review" ? "审核" : "任务"}；这条失败记录、证据与用量仅留档。`,
+      note: `第 ${options.latest.attempt} 次已接手同一${
+        run.kind === "decide" ? "决策" : run.kind === "review" ? "审核" : run.kind === "peer" ? "执行者回合" : "任务"
+      }；这条失败记录、证据与用量仅留档。`,
     };
   if (options.projectStatus === "stopped")
     return {

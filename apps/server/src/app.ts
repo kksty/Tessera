@@ -40,6 +40,12 @@ import {
   factSubmissionSchema,
   submitDecisionsSchema,
   deletionPreviewSchema,
+  peerMessageSchema,
+  peerSpawnSchema,
+  peerRetireSchema,
+  peerTurnSchema,
+  completionProposeSchema,
+  completionRespondSchema,
   confirmedVulnerability,
   findingKind,
   classificationReviewRequired,
@@ -68,7 +74,7 @@ import { Notifier, type PendingItem } from "./notifications.js";
 
 const text = z.string().trim().min(1).max(65536);
 const jobSchema = z.object({
-  kind: z.enum(["decide", "execute", "review"]),
+  kind: z.enum(["decide", "execute", "review", "peer"]),
   project_id: text,
   worker: text,
   graph_id: text,
@@ -76,6 +82,7 @@ const jobSchema = z.object({
   finding_id: text.optional(),
   finding_version: z.number().int().optional(),
   run_id: text.optional(),
+  peer_id: text.optional(),
 });
 export function buildApp(
   store: Store,
@@ -114,8 +121,8 @@ export function buildApp(
   // this is cheap and does not spam. Best-effort: never affects the response.
   // Items mirror the project 人工重试 page plus the operator gates: interrupted
   // Runs awaiting a manual retry decision, assets awaiting approval, project errors.
-  const refreshNeedsHuman = () => {
-    if (runtime.value.notifications?.notify_needs_human !== true) return;
+  const refreshNeedsHuman = (prime = false) => {
+    if (!prime && runtime.value.notifications?.notify_needs_human !== true) return;
     try {
       const items: PendingItem[] = [];
       for (const project of store.list()) {
@@ -157,11 +164,16 @@ export function buildApp(
             line: `${project.title}：项目错误 — ${String(project.last_error).replace(/\s+/g, " ").slice(0, 120)}`,
           });
       }
-      notifier.notifyNeedsHuman(items);
+      if (prime) notifier.primeNeedsHuman(items);
+      else notifier.notifyNeedsHuman(items);
     } catch {
       // A concurrent write or unreadable project must not surface to the caller.
     }
   };
+  // Establish the baseline from work that already existed before this process
+  // started. Otherwise the first successful write after a restart re-announces
+  // every paused project's old pending items to Feishu.
+  refreshNeedsHuman(true);
   // Control-plane timing: receive to response, per route, plus the store's own
   // transaction cost. Recording is best-effort and never affects the response.
   controlPlane.startEventLoopDelay();
@@ -859,6 +871,169 @@ export function buildApp(
           req.params.step,
         );
       });
+      // ─────────────── swarm 模式：平等执行者 ───────────────
+      api.get<{ Params: { id: string } }>("/projects/:id/swarm", (req) => {
+        projectReadCheck(req, req.params.id);
+        return store.swarmView(req.params.id);
+      });
+      api.get<{ Params: { id: string }; Querystring: { after?: string; limit?: string } }>(
+        "/projects/:id/swarm/messages",
+        (req) => {
+          projectReadCheck(req, req.params.id);
+          const after = Number(req.query.after ?? 0) || 0;
+          const limit = Math.min(1000, Math.max(1, Number(req.query.limit ?? 500) || 500));
+          return store.swarmMessages(req.params.id, after, limit);
+        },
+      );
+      api.get<{ Params: { id: string; peer: string }; Querystring: { after?: string } }>(
+        "/projects/:id/fgs/peers/:peer/inbox",
+        (req) => {
+          workerCheck(req, req.params.id);
+          const after = req.query.after === undefined ? undefined : Number(req.query.after) || 0;
+          return store.swarmInbox(req.params.id, req.params.peer, after);
+        },
+      );
+      // peer 回合的录制流量视图：按 peer（traffic-launch 把 step 记为 peer_id）或 run 过滤。
+      api.get<{ Params: { id: string; peer: string }; Querystring: { limit?: string; run_id?: string } }>(
+        "/projects/:id/fgs/peers/:peer/traffic",
+        (req) => {
+          workerCheck(req, req.params.id);
+          store.get(req.params.id);
+          const query = z
+            .object({
+              limit: z.coerce.number().int().min(1).max(500).default(200),
+              run_id: text.optional(),
+            })
+            .parse(req.query);
+          return store.traffic.listForStep(req.params.id, req.params.peer, query.run_id, query.limit);
+        },
+      );
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/facts", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.fact:${req.params.peer}`,
+          z.object({ worker: text, ...factSubmissionSchema.shape, asset_id: text.optional() }).strict(),
+          (b, run) => store.swarmFact(req.params.id, req.params.peer, b, run?.id),
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/findings", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.finding:${req.params.peer}`,
+          findingSchema.extend({ worker: text }),
+          (b, run) => {
+            const { worker: _worker, ...input } = b;
+            const finding = store.swarmFinding(req.params.id, req.params.peer, input, run?.id);
+            notifier.notifyNewFinding(finding, projectTitle(req.params.id));
+            return finding;
+          },
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/messages", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.message:${req.params.peer}`,
+          peerMessageSchema.extend({ worker: text }),
+          (b, run) => {
+            const { worker: _worker, ...input } = b;
+            return store.swarmSendMessage(req.params.id, req.params.peer, input, run?.id);
+          },
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/spawn", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.spawn:${req.params.peer}`,
+          peerSpawnSchema.extend({ worker: text }),
+          (b, run) => {
+            const { worker: _worker, ...input } = b;
+            return store.swarmSpawn(req.params.id, req.params.peer, input, run?.id);
+          },
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/retire", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.retire:${req.params.peer}`,
+          peerRetireSchema.extend({ worker: text }),
+          (b, run) => {
+            const { worker: _worker, ...input } = b;
+            return store.swarmRetire(req.params.id, req.params.peer, input, run?.id);
+          },
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/turn-end", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.turn:${req.params.peer}`,
+          peerTurnSchema,
+          (b, run) => store.swarmTurnEnd(req.params.id, req.params.peer, b, run!.id),
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/completion/propose", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.propose:${req.params.peer}`,
+          completionProposeSchema.extend({ worker: text }),
+          (b, run) => {
+            const { worker: _worker, ...input } = b;
+            return store.swarmProposeCompletion(req.params.id, req.params.peer, input, run?.id);
+          },
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/completion/respond", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.respond:${req.params.peer}`,
+          completionRespondSchema.extend({ worker: text }),
+          (b, run) => {
+            const { worker: _worker, ...input } = b;
+            return store.swarmRespondCompletion(req.params.id, req.params.peer, input, run?.id);
+          },
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/assets", (req) => {
+        workerCheck(req, req.params.id);
+        return commit(
+          req,
+          `peer.assets:${req.params.peer}`,
+          assetBatchSchema.extend({ worker: text }),
+          (b) => store.discover(req.params.id, b.assets),
+          "peer",
+          req.params.peer,
+        );
+      });
+      api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/retry", (req) => {
+        operatorCheck(req);
+        z.object({ confirmed: z.literal(true) })
+          .strict()
+          .parse(req.body);
+        return store.retryPeer(req.params.id, req.params.peer);
+      });
       api.get<{ Params: { id: string } }>("/projects/:id/findings/duplicates", (req) => {
         operatorCheck(req);
         return store.duplicateFindings(req.params.id);
@@ -1331,7 +1506,6 @@ export function buildApp(
           assetBatchSchema.extend({ worker: text }),
           (b, run) =>
             store.discover(req.params.id, b.assets, {
-              relatedOnly: true,
               ...(run?.node_id ? { producer: { step_id: run.node_id, worker: run.worker } } : {}),
             }),
           "execute",

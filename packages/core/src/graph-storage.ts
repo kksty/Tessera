@@ -13,6 +13,8 @@ export const graphCollections = [
   "reviews",
   "usage",
   "bookmarks",
+  "peers",
+  "rounds",
 ] as const;
 
 /** Header and records are separate: a heartbeat no longer rewrites all Evidence/Facts. */

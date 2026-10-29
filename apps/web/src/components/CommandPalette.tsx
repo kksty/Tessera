@@ -21,6 +21,8 @@ import {
   Settings,
   ShieldCheck,
   Sun,
+  Users,
+  MessagesSquare,
 } from "lucide-react";
 import type { Graph, OverviewFinding, ProjectSummary } from "../../../../packages/protocol/src/index.js";
 import { severityLabels, statusLabels } from "../format.js";
@@ -31,6 +33,8 @@ import { useDialogFocus } from "./useDialogFocus.js";
 const projectIcons: Record<ProjectPage, typeof LayoutDashboard> = {
   overview: LayoutDashboard,
   retry: RotateCcw,
+  peers: Users,
+  messages: MessagesSquare,
   findings: Bug,
   review: ClipboardCheck,
   assets: Globe2,
@@ -109,10 +113,15 @@ export function CommandPalette({
   const items = useMemo<Item[]>(() => {
     const list: Item[] = [];
     const pages: (readonly [Page, string])[] = [...workspacePages];
-    if (graph)
+    if (graph) {
+      const swarm = graph.project.mode === "swarm";
       for (const [key, label] of Object.entries(pageTitles)) {
-        if (key in projectIcons) pages.push([key as ProjectPage, label]);
+        if (!(key in projectIcons)) continue;
+        // swarm 没有 Step：隐藏以 Step 为中心的「人工重试」；经典模式不显示「执行者」。
+        if (swarm ? key === "retry" : key === "peers" || key === "messages") continue;
+        pages.push([key as ProjectPage, label]);
       }
+    }
     for (const [key, label] of pages) {
       const Icon = workspaceIcons[key] || projectIcons[key as ProjectPage] || LayoutDashboard;
       list.push({

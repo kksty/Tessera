@@ -23,6 +23,8 @@ export type WorkspacePage = "security" | "projects" | "vulns" | "reviews" | "set
 export type ProjectPage =
   | "overview"
   | "retry"
+  | "peers"
+  | "messages"
   | "blackboard"
   | "tasks"
   | "assets"
@@ -66,6 +68,8 @@ export const workspacePages: readOnlyPages = [
 export const projectPages: readOnlyPages = [
   ["overview", "项目概览"],
   ["retry", "人工重试"],
+  ["peers", "执行者"],
+  ["messages", "消息"],
   ["findings", "发现"],
   ["review", "审核队列"],
   ["assets", "资产与范围"],
@@ -88,6 +92,45 @@ export const projectNavGroups: readonly (readonly [string, readonly (readonly [P
     [
       ["overview", "项目概览"],
       ["retry", "人工重试"],
+    ],
+  ],
+  [
+    "探索",
+    [
+      ["blackboard", "探索"],
+      ["timeline", "时间线"],
+      ["traffic", "流量"],
+    ],
+  ],
+  [
+    "安全",
+    [
+      ["findings", "发现"],
+      ["review", "审核队列"],
+      ["assets", "资产与范围"],
+    ],
+  ],
+  [
+    "资料",
+    [
+      ["evidence", "证据"],
+      ["files", "项目文件"],
+    ],
+  ],
+];
+
+/**
+ * swarm 项目（无 Decide、无 Step）的侧栏分组：新增「执行者」，把以 Step 为中心的
+ * 「人工重试」收起；「回合记录」与「时间线」合并为同一个「时间线」页（运行记录 /
+ * 事件时间线两个视图）。classic 项目仍用 projectNavGroups。
+ */
+export const swarmNavGroups: readonly (readonly [string, readonly (readonly [ProjectPage, string])[]])[] = [
+  [
+    "概览",
+    [
+      ["overview", "项目概览"],
+      ["peers", "执行者"],
+      ["messages", "消息"],
     ],
   ],
   [

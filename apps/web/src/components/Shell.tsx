@@ -24,6 +24,8 @@ import {
   ShieldCheck,
   Sun,
   FileSearch,
+  Users,
+  MessagesSquare,
 } from "lucide-react";
 import type { Graph, ProjectSummary } from "../../../../packages/protocol/src/index.js";
 import { brand } from "../brand.js";
@@ -32,6 +34,7 @@ import { pendingReviews } from "../../../../packages/protocol/src/review-schedul
 import {
   pageTitles,
   projectNavGroups,
+  swarmNavGroups,
   workspacePages,
   type Page,
   type ProjectPage,
@@ -52,6 +55,8 @@ const workspaceIcons: Record<WorkspacePage, typeof ShieldCheck> = {
 const projectIcons: Record<ProjectPage, typeof LayoutDashboard> = {
   overview: LayoutDashboard,
   retry: RotateCcw,
+  peers: Users,
+  messages: MessagesSquare,
   findings: Bug,
   review: ClipboardCheck,
   assets: Globe2,
@@ -104,6 +109,7 @@ export function Sidebar({
 }) {
   const activeProjects = projects.filter((project) => project.status === "active");
   const current = projects.find((project) => project.id === currentId);
+  const swarm = graph?.project.mode === "swarm";
   const sidebarRef = useRef<HTMLElement>(null);
   useDialogFocus(mobileOpen, sidebarRef, onCloseMobile);
   return (
@@ -228,19 +234,21 @@ export function Sidebar({
                           ? "已完成"
                           : "读取中"}
                     {graph
-                      ? ` · ${graph.steps.filter((step) => !step.concluded_at && !step.discarded).length} 个待办`
+                      ? swarm
+                        ? ` · ${(graph.peers ?? []).filter((peer) => peer.status === "active").length} 个执行者`
+                        : ` · ${graph.steps.filter((step) => !step.concluded_at && !step.discarded).length} 个待办`
                       : ""}
                   </small>
                 </span>
               </button>
               <div className="project-nav">
-                {projectNavGroups.map(([group, pages]) => (
+                {(swarm ? swarmNavGroups : projectNavGroups).map(([group, pages]) => (
                   <div className="nav-group" key={group}>
                     <span className="nav-group-label">{group}</span>
                     {pages.map(([key, label]) => {
                       const Icon = projectIcons[key];
-                      // /tasks 与 /timeline 渲染同一个页面（任务与运行 / 事件时间线两个视图），
-                      // 深链到 tasks 时导航仍然要落在「时间线」这一项上。
+                      // /tasks 与 /timeline 是同一个页面（运行记录 / 事件时间线两个视图），
+                      // 深链到 tasks 时导航仍落在「时间线」这一项上。
                       const active = page === key || (key === "timeline" && page === "tasks");
                       const pending =
                         key === "review"
@@ -375,6 +383,8 @@ export function Topbar({
   refreshing?: boolean;
 }) {
   const inProject = Boolean(projectTitle);
+  // 深链到 tasks 时，swarm 与 classic 都归一到「时间线」这个合并页面。
+  const pageTitle = page === "tasks" && project?.mode === "swarm" ? "时间线" : pageTitles[page];
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -401,10 +411,10 @@ export function Topbar({
               <span className="crumb-sep" aria-hidden="true">
                 /
               </span>
-              <span className="crumb current">{pageTitles[page]}</span>
+              <span className="crumb current">{pageTitle}</span>
             </>
           ) : (
-            <span className="crumb current">{pageTitles[page]}</span>
+            <span className="crumb current">{pageTitle}</span>
           )}
         </nav>
         {project?.status === "active" && (

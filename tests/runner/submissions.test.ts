@@ -12,32 +12,70 @@ import { buildApp, testWorkerToken } from "../helpers/server.js";
 import { RuntimeConfig } from "../../apps/server/src/runtime.js";
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "tessera-outbox-")), database = join(dir, "graph.db");
+  const dir = mkdtempSync(join(tmpdir(), "tessera-outbox-")),
+    database = join(dir, "graph.db");
   let store = new Store(database);
-  const graph = store.create(createProjectSchema.parse({ title: "Outbox", origin: "https://example.test", goal: "可靠提交" }));
-  const planner = store.claim(graph.project.id, "planner", 0)!, snapshot = store.get(graph.project.id);
-  commitPlan(store, graph.project.id, decideSchema.parse({ worker: planner.worker, revision: snapshot.revision,
-    observation_revision: snapshot.observation_revision, planning_revision: snapshot.planning_revision, steps: [{ from: ["origin"], description: "保存观察" }] }));
+  const graph = store.create(
+    createProjectSchema.parse({ title: "Outbox", origin: "https://example.test", goal: "可靠提交" }),
+  );
+  const planner = store.claim(graph.project.id, "planner", 0)!,
+    snapshot = store.get(graph.project.id);
+  commitPlan(
+    store,
+    graph.project.id,
+    decideSchema.parse({
+      worker: planner.worker,
+      revision: snapshot.revision,
+      observation_revision: snapshot.observation_revision,
+      planning_revision: snapshot.planning_revision,
+      steps: [{ from: ["origin"], description: "保存观察" }],
+    }),
+  );
   const job = store.claim(graph.project.id, "executor", 0)!;
-  return { dir, database, job, get store() { return store; },
-    restart() { store.close(); store = new Store(database); },
-    close() { store.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return {
+    dir,
+    database,
+    job,
+    get store() {
+      return store;
+    },
+    restart() {
+      store.close();
+      store = new Store(database);
+    },
+    close() {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
 }
 
 test("lost final responses and process restart replay the original key/body after the lease ended", async () => {
-  const f = fixture(), runtime = new RuntimeConfig(join(f.dir, "runtime.json"));
+  const f = fixture(),
+    runtime = new RuntimeConfig(join(f.dir, "runtime.json"));
   let app = buildApp(f.store, runtime, join(f.dir, "no-web"));
   let calls = 0;
   app.addHook("onSend", async (req, reply, payload) => {
-    if (req.url.endsWith("/execute")) { calls++; reply.raw.destroy(); }
+    if (req.url.endsWith("/execute")) {
+      calls++;
+      reply.raw.destroy();
+    }
     return payload;
   });
   await app.listen({ host: "127.0.0.1", port: 0 });
   const client = new ApiClient(app.listeningOrigin, testWorkerToken);
   const outbox = new SubmissionOutbox(f.dir, f.job, client);
   const operation = client.projectPath(f.job, `/fgs/steps/${f.job.step_id}/execute`);
-  const file = await outbox.prepare(operation, { worker: f.job.worker,
-    facts: [{ description: "仅一次持久观测", evidence_ids: [] }], findings: [], summary: "完成" }, true);
+  const file = await outbox.prepare(
+    operation,
+    {
+      worker: f.job.worker,
+      facts: [{ description: "仅一次持久观测", evidence_ids: [] }],
+      findings: [],
+      summary: "完成",
+    },
+    true,
+  );
   try {
     const before = await loadSubmission(join(f.dir, "pending-result.json"));
     assert.equal(before.record.state, "pending");
@@ -59,19 +97,30 @@ test("lost final responses and process restart replay the original key/body afte
     assert.equal(after.record.submission_id, before.record.submission_id);
     assert.deepEqual(after.record.payload, before.record.payload);
     assert.equal(f.store.get(f.job.project_id).steps[0].fact_ids.length, 1);
-  } finally { await app.close(); f.close(); }
+  } finally {
+    await app.close();
+    f.close();
+  }
 });
 
 test("unaccepted old-run submissions fail once and cannot use a newer lease to resume exploration", async () => {
-  const f = fixture(), app = buildApp(f.store, new RuntimeConfig(join(f.dir, "runtime.json")), join(f.dir, "no-web"));
+  const f = fixture(),
+    app = buildApp(f.store, new RuntimeConfig(join(f.dir, "runtime.json")), join(f.dir, "no-web"));
   await app.listen({ host: "127.0.0.1", port: 0 });
-  const client = new ApiClient(app.listeningOrigin, testWorkerToken), outbox = new SubmissionOutbox(f.dir, f.job, client);
+  const client = new ApiClient(app.listeningOrigin, testWorkerToken),
+    outbox = new SubmissionOutbox(f.dir, f.job, client);
   let calls = 0;
   const originalRequest = client.request.bind(client);
-  client.request = async (...args) => { calls++; return originalRequest(...args); };
+  client.request = async (...args) => {
+    calls++;
+    return originalRequest(...args);
+  };
   try {
-    const file = await outbox.prepare(client.projectPath(f.job, `/fgs/steps/${f.job.step_id}/facts`),
-      { worker: f.job.worker, description: "过期结果", evidence_ids: [] });
+    const file = await outbox.prepare(client.projectPath(f.job, `/fgs/steps/${f.job.step_id}/facts`), {
+      worker: f.job.worker,
+      description: "过期结果",
+      evidence_ids: [],
+    });
     f.store.release(f.job.project_id, f.job);
     const next = f.store.claim(f.job.project_id, f.job.worker, 0)!;
     assert.notEqual(next.run_id, f.job.run_id);
@@ -82,14 +131,20 @@ test("unaccepted old-run submissions fail once and cannot use a newer lease to r
     assert.equal(calls, 1);
     assert.equal(f.store.get(f.job.project_id).steps[0].run_id, next.run_id);
     assert.equal(f.store.get(f.job.project_id).steps[0].fact_ids.length, 0);
-  } finally { await app.close(); f.close(); }
+  } finally {
+    await app.close();
+    f.close();
+  }
 });
 
 test("saved payload is frozen before sending and corrupt or mismatched records never reach the network", async () => {
   const f = fixture();
   const client = new ApiClient("http://unused.test");
   let calls = 0;
-  client.commit = async () => { calls++; throw new Error("must not send"); };
+  client.commit = async () => {
+    calls++;
+    throw new Error("must not send");
+  };
   const outbox = new SubmissionOutbox(f.dir, f.job, client);
   try {
     const payload = { worker: f.job.worker, description: "原文", evidence_ids: [] as string[] };
@@ -101,7 +156,59 @@ test("saved payload is frozen before sending and corrupt or mismatched records n
     writeFileSync(file, JSON.stringify(saved));
     await assert.rejects(replaySubmission(file, client), /hash mismatch/);
     assert.equal(calls, 0);
-    await assert.rejects(outbox.prepare(`/projects/another/fgs/steps/${f.job.step_id}/facts`, payload), /Job\/operation/);
-    await assert.rejects(outbox.prepare(client.projectPath(f.job, `/fgs/steps/${f.job.step_id}/facts`), { ...payload, run_id: "different" }), /Job\/operation/);
-  } finally { f.close(); }
+    await assert.rejects(
+      outbox.prepare(`/projects/another/fgs/steps/${f.job.step_id}/facts`, payload),
+      /Job\/operation/,
+    );
+    await assert.rejects(
+      outbox.prepare(client.projectPath(f.job, `/fgs/steps/${f.job.step_id}/facts`), {
+        ...payload,
+        run_id: "different",
+      }),
+      /Job\/operation/,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("peer jobs persist and reload their swarm-scoped submissions", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-peer-outbox-"));
+  const store = new Store(join(dir, "graph.db"));
+  try {
+    const id = store.create(
+      createProjectSchema.parse({
+        title: "Peer outbox",
+        origin: "https://example.test",
+        goal: "Assess",
+        mode: "swarm",
+      }),
+    ).project.id;
+    const job = store.claim(id, "peer-worker", 0)!;
+    assert.equal(job.kind, "peer");
+    const client = new ApiClient("http://127.0.0.1:1", testWorkerToken);
+    const outbox = new SubmissionOutbox(dir, job, client);
+    const base = `/projects/${encodeURIComponent(id)}/fgs/peers/${job.peer_id}`;
+    for (const [operation, payload] of [
+      [`${base}/messages`, { worker: job.worker, kind: "share", body: "halfway", refs: [] }],
+      [`${base}/turn-end`, { worker: job.worker, wake: "waiting", summary: "done" }],
+    ] as const) {
+      const file = await outbox.prepare(operation, payload as Record<string, unknown>);
+      const loaded = await loadSubmission(file);
+      assert.equal(loaded.record.job.kind, "peer");
+      assert.equal(loaded.record.job.peer_id, job.peer_id);
+    }
+    // A Step-shaped path is not valid for a peer turn.
+    await assert.rejects(
+      outbox.prepare(`/projects/${encodeURIComponent(id)}/fgs/steps/nope/facts`, {
+        worker: job.worker,
+        description: "x",
+        evidence_ids: [],
+      }),
+      /Job\/operation/,
+    );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -27,7 +27,7 @@ export class ExecutionRecords {
     `);
   }
   create(job: Job, claimId?: string): Job {
-    const node = job.step_id || job.finding_id || job.graph_id;
+    const node = job.step_id || job.finding_id || job.peer_id || job.graph_id;
     const count = this.db
       .prepare("SELECT COUNT(*) AS n FROM platform_runs WHERE project_id=? AND kind=? AND node_id=?")
       .get(job.project_id, job.kind, node);
@@ -70,6 +70,13 @@ export class ExecutionRecords {
       .prepare("SELECT data FROM platform_runs WHERE project_id=? ORDER BY rowid DESC LIMIT ?")
       .all(project, limit)
       .map((row) => JSON.parse(String(row.data)));
+  }
+  /** Cheap running count for one job kind; avoids parsing every Run row. */
+  running(project: string, kind: Job["kind"]): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM platform_runs WHERE project_id=? AND kind=? AND status='running'")
+      .get(project, kind);
+    return Number(row?.n ?? 0);
   }
   save(run: Run) {
     this.db

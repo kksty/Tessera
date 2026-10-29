@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Timer,
+  Users,
   X,
 } from "lucide-react";
 import { stepAssets } from "../../../../packages/protocol/src/asset-scope.js";
@@ -67,6 +68,7 @@ export function ProjectOverviewPage() {
   const pendingAssets = graph.assets.filter((asset) => asset.approval === "pending");
   const pending = pendingReviews(graph).map((row) => row.finding);
   const reviewing = pending.filter((finding) => finding.review_worker).length;
+  const activePeerCount = (graph.peers ?? []).filter((peer) => peer.status === "active").length;
   const confirmed = graph.findings.filter((f) => confirmedVulnerability(f, graph));
   const informational = graph.findings.filter((f) => confirmedInformational(f, graph)).length;
   const running = graph.steps.filter((step) => stepState(step) === "running");
@@ -194,6 +196,12 @@ export function ProjectOverviewPage() {
           <Timer size={13} aria-hidden="true" />
           运行 {duration(runtime)}
         </span>
+        {project.mode === "swarm" && (
+          <span className="meta-pill" title="平等执行者编排：无决策者、无 Step，执行者互相通信">
+            <Users size={13} aria-hidden="true" />
+            Swarm · {activePeerCount} 个执行者
+          </span>
+        )}
         <span className="meta-pill">
           <CalendarDays size={13} aria-hidden="true" />
           创建于 {fmt(project.created_at)}
@@ -366,11 +374,15 @@ export function ProjectOverviewPage() {
           onClick={() => ws.navigate("review")}
         />
         <Kpi
-          label="进行中任务"
-          value={running.length}
-          note={`${graph.steps.length - completed} 个未关闭 / 共 ${graph.steps.length}`}
+          label={project.mode === "swarm" ? "在岗执行者" : "进行中任务"}
+          value={project.mode === "swarm" ? activePeerCount : running.length}
+          note={
+            project.mode === "swarm"
+              ? `${graph.peers?.length ?? 0} 个执行者 · ${graph.rounds?.length ?? 0} 轮共识`
+              : `${graph.steps.length - completed} 个未关闭 / 共 ${graph.steps.length}`
+          }
           icon={<Play size={15} />}
-          onClick={() => ws.navigate("tasks")}
+          onClick={() => ws.navigate(project.mode === "swarm" ? "peers" : "tasks")}
         />
         <Kpi
           label="已批准资产"
@@ -443,15 +455,33 @@ export function ProjectOverviewPage() {
           )}
         </Card>
 
-        <Card title="任务状态" note={`${completed} 已关闭 · ${graph.steps.length - completed} 未关闭`}>
-          <div className="progress-block">
-            <div className="progress-head">
-              <span>已关闭任务</span>
-              <strong>
-                {completed} / {graph.steps.length}
-              </strong>
+        <Card
+          title={project.mode === "swarm" ? "执行者状态" : "任务状态"}
+          note={
+            project.mode === "swarm"
+              ? `${activePeerCount} 在岗 · 共 ${graph.peers?.length ?? 0} 个执行者`
+              : `${completed} 已关闭 · ${graph.steps.length - completed} 未关闭`
+          }
+        >
+          {project.mode === "swarm" ? (
+            <div className="progress-block">
+              <div className="progress-head">
+                <span>在岗执行者</span>
+                <strong>
+                  {activePeerCount} / {graph.peers?.length ?? 0}
+                </strong>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="progress-block">
+              <div className="progress-head">
+                <span>已关闭任务</span>
+                <strong>
+                  {completed} / {graph.steps.length}
+                </strong>
+              </div>
+            </div>
+          )}
           <div className="progress-block">
             <div className="progress-head">
               <span>已进入任务的批准资产</span>
@@ -519,7 +549,9 @@ export function ProjectOverviewPage() {
                     ? "探索已结束，可回查结论和证据。"
                     : project.pending_completion
                       ? "搜索结束、审核中。当前发现审核结束后完成交付。"
-                      : "当前没有执行中的任务。"}
+                      : project.mode === "swarm"
+                        ? `${activePeerCount} 个在岗执行者正在自主探索与协作；完成需要全体共识。`
+                        : "当前没有执行中的任务。"}
               </p>
             )}
           </div>

@@ -24,6 +24,8 @@ import { readPreference, writePreference } from "./preferences.js";
 import { SecurityOverviewPage } from "./pages/SecurityOverview.js";
 import { AllFindingsPage } from "./pages/AllFindings.js";
 import { ProjectsPage } from "./pages/Projects.js";
+import { PeersPage } from "./pages/Peers.js";
+import { MessagesPage } from "./pages/Messages.js";
 import { ProjectOverviewPage } from "./pages/ProjectOverview.js";
 import { FindingsPage } from "./pages/Findings.js";
 import { ReviewPage } from "./pages/Review.js";
@@ -80,6 +82,17 @@ function parseRoute(): { id: string | null; page: Page } {
 
 const routeHash = (id: string | null, page: Page) =>
   id ? `#/projects/${encodeURIComponent(id)}/${page}` : `#/${page}`;
+
+/**
+ * swarm 的 peers/rounds 存在图里，但为了不唤醒全员不推进 revision。刷新时单独比较
+ * 这段指纹，否则裂变/退出后侧栏与项目概览的执行者计数会一直停在旧值。
+ */
+const swarmFingerprint = (graph: Graph) =>
+  `${(graph.peers ?? []).map((peer) => `${peer.id}:${peer.status}:${peer.direction ?? ""}`).join(",")}|${(
+    graph.rounds ?? []
+  )
+    .map((round) => `${round.id}:${round.status}`)
+    .join(",")}`;
 
 export function App({ session, setSession }: { session: Session; setSession: (session: Session) => void }) {
   const initial = useRef(parseRoute()).current;
@@ -297,7 +310,11 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       if (seq !== sequence.current) return;
       setProjects(list);
       setGraph((old) =>
-        old?.project.id === nextGraph.project.id && old.revision === nextGraph.revision ? old : nextGraph,
+        old?.project.id === nextGraph.project.id &&
+        old.revision === nextGraph.revision &&
+        swarmFingerprint(old) === swarmFingerprint(nextGraph)
+          ? old
+          : nextGraph,
       );
       let cursor = eventCursor.current;
       const additions: Event[] = [];
@@ -797,6 +814,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
           title: values.get("title"),
           origin: values.get("origin"),
           goal: values.get("goal"),
+          mode: values.get("mode"),
           hints: [...values.entries()]
             .filter(([key, value]) => key.startsWith("hint_") && String(value).trim())
             .map(([, value]) => ({
@@ -1061,6 +1079,8 @@ export function App({ session, setSession }: { session: Session; setSession: (se
             {!id && page === "reviews" && <ReviewsPage />}
             {!id && page === "projects" && <ProjectsPage />}
             {id && graph && page === "overview" && <ProjectOverviewPage />}
+            {id && graph && page === "peers" && <PeersPage />}
+            {id && graph && page === "messages" && <MessagesPage />}
             {id && graph && page === "retry" && <RetryPage />}
             {id && graph && page === "findings" && <FindingsPage />}
             {id && graph && page === "review" && <ReviewPage />}
@@ -1172,6 +1192,14 @@ export function App({ session, setSession }: { session: Session; setSession: (se
               <input name="title" required autoFocus placeholder="例如：业务系统评估" />
             </label>
             <label className="field">
+              <span className="field-label">架构模式</span>
+              <select name="mode" defaultValue="classic">
+                <option value="classic">经典 · Decide / Execute / Review（单个决策者规划）</option>
+                <option value="swarm">平等执行者 · Swarm（无决策者，执行者互相通信）</option>
+              </select>
+              <span className="field-hint">创建后不可切换；两种模式共用同一套黑板、证据、审核与报告。</span>
+            </label>
+            <label className="field">
               <span className="field-label">指定站点 / 起始信息</span>
               <textarea name="origin" required rows={2} placeholder="https://your-site.example" />
             </label>
@@ -1212,7 +1240,9 @@ export function App({ session, setSession }: { session: Session; setSession: (se
                 </div>
               ))}
             </div>
-            <p className="quiet">决策者根据项目目标、证据和未完成事项判断何时结束。</p>
+            <p className="quiet">
+              经典模式由决策者根据目标、证据与未完成事项判断何时结束；swarm 模式由执行者共识完成。
+            </p>
             <p className="quiet">发现的子域名进入待批准列表，不会自动测试。</p>
           </Modal>
         )}

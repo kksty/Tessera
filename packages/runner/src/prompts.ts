@@ -1,5 +1,11 @@
 import type { Graph, Job } from "../../protocol/src/index.js";
-import { decideSchema, executeSchema, reviewSchema, submitDecisionsBase } from "../../protocol/src/index.js";
+import {
+  decideSchema,
+  executeSchema,
+  reviewSchema,
+  submitDecisionsBase,
+  peerTurnSchema,
+} from "../../protocol/src/index.js";
 import { z } from "zod";
 
 export function resultRepairPrompt(job: Job, detail: string): string {
@@ -18,9 +24,11 @@ export function resultRepairPrompt(job: Job, detail: string): string {
         })
       : job.kind === "review"
         ? z.object(reviewSchema.shape).strict().omit({ worker: true, finding_version: true })
-        : // `read_only` is runtime state, not part of the result contract: exposing it
-          // invites a normal Run to mark its own result as operator recovery.
-          executeSchema.omit({ worker: true, read_only: true });
+        : job.kind === "peer"
+          ? peerTurnSchema.omit({ worker: true, seen_message_seq: true })
+          : // `read_only` is runtime state, not part of the result contract: exposing it
+            // invites a normal Run to mark its own result as operator recovery.
+            executeSchema.omit({ worker: true, read_only: true });
   const contract = `最终答案正文只返回一个完整 JSON 对象，不附加解释性文字或 Markdown 围栏。`;
   const repairContract =
     '工具报错、工具返回的 JSON、{"error":…,"details":…} 或任何错误说明都不是任务结果，不能作为最终答案；' +
@@ -40,7 +48,7 @@ export const findingEvidencePolicy =
 export const reviewImpactPolicy =
   "仅审核已有原始证据，不复测目标。通过时明确 kind：informational 不填写危险度或 CVSS；vulnerability 给 CVSS v4.0 Base vector 与 rationale，程序计算正分。漏洞 pass 前确认 Finding 的 impact、reproduction.steps、remediation 均完整，影响、复现与修复建议足以让读者独立复核；缺项或内容不足时返回 needs_evidence，在理由中逐项说明缺口，交 Decide 用 finding_updates 补写后复审，不在审核理由中代填正文。每个非 N 的 VC/VI/VA/SC/SI/SA 必须有 impact_evidence，说明受损对象、应有安全边界、已证明的后果及所引用证据；推测的影响不能计分。证据闭合则 pass，核心缺口 needs_evidence，声明被反驳 rejected；只有明确被反证的源观测才 disputed，不能争议 origin。需要后续行动的问题交给 Decide，pass 中的新问题明确写 planning_issues。";
 export const discoveryScopePolicy =
-  "只测试当前 approval=approved 的资产；业务相关、证书或外链不等于目标所有权。范围外依赖留 Fact，不向它请求。";
+  "只测试当前 approval=approved 的资产；业务相关、证书或外链不等于目标所有权。判断相关的主机可提交为待批准资产（pending），由人工确认归属并批准；批准前不规划、不向它请求。";
 
 /**
  * 测试域只占一句正文：枚举表在 Schema 里，判定边界写在这，避免把整张域表贴进提示词。
@@ -68,6 +76,13 @@ human_feedback 是人工对已审核漏洞的后续要求。return 需结合说�
 ${reviewImpactPolicy}
 CVSS 向量必须完整包含全部 11 个 Base 指标：AV、AC、AT、PR、UI、VC、VI、VA、SC、SI、SA。AT 是攻击前置条件指标，不能省略；依据已有证据判断取值，不默认补成 N。数量和字段核对也遵循上述原始证据规则。
 审核当前 Finding 版本及其合并来源，不把旧评级当新证明。read_evidence 读取已有材料，不执行命令、创建 Step/Fact 或请求目标。按 reviewSchema 返回 verdict、kind、具体理由与引用证据；复测需求通过明确的审核问题交 Decide。`;
+  if (job.kind === "peer")
+    return `${common}
+
+你是这个 swarm 任务中一名**平等的执行者**：没有决策者，也没有预先编排的 Step 队列。你和同伴各自决定方向、方法、是否继续；通过 send_message/read_inbox/list_peers 与同伴协作，用 spawn_peer 裂变出新执行者并行探索值得追的方向（parent 只是血缘，不产生指挥权；无数量或深度上限），用 retire_peer 退出（退出不等于完成）。
+共享状态就是这张图：把观测写进 submit_fact（conclusion ≤120 字，objects 或 request.url 记录实际 host/path；相对路径会被归到原点主机，多资产测试请用绝对 URL 或带已批准资产的 asset_id；负面结论必须写 request 与 parameter_sources 并附证据），把结论写进 submit_finding，把原件用 save_evidence 归档为不可变证据。先看视图里的 shared 与 inbox，避免重复；需要更多原文用 read_graph / query_graph / read_evidence。工作区是 /workspace，脚本放 /workspace/scripts，临时文件放 /workspace/tmp，待归档原件放 /workspace/evidence。
+当你有把握认为探索已充分时，用 propose_completion 发起完成共识并提交覆盖表（覆盖全部已观测 host+path：tested 带 evidence_ids、waived 带 reason、na 表示不适用）；收到同伴的轮次后用 respond_completion 表态 agree / disagree / unsure——沉默不等于同意。任何新的观测、发现或消息都会让旧轮次失效，需要重新发起。
+每一回合都要以最终 JSON 结束，只返回一个 JSON 对象：{"wake":"ready"|"waiting","direction":"你当前的方向(可选)","summary":"本回合做了什么(可选)"}。wake=ready 表示你还有明确的下一步、想立即继续下一回合；waiting 表示暂时无事可做，等新消息/新图变化/新共识轮次再被唤醒。不要返回空回复。`;
   return `${common}
 
 你只推进当前 Step，遵守视图中的完整问题、property、子目标和人工 Hint，自主选择测试方法。save_evidence 把项目工作区文件归档为不可变 Evidence 并返回 ID；归档件保留 Step/Run、路径与失败条件；优先结构化工具输出，不把截断终端当全量。工具输出、进程日志和临时结果留在项目文件（/workspace/runs、/workspace/tmp 等），未引用的文件不作为证据。视图中的 Finding 声明、last_summary 与生产 Step 摘要是既有材料，先回读原始证据核对，不能当作本次观测。脚本放 /workspace/scripts，待归档原件放 /workspace/evidence，临时文件放 /workspace/tmp。Fact/Finding 可增量提交；补证和修订使用已有 Finding ID。按 executeSchema 返回 facts、findings、leads 和 summary，说明本次观测、失败与可复用材料；leads 写清 surface/parameter、为什么值得追和建议的可证伪 property，后续方向不要只埋在摘要里。信息类说明适用范围和核查依据；漏洞类填写 impact、reproduction（conditions、steps、expected、observed）与 remediation，明确受损对象、安全边界、已证实后果、可独立执行的复现步骤和针对根因的修复建议，不编造未知条件或影响。原始 HTTP 报文保留换行写入 evidence 或请求步骤；CVSS 由 Review 填写。录制代理会归档本 Step 的 HTTP(S) 请求；query_traffic 列出这些 flow，submit_finding.traffic_ids 引用真正发起该结论的 flow ID（多条按顺序列出）。`;

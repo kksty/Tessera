@@ -168,6 +168,52 @@ test("needs-human card aggregates newly pending work and never repeats it", asyn
   }
 });
 
+test("a restart baselines pre-existing pending work instead of re-announcing it", async () => {
+  const receiver = await hookReceiver();
+  try {
+    const settings = { feishu_webhook: receiver.url, notify_new_finding: false, notify_needs_human: true };
+    // A fresh process knows nothing yet; priming records what was already pending.
+    const restarted = new Notifier(() => settings, 20);
+    const old = { key: "paused:assets", kind: "assets" as const, line: "已暂停项目：2 个资产等待人工批准" };
+    restarted.primeNeedsHuman([old]);
+    restarted.notifyNeedsHuman([old]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(receiver.cards.length, 0, "pre-existing work is not replayed after restart");
+    // Only a genuinely new item after the baseline produces a card.
+    restarted.notifyNeedsHuman([old, { key: "new:error", kind: "error" as const, line: "新项目：项目错误 — boom" }]);
+    await receiver.waitFor(1);
+    assert.equal(receiver.cards.length, 1);
+    assert.match(receiver.cards[0], /新项目：项目错误 — boom/);
+    assert.doesNotMatch(receiver.cards[0], /已暂停项目/);
+  } finally {
+    await receiver.close();
+  }
+});
+
+test("enabling notifications later does not replay work that predates the switch", async () => {
+  const receiver = await hookReceiver();
+  try {
+    let settings = { feishu_webhook: "", notify_new_finding: false, notify_needs_human: false };
+    const notifier = new Notifier(() => settings, 20);
+    const old = { key: "old:retry", kind: "retry" as const, line: "旧项目：1 次运行待人工重试" };
+    notifier.notifyNeedsHuman([old]);
+    // The operator fills the webhook and turns the switch on: old work stays old.
+    settings = { feishu_webhook: receiver.url, notify_new_finding: false, notify_needs_human: true };
+    notifier.notifyNeedsHuman([old]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(receiver.cards.length, 0, "work from before the switch is not replayed");
+    notifier.notifyNeedsHuman([
+      old,
+      { key: "fresh:retry", kind: "retry" as const, line: "新项目：1 次运行待人工重试" },
+    ]);
+    await receiver.waitFor(1);
+    assert.equal(receiver.cards.length, 1);
+    assert.match(receiver.cards[0], /新项目：1 次运行待人工重试/);
+  } finally {
+    await receiver.close();
+  }
+});
+
 test("an empty webhook disables all delivery without throwing", async () => {
   const notifier = new Notifier(() => ({ feishu_webhook: "", notify_new_finding: true, notify_needs_human: true }));
   assert.doesNotThrow(() => notifier.notifyNewFinding(finding(), "t"));

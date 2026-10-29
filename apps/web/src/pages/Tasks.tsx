@@ -106,6 +106,35 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
     setSavedTab("list");
   };
 
+  // swarm 没有 Step：任务页只保留回合运行记录，避免展示空的待领取队列。
+  if (graph.project.mode === "swarm") {
+    return (
+      <section className={embedded ? "tasks-embedded" : "page page-tasks"}>
+        {!embedded && (
+          <PageHeader
+            eyebrow="EXPLORATION / TURNS"
+            title="回合记录"
+            description="swarm 没有 Step：这里是每个执行者回合的领取、用量与结果。"
+            actions={
+              <button
+                type="button"
+                className="button ghost"
+                disabled={ws.refreshing || ws.busy}
+                onClick={() => void ws.refresh()}
+              >
+                <RefreshCw size={14} className={ws.refreshing ? "spin" : undefined} />
+                刷新
+              </button>
+            }
+          />
+        )}
+        <div className="tasks-runs">
+          <RunHistory runs={runs} error={runsError} limit={runLimit} onLimit={setRunLimit} />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className={embedded ? "tasks-embedded" : "page page-tasks"}>
       {!embedded && (

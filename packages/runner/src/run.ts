@@ -6,7 +6,7 @@ import { stepAssets } from "../../protocol/src/asset-scope.js";
 import { createAgentSession, SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { appendFile, mkdir, readFile, writeFile, realpath, open, stat } from "node:fs/promises";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { resolve, join, relative } from "node:path";
@@ -20,6 +20,7 @@ import {
   factSubmissionSchema,
   submitDecisionsBase,
   deletionPreviewSchema,
+  peerTurnSchema,
 } from "../../protocol/src/index.js";
 import { memoryEntry, queryMemory, readMemoryRecord, memoryKinds } from "../../core/src/memory.js";
 import { projectionSections } from "../../core/src/projection.js";
@@ -92,6 +93,22 @@ function compactionAnchor(graph: Graph, job: Job): string {
     const step = open.find((candidate) => candidate.id === job.step_id);
     lines.push(`当前 Step：${step ? `${step.id} ${cut(step.description, 200)}` : (job.step_id ?? "未知")}`);
     if (step?.property) lines.push(`必须回应的属性：${cut(step.property, 300)}`);
+  } else if (job.kind === "peer") {
+    // swarm 没有 Step/Finding：压缩后仍要让执行者知道自己是谁、同伴在追什么、
+    // 以及是否有一轮待表态的共识。
+    const peers = (graph.peers ?? [])
+      .filter((peer) => peer.status === "active")
+      .map((peer) => `${peer.id}${peer.direction ? `（${cut(peer.direction, 60)}）` : ""}`);
+    lines.push(`当前执行者：${job.peer_id ?? "未知"}`);
+    lines.push(`在岗执行者：${peers.join("、") || "无"}`);
+    const round = (graph.rounds ?? []).find((candidate) => candidate.status === "open");
+    lines.push(
+      round
+        ? `开放共识轮次 ${round.id}（发起者 ${round.proposer_peer_id}）：已表态 ${
+            Object.keys(round.opinions ?? {}).length
+          }/${round.peer_ids.length}`
+        : "当前没有开放共识轮次",
+    );
   } else {
     const finding = graph.findings.find((candidate) => candidate.id === job.finding_id);
     lines.push(
@@ -103,6 +120,94 @@ function compactionAnchor(graph: Graph, job: Job): string {
 
 export function runJob(...args: Parameters<typeof runJobInternal>) {
   return withModelRelay(args[1].model_relay, args[1].model, () => runJobInternal(...args));
+}
+
+/**
+ * swarm 回合的模型视图：目标 / 未确认 Hint / 自己与同伴 / 收件箱 / 结构化共享记忆
+ * （Facts 与 Findings 摘要）/ 当前开放共识轮次。图仍是共享记忆的唯一真相；这里只做
+ * 有界投影，更多原文可继续用 read_graph / query_graph 读取。
+ */
+function peerEntry(
+  graph: Graph,
+  swarm: {
+    peers?: { id: string; status?: string; direction?: string; state?: { wake?: string; turns?: number } }[];
+    rounds?: {
+      id: string;
+      proposer_peer_id: string;
+      peer_ids: string[];
+      status: string;
+      opinions: Record<string, { opinion: string }>;
+      reason?: string;
+    }[];
+  },
+  inbox: {
+    id: string;
+    seq: number;
+    from_peer: string | null;
+    kind: string;
+    body: string;
+    refs: string[];
+    created_at: string;
+  }[],
+  peerId: string,
+) {
+  const cut = (value: string | undefined, limit = 400) =>
+    (value ?? "").length > limit ? (value ?? "").slice(0, limit) + "…" : (value ?? "");
+  const me = (swarm.peers ?? []).find((p) => p.id === peerId);
+  const activeFacts = graph.facts.filter((f) => !f.deleted);
+  const activeFindings = graph.findings.filter((f) => !f.deleted && !f.merged_into && !f.withdrawn_at);
+  const round = (swarm.rounds ?? []).find((r) => r.status === "open");
+  return {
+    mode: "swarm",
+    role: "peer",
+    me: me ? { id: me.id, direction: me.direction, wake: me.state?.wake, turns: me.state?.turns } : { id: peerId },
+    goal: graph.goals
+      .filter((g) => !g.deleted && g.state === "active")
+      .map((g) => ({ id: g.id, description: g.description })),
+    hints: graph.hints
+      .filter((h) => !h.withdrawn_at && !h.resolved)
+      .map((h) => ({ id: h.id, content: cut(h.content, 300) })),
+    peers: (swarm.peers ?? [])
+      .filter((p) => p.id !== peerId)
+      .map((p) => ({ id: p.id, status: p.status, direction: p.direction, wake: p.state?.wake, turns: p.state?.turns })),
+    inbox: inbox.map((m) => ({
+      id: m.id,
+      seq: m.seq,
+      from: m.from_peer ?? "runtime",
+      kind: m.kind,
+      body: cut(m.body, 800),
+      refs: m.refs,
+      at: m.created_at,
+    })),
+    shared: {
+      fact_count: activeFacts.length,
+      facts: activeFacts.slice(-200).map((f) => ({
+        id: f.id,
+        conclusion: cut(f.conclusion || f.description, 240),
+        status: f.status,
+        objects: f.objects,
+      })),
+      finding_count: activeFindings.length,
+      findings: activeFindings.slice(-100).map((f) => ({
+        id: f.id,
+        title: cut(f.title, 160),
+        kind: f.kind ?? null,
+        status: f.status,
+        review_status: f.review_status,
+        severity: f.severity ?? null,
+      })),
+    },
+    round: round
+      ? {
+          id: round.id,
+          proposer: round.proposer_peer_id,
+          participants: round.peer_ids,
+          reason: round.reason,
+          opinions: round.opinions,
+          your_opinion: round.opinions[peerId]?.opinion ?? null,
+        }
+      : null,
+  };
 }
 
 async function runJobInternal(
@@ -143,7 +248,19 @@ async function runJobInternal(
       limit: 0,
     },
   );
-  let view = memoryEntry(graph, job, changes);
+  let view: unknown;
+  /** 本回合实际投递给该 peer 的最大消息 seq，随 turn-end 回报（不回读则不推进）。 */
+  let deliveredMessageSeq = 0;
+  if (job.kind === "peer") {
+    const swarm = await client.request<any>(client.projectPath(job, "/swarm"));
+    const inbox = await client.request<any[]>(
+      client.projectPath(job, `/fgs/peers/${encodeURIComponent(job.peer_id || "")}/inbox`),
+    );
+    for (const message of inbox) deliveredMessageSeq = Math.max(deliveredMessageSeq, Number(message.seq) || 0);
+    view = peerEntry(graph, swarm, inbox, job.peer_id || "");
+  } else {
+    view = memoryEntry(graph, job, changes);
+  }
   // Decide commits through one tool; `plan_id` lets a conflicting retry skip the plan.
   let decisionPlanId: string | undefined;
   let decisionsCommitted = false;
@@ -245,7 +362,7 @@ async function runJobInternal(
   };
   diagnose("run_start", {
     kind: job.kind,
-    node_id: job.step_id || job.finding_id || job.graph_id,
+    node_id: job.step_id || job.finding_id || job.peer_id || job.graph_id,
     diagnostics_version: 2,
     build: diagnosticBuild,
     graph_id: job.graph_id,
@@ -284,8 +401,14 @@ async function runJobInternal(
     execute: async (_id, args) => jsonResult(await fn(args)),
   });
   const p = (suffix: string) => client.projectPath(job, suffix);
+  const peerBase = job.peer_id ? `/fgs/peers/${encodeURIComponent(job.peer_id)}` : "";
+  // peer 提交观测可附带已批准资产 id，用于归属/覆盖表；classic Execute 由 Step 决定资产。
+  const factInputSchema =
+    job.kind === "peer"
+      ? factSubmissionSchema.extend({ asset_id: z.string().trim().min(1).optional() })
+      : factSubmissionSchema;
   const processes =
-    job.kind === "execute" && !recoverySession
+    (job.kind === "execute" || job.kind === "peer") && !recoverySession
       ? new ProcessSessions(join(directory, "processes"), workspace, {
           project_id: job.project_id,
           run_id: job.run_id,
@@ -712,7 +835,7 @@ async function runJobInternal(
       ),
     );
   }
-  if (job.kind === "execute")
+  if (job.kind === "execute" || job.kind === "peer")
     tools.push(
       tool(
         "read_workspace",
@@ -761,19 +884,19 @@ async function runJobInternal(
         // The same schema the store enforces. Rejecting here names the offending
         // field before upload, instead of a 422 after the observation was written
         // in the model's context.
-        Type.Unsafe(z.toJSONSchema(factSubmissionSchema, { io: "input" })),
+        Type.Unsafe(z.toJSONSchema(factInputSchema, { io: "input" })),
         async (args) => {
-          const parsed = factSubmissionSchema.safeParse(args);
+          const parsed = factInputSchema.safeParse(args);
           if (!parsed.success)
             throw new Error(
               `Invalid fact submission: ${parsed.error.issues
                 .map((i) => `${i.path.join(".") || "fact"}: ${i.message}`)
                 .join("; ")}`,
             );
-          const fact = await submit<Fact>(`/fgs/steps/${job.step_id}/facts`, {
-            worker: job.worker,
-            ...parsed.data,
-          });
+          const fact = await submit<Fact>(
+            job.kind === "peer" ? `${peerBase}/facts` : `/fgs/steps/${job.step_id}/facts`,
+            { worker: job.worker, ...parsed.data },
+          );
           submittedFacts.push({ id: fact.id, description: parsed.data.description });
           return fact;
         },
@@ -792,12 +915,15 @@ async function runJobInternal(
                 .map((i) => `${i.path.join(".") || "finding"}: ${i.message}`)
                 .join("; ")}`,
             );
-          return submit(`/fgs/steps/${job.step_id}/findings`, { worker: job.worker, ...parsed.data });
+          return submit(job.kind === "peer" ? `${peerBase}/findings` : `/fgs/steps/${job.step_id}/findings`, {
+            worker: job.worker,
+            ...parsed.data,
+          });
         },
       ),
       tool(
         "discover_assets",
-        "Record discovered hosts as pending assets or as Facts. Only explicit target hosts and their subdomains can become pending assets; out-of-scope hosts become Facts only. Third-party links, certificates or API dependencies do not expand scope. This call never approves or tests hosts.",
+        "Record discovered hosts as pending assets. Submit any host you judge relevant to the target; each becomes a pending asset carrying your source and evidence. A human must approve it before any planning or request, so state why it belongs to the target. This call never approves or tests hosts.",
         Type.Object({
           assets: Type.Array(
             Type.Object({
@@ -808,7 +934,7 @@ async function runJobInternal(
           ),
         }),
         (a) =>
-          submit("/assets", {
+          submit(job.kind === "peer" ? `${peerBase}/assets` : "/assets", {
             worker: job.worker,
             assets: a.assets.map((x: { hostname: string; source?: string; evidence_ids?: string[] }) => ({
               hostname: x.hostname,
@@ -832,7 +958,11 @@ async function runJobInternal(
             throw new Error("Evidence must be a file in the project workspace");
           const e = await saveEvidenceFile(
             file,
-            { title: a.title, step_id: job.step_id, mime_type: a.mime_type || "text/plain" },
+            {
+              title: a.title,
+              step_id: job.kind === "peer" ? undefined : job.step_id,
+              mime_type: a.mime_type || "text/plain",
+            },
             (body) => submit<Evidence>("/evidence", body),
           );
           return e;
@@ -840,16 +970,88 @@ async function runJobInternal(
       ),
       tool(
         "query_traffic",
-        "List the HTTP(S) flows the recording proxy captured for this Step, newest first, with flow ids and summaries.",
+        "List the HTTP(S) flows the recording proxy captured for this Step (or this peer turn in swarm mode), newest first, with flow ids and summaries. Cite the exact flow ids in submit_finding.traffic_ids.",
         Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
         async (a) => {
           const query = new URLSearchParams();
           if (job.run_id) query.set("run_id", job.run_id);
           if (a.limit) query.set("limit", String(a.limit));
+          if (job.kind === "peer") return client.request(p(`${peerBase}/traffic?${query.toString()}`));
           return client.request(
             p(`/fgs/steps/${encodeURIComponent(job.step_id || "unknown")}/traffic?${query.toString()}`),
           );
         },
+      ),
+    );
+  if (job.kind === "peer")
+    tools.push(
+      tool(
+        "send_message",
+        "给同伴发消息。省略 to 即广播给所有活跃执行者。用于共享进展、提问、交接或声明方向，避免重复劳动。",
+        Type.Object({
+          to: Type.Optional(Type.String()),
+          kind: Type.Optional(Type.String()),
+          body: Type.String(),
+          refs: Type.Optional(Type.Array(Type.String())),
+        }),
+        (a) =>
+          submit(`${peerBase}/messages`, {
+            worker: job.worker,
+            ...(a.to ? { to: a.to } : {}),
+            kind: a.kind ?? "share",
+            body: a.body,
+            refs: a.refs ?? [],
+          }),
+      ),
+      tool(
+        "read_inbox",
+        "读取发给你的消息（含广播），按 seq 增量。",
+        Type.Object({ after: Type.Optional(Type.Integer({ minimum: 0 })) }),
+        (a) => client.request(p(`${peerBase}/inbox${a.after != null ? `?after=${a.after}` : ""}`)),
+      ),
+      tool("list_peers", "列出当前所有执行者的身份、状态、方向与回合数。", Type.Object({}), async () => {
+        const swarm = await client.request<{ peers: unknown[] }>(p("/swarm"));
+        return swarm.peers;
+      }),
+      tool(
+        "spawn_peer",
+        "裂变一个新的平等执行者去并行探索一个方向。parent 只是血缘，不产生指挥权；无数量或深度上限。",
+        Type.Object({
+          reason: Type.String(),
+          direction: Type.Optional(Type.String()),
+          start_message: Type.Optional(Type.String()),
+        }),
+        (a) => submit(`${peerBase}/spawn`, { worker: job.worker, ...a }),
+      ),
+      tool(
+        "retire_peer",
+        "退出。理由必填；退出不等于完成，遗留活动仍可能阻塞共识。",
+        Type.Object({ reason: Type.String() }),
+        (a) => submit(`${peerBase}/retire`, { worker: job.worker, ...a }),
+      ),
+      tool(
+        "propose_completion",
+        "发起完成共识：提交覆盖表（覆盖全部已观测 host+path，tested 带 evidence、waived 带理由、na 表示不适用）。全体活跃执行者同意且无在途活动后才进入审核收尾。",
+        Type.Object({
+          reason: Type.Optional(Type.String()),
+          coverage: Type.Optional(Type.Array(Type.Any())),
+        }),
+        (a) =>
+          submit(`${peerBase}/completion/propose`, {
+            worker: job.worker,
+            reason: a.reason,
+            coverage: a.coverage ?? [],
+          }),
+      ),
+      tool(
+        "respond_completion",
+        "对当前开放共识轮次表态：agree / disagree / unsure。沉默不等于同意。",
+        Type.Object({
+          round_id: Type.String(),
+          opinion: Type.Union([Type.Literal("agree"), Type.Literal("disagree"), Type.Literal("unsure")]),
+          note: Type.Optional(Type.String()),
+        }),
+        (a) => submit(`${peerBase}/completion/respond`, { worker: job.worker, ...a }),
       ),
     );
   const cfg = job.kind === "review" ? config.review_model || config.model : config.model;
@@ -865,6 +1067,23 @@ async function runJobInternal(
     effectiveCompaction.keepRecentTokens,
   );
   if (processes) tools.push(...processTools(processes));
+  // peer 回合跨回合恢复同一持久会话：用指针文件记录 Pi 生成的会话路径。
+  let peerSessionManager: SessionManager | undefined;
+  if (job.kind === "peer" && !recoverySession) {
+    const peerDir = join(workspace, "sessions", "peers");
+    await mkdir(peerDir, { recursive: true });
+    const pointer = join(peerDir, `${job.peer_id}.path`);
+    let existing = "";
+    try {
+      existing = readFileSync(pointer, "utf8").trim();
+    } catch {}
+    if (existing && existsSync(existing)) peerSessionManager = SessionManager.open(existing);
+    else {
+      peerSessionManager = SessionManager.create(workspace, peerDir, { id: `peer-${job.peer_id}` });
+      const file = peerSessionManager.getSessionFile();
+      if (file) writeFileSync(pointer, file);
+    }
+  }
   const { session } = await createAgentSession({
     cwd: workspace,
     agentDir: directory,
@@ -874,11 +1093,11 @@ async function runJobInternal(
     settingsManager: settings,
     sessionManager: recoverySession
       ? SessionManager.open(recoverySession)
-      : SessionManager.create(workspace, join(workspace, "sessions")),
+      : (peerSessionManager ?? SessionManager.create(workspace, join(workspace, "sessions"))),
     customTools: tools,
     tools: recoverySession
       ? closeoutReads
-      : job.kind === "execute"
+      : job.kind === "execute" || job.kind === "peer"
         ? ["read", "write", "edit", "bash", "grep", "find", "ls", ...tools.map((t) => t.name)]
         : tools.map((t) => t.name),
   });
@@ -907,15 +1126,17 @@ async function runJobInternal(
   let protocolMismatch: string | undefined;
   const closeoutPrompt =
     "立即停止探索。可以读取已有记录与证据页面，并用 read_workspace 读取已有文件。用 save_evidence 保存工作区中已有的原始产物，用 submit_fact 提交带 evidence_ids 的已确认观测，然后返回最终 execute JSON。在 Step 摘要中记录未完成的问题和阻塞原因。不要调用 shell、发起目标请求或调用写文件工具。";
+  const peerCloseoutPrompt =
+    "立即停止探索。可以读取已有记录与证据。用 save_evidence 保存工作区中已有的原始产物，用 submit_fact 提交带 evidence_ids 的已确认观测，然后返回最终 peerTurn JSON（wake 通常填 waiting）。在 summary 里记录未完成的问题和阻塞原因。不要调用 shell、发起目标请求或写文件工具。";
   const beginCloseout = (reason: string) => {
-    if (job.kind !== "execute" || closing || leaseError) return;
+    if ((job.kind !== "execute" && job.kind !== "peer") || closing || leaseError) return;
     closing = true;
     // Closeout stops live commands so their raw logs become archiveable. They are
     // already stopped by submission time, so they must not block the final write.
     if (processes) void processes.close();
     diagnose("closeout", { reason: excerpt(reason), ...capacity.snapshot() });
     session.setAutoCompactionEnabled(false);
-    void session.steer(reason + "\n" + closeoutPrompt).catch((error) => {
+    void session.steer(reason + "\n" + (job.kind === "peer" ? peerCloseoutPrompt : closeoutPrompt)).catch((error) => {
       leaseError = error;
       void session.abort();
     });
@@ -996,7 +1217,7 @@ async function runJobInternal(
           };
         }
       }
-      if (job.run_id && !actionRecorded) {
+      if (job.run_id && !actionRecorded && (job.kind === "execute" || job.kind === "peer")) {
         await client.request(p("/jobs/action"), job);
         actionRecorded = true;
       }
@@ -1385,7 +1606,11 @@ async function runJobInternal(
   try {
     const finalInstruction =
       "\n\n最终答案正文只返回一个完整 JSON 对象，不附加解释性文字或 Markdown 围栏。此格式要求仅约束最终答案正文，不限制模型原生推理通道。";
-    view = memoryEntry(graph, job, changes);
+    // swarm 回合的入口视图已经由 /swarm + /inbox 构造好（目标、收件箱、同伴、
+    // 共识轮次）。这里若按 job 再取一次 Decider 的记忆投影，会把它整个覆盖掉：
+    // 模型看不到收件箱，而 turn-end 却按这份收件箱推进 seen_message_seq，
+    // 等于静默丢弃消息。因此 peer 必须保留下面的视图。
+    if (job.kind !== "peer") view = memoryEntry(graph, job, changes);
     const prompt = promptFor(job, view, graph) + finalInstruction;
     // Usage and compaction are observable, but the application never gates a run on estimated tokens.
     const measurePrompt = (text: string) => {
@@ -1564,7 +1789,7 @@ async function runJobInternal(
         // Review repair still need their read-only graph tools; admitRepairTool
         // blocks writes while `closing` stays false so the gate message does not
         // describe an Execute closeout that never happened.
-        if (job.kind === "execute") closing = true;
+        if (job.kind === "execute" || job.kind === "peer") closing = true;
         repairing = true;
         session.setAutoCompactionEnabled(false);
         await session.prompt(resultRepairPrompt(job, detail));
@@ -1608,7 +1833,9 @@ async function runJobInternal(
         : undefined;
     const execution =
       job.kind === "execute" ? validate(() => executeSchema.parse({ ...payload, worker: job.worker })) : undefined;
-    traces.record("final_payload", decision ?? review ?? execution, {
+    const peerTurn =
+      job.kind === "peer" ? validate(() => peerTurnSchema.parse({ ...payload, worker: job.worker })) : undefined;
+    traces.record("final_payload", decision ?? review ?? execution ?? peerTurn, {
       request_id: currentRequest,
       generation: capacity.generation,
     });
@@ -1631,7 +1858,17 @@ async function runJobInternal(
         });
       }
     } else if (job.kind === "review") await submit(`/findings/${job.finding_id}/review`, review!, true);
-    else {
+    else if (job.kind === "peer") {
+      // seen_message_seq 是运行时事实（本回合真正进入上下文的收件箱水位），不是模型
+      // 输出。模型若在终局 JSON 里填了它，绝不能采信：一个过大的值会把后续消息
+      // 永久标记为已投递，执行者从此收不到任何消息。
+      const { seen_message_seq: _modelWatermark, ...turn } = peerTurn!;
+      await submit(
+        `${peerBase}/turn-end`,
+        { ...turn, ...(deliveredMessageSeq > 0 ? { seen_message_seq: deliveredMessageSeq } : {}) },
+        true,
+      );
+    } else {
       const data = execution!;
       // `read_only` is an operator directive, not a model decision: a normal Run
       // that echoed it must still commit its observations instead of tripping the

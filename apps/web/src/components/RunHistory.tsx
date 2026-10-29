@@ -6,7 +6,7 @@ import { RUN_LIMITS, runAttention, runOutcome } from "../run-state.js";
 import { locateRecord, useWorkspace } from "../workspace.js";
 import { Badge, Card, EmptyState } from "./ui.js";
 
-const kinds = { decide: "决策", execute: "探索", review: "审核" } as const;
+const kinds = { decide: "决策", execute: "探索", review: "审核", peer: "执行者" } as const;
 /** Why a Run ended: the operator needs to tell a control-plane blip from a task failure. */
 const failureKinds = { model: "模型", infrastructure: "基础设施", target: "目标", unknown: "未知" } as const;
 
@@ -146,7 +146,13 @@ export function RunHistory({
               {run.external_action_possible && <p className="run-warn">已放行 shell，外部动作可能已发生。</p>}
               {outcome && <p className={outcome.tone === "danger" ? "run-warn" : "run-note"}>{outcome.note}</p>}
               <div className="run-actions">
-                {run.node_id && run.kind !== "decide" && (
+                {run.node_id && run.kind === "peer" && (
+                  <button type="button" className="button small" onClick={() => ws.navigate("peers")}>
+                    <ExternalLink size={12} />
+                    查看执行者
+                  </button>
+                )}
+                {run.node_id && run.kind !== "decide" && run.kind !== "peer" && (
                   <button type="button" className="button small" onClick={() => locateRecord(ws, run.node_id!)}>
                     <ExternalLink size={12} />
                     查看关联记录

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { DispatchConfig, Graph, Job } from "../../protocol/src/index.js";
-import { decideSchema, executeSchema, reviewSchema } from "../../protocol/src/index.js";
+import { decideSchema, executeSchema, reviewSchema, peerTurnSchema } from "../../protocol/src/index.js";
 import { validateReviewResult } from "../../protocol/src/review-validation.js";
 import { ModelGuardError, guardMessage, redactModelError } from "../../protocol/src/model-errors.js";
 import { parseModelJson } from "./prompts.js";
@@ -35,6 +35,7 @@ const resultFields: Record<Job["kind"], string[]> = {
   ],
   execute: ["facts", "findings", "leads", "summary"],
   review: ["verdict", "reason"],
+  peer: ["wake", "direction", "summary"],
 };
 
 /** An error envelope is only recognized when it carries no job result at all. */
@@ -67,6 +68,7 @@ export async function validateFinalResult(
       graph_id: job.graph_id,
     });
   if (job.kind === "execute") executeSchema.parse({ ...payload, worker: job.worker });
+  if (job.kind === "peer") peerTurnSchema.parse({ ...payload, worker: job.worker });
   if (job.kind === "review") {
     const parsed = reviewSchema.parse({ ...payload, worker: job.worker, finding_version: job.finding_version });
     const current = await getCurrentGraph(),

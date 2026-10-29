@@ -36,6 +36,10 @@ export class Dispatcher {
           stepAssets(graph, step).some((id) => !graph!.assets.some((a) => a.id === id && a.approval === "approved"))
         )
           task.controller.abort();
+      } else if (task.job.kind === "peer") {
+        // peer 回合在 peer 退出、被删除或租约易主时中止。
+        const peer = (graph.peers ?? []).find((p) => p.id === task.job.peer_id);
+        if (!peer || peer.status !== "active") task.controller.abort();
       } else {
         const finding = graph.findings.find((f) => f.id === task.job.finding_id);
         if (

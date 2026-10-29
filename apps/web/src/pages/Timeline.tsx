@@ -32,6 +32,7 @@ const PAGE = 100;
 export function TimelinePage({ initialView = "tasks" }: { initialView?: TimelineView } = {}) {
   const ws = useWorkspace();
   const graph = ws.graph!;
+  const swarm = graph.project.mode === "swarm";
   const prefix = `${graph.project.id}:timeline:`;
   const [savedView, setView] = useViewState<TimelineView>(`${prefix}view`, initialView);
   const view: TimelineView = viewOptions.some(([key]) => key === savedView) ? savedView : initialView;
@@ -124,7 +125,12 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
       />
 
       <div className="toolbar">
-        <Segmented ariaLabel="时间线视图" value={view} onChange={setView} options={viewOptions} />
+        <Segmented
+          ariaLabel="时间线视图"
+          value={view}
+          onChange={setView}
+          options={viewOptions.map(([key, label]) => [key, swarm && key === "tasks" ? "回合记录" : label] as const)}
+        />
       </div>
 
       {stats.total > 0 && <DomainCoverage stats={stats} />}

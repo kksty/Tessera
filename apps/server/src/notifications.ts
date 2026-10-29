@@ -200,6 +200,17 @@ export class Notifier {
   }
 
   /**
+   * Establish the pending set that already existed when the process started.
+   * Without this baseline a restart (or any fresh Notifier) treats every old
+   * pending item as new and re-announces paused/other projects on the first
+   * successful write. Priming never sends a card.
+   */
+  primeNeedsHuman(items: readonly PendingItem[]) {
+    this.lastNeedsHuman = new Set(items.map((item) => item.key));
+    this.pendingNeedsHuman.clear();
+  }
+
+  /**
    * Announce work that now needs a human — the 人工重试 content supplied by the
    * caller (interrupted Runs awaiting a manual retry decision, assets awaiting
    * approval, project errors). The signature is the set of concrete pending items;
@@ -209,8 +220,14 @@ export class Notifier {
    */
   notifyNeedsHuman(items: readonly PendingItem[]) {
     const settings = this.settings();
-    if (!settings.notify_needs_human || !this.webhook()) return;
     const current = new Set(items.map((item) => item.key));
+    // Keep the baseline current even while delivery is off, so turning the switch
+    // (or filling the webhook) later never replays work that predates the change.
+    if (!settings.notify_needs_human || !this.webhook()) {
+      this.lastNeedsHuman = current;
+      this.pendingNeedsHuman.clear();
+      return;
+    }
     for (const item of items)
       if (!this.lastNeedsHuman.has(item.key)) {
         const time = formatTime(item.at);

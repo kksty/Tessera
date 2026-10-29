@@ -19,7 +19,7 @@ from importlib.util import spec_from_file_location,module_from_spec
 
 job=json.loads(base64.b64decode(os.environ['TESSERA_JOB']))
 config=json.loads(base64.b64decode(os.environ['TESSERA_RUN_CONFIG']))
-if job['kind']!='execute':os.execvp('node',['node','/opt/tessera/dist/runner.mjs'])
+if job['kind'] not in ('execute','peer'):os.execvp('node',['node','/opt/tessera/dist/runner.mjs'])
 root=Path('/var/lib/tessera-proxy');control=Path('/var/lib/tessera-capture')
 root.mkdir(mode=0o700,exist_ok=True);control.mkdir(mode=0o700,exist_ok=True)
 os.environ.update(TESSERA_PROXY_DIR=str(root),TESSERA_CAPTURE_SERVER=config['server'],TESSERA_CAPTURE_PROJECT=job['project_id'])
@@ -136,7 +136,7 @@ try:
         for folder in ['/etc/chromium/policies/managed','/etc/opt/chrome/policies/managed']:
             (Path(folder)/'tessera-capture.json').unlink(missing_ok=True)
         (control/'signature').write_text(signature)
-        run=job.get('run_id') or job['worker'];step=job.get('step_id') or 'unknown'
+        run=job.get('run_id') or job['worker'];step=job.get('step_id') or job.get('peer_id') or 'unknown'
         routing.configure(os.environ,items,run,step,bundle)
         status('active')
 except Exception as error:

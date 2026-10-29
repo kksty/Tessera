@@ -488,11 +488,16 @@ test("model selection discovers API metadata and supplies automatic context with
   }
 });
 
-async function sdkFixture(kind: "execute" | "decide" | "review" = "execute") {
+async function sdkFixture(kind: "execute" | "decide" | "review" | "peer" = "execute") {
   const dir = mkdtempSync(join(tmpdir(), "tessera-closeout-")),
     store = new Store(join(dir, "graph.db"));
   const graph = store.create(
-    createProjectSchema.parse({ title: "Closeout", origin: "https://example.test", goal: "Save results" }),
+    createProjectSchema.parse({
+      title: "Closeout",
+      origin: "https://example.test",
+      goal: "Save results",
+      ...(kind === "peer" ? { mode: "swarm" } : {}),
+    }),
   );
   const planner = store.claim(graph.project.id, "planner", 0)!,
     snapshot = store.get(graph.project.id);
@@ -513,7 +518,7 @@ async function sdkFixture(kind: "execute" | "decide" | "review" = "execute") {
       graph.project.id,
       findingSchema.parse({ title: "Review fixture", description: "Existing claim", from: ["origin"] }),
     );
-  const job = kind === "decide" ? planner : store.claim(graph.project.id, "executor", 0)!;
+  const job = kind === "decide" || kind === "peer" ? planner : store.claim(graph.project.id, "executor", 0)!;
   plantAutomaticResources(dir, join(dir, "runs", job.worker));
   const app = buildApp(store, new RuntimeConfig(join(dir, "runtime.json")), join(dir, "no-web")),
     model = Fastify();
@@ -566,6 +571,55 @@ const toolCall = (name: string, args: unknown, index = 0) => ({
   id: `call_${name}_${index}`,
   type: "function",
   function: { name, arguments: JSON.stringify(args) },
+});
+
+test("a peer turn receives the swarm entry (inbox/peers/round) and releases as succeeded", async () => {
+  const f = await sdkFixture("peer");
+  const peerId = f.job.peer_id!;
+  const message = f.store.swarm.append(f.graph.project.id, {
+    from: "p002",
+    to: peerId,
+    kind: "handoff",
+    body: "check /login",
+    refs: [],
+  });
+  let prompts = "";
+  f.model.post("/v1/chat/completions", (req: any, reply) => {
+    prompts = JSON.stringify(req.body.messages);
+    return streamFixture(reply, {
+      role: "assistant",
+      // 模型不能决定投递水位；运行时必须忽略这个值，只回报自己真正投递的 seq。
+      content: JSON.stringify({ wake: "waiting", summary: "已处理交接消息", seen_message_seq: 9999 }),
+    });
+  });
+  try {
+    await f.run();
+    // 回合入口必须是 swarm 视图：收件箱与同伴/共识信息都在模型上下文里。
+    // 之前这里被 Decider 的 memoryEntry 覆盖，收件箱从未进入 prompt，但
+    // turn-end 仍按它推进 seen_message_seq，消息被静默丢弃。
+    const promptText = JSON.parse(prompts)
+      .map((entry: any) =>
+        typeof entry.content === "string"
+          ? entry.content
+          : (entry.content ?? []).map((part: any) => part.text ?? "").join(""),
+      )
+      .join("\n");
+    assert.match(promptText, /check \/login/);
+    assert.match(promptText, /"mode":"swarm"/);
+    const view = JSON.parse(readFileSync(join(f.dir, "runs", f.job.worker, "view.json"), "utf8")).view;
+    assert.equal(view.mode, "swarm");
+    assert.ok(view.inbox.some((entry: any) => entry.seq === message.seq));
+    const state = f.store.swarm.state(f.graph.project.id, peerId);
+    assert.equal(state.wake, "waiting");
+    assert.equal(state.seen_message_seq, message.seq, "delivered watermark advances to what the model saw");
+    // 成功回合的租约留到 Worker 退出后的 release；它必须记为 succeeded 并清零失败计数。
+    f.store.release(f.graph.project.id, f.job);
+    const run = f.store.execution.get(f.graph.project.id, f.job.run_id!)!;
+    assert.equal(run.status, "succeeded");
+    assert.equal(f.store.get(f.graph.project.id).project.job_failures?.[`peer:${peerId}`], 0);
+  } finally {
+    await f.close();
+  }
 });
 
 test("a missing CVSS AT metric is repaired in the same Review run before API submission", async () => {

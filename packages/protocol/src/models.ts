@@ -399,6 +399,75 @@ export interface Lead {
   last_read_round?: number;
 }
 export type LeadStatus = Lead["status"];
+/**
+ * 任务架构模式。缺省（含旧项目）为 classic：Decide/Execute/Review 三类任务。
+ * swarm：无决策者、无 Step，多个平等 peer 自主定向、互相通信、自主裂变。
+ * 创建时选定，持久不可变，中途不可切换。
+ */
+export type ProjectMode = "classic" | "swarm";
+/**
+ * swarm 模式的平等执行者。只保存持久身份与状态；回合租约、已读水位等易变
+ * 协调状态在 project_peer_state 表，避免心跳推进图版本唤醒所有 peer。
+ */
+export interface Peer {
+  id: string;
+  graph_id: string;
+  origin: "initial" | "spawn";
+  /** 裂变出处；只是血缘记录，不产生任何指挥权。 */
+  parent_peer_id?: string;
+  spawn_reason?: string;
+  /** 自报的当前方向（≤200 字），同伴与操作员可见。 */
+  direction?: string;
+  status: "active" | "retired";
+  created_at: string;
+  retired_at?: string;
+  retire_reason?: string;
+}
+/** swarm 完成共识轮次。revision/message_seq/参与者集合任一变化即失效。 */
+export interface SwarmRound {
+  id: string;
+  graph_id: string;
+  proposer_peer_id: string;
+  reason?: string;
+  /** 提议时的图版本与消息水位；用于判定轮次是否仍然有效。 */
+  revision: number;
+  message_seq: number;
+  /** 提议时的 active peer 集合快照。 */
+  peer_ids: string[];
+  opinions: Record<string, { opinion: "agree" | "disagree" | "unsure"; note?: string; at: string }>;
+  status: "open" | "committed" | "invalidated";
+  created_at: string;
+  closed_at?: string;
+  close_reason?: string;
+  /** 提议时提交的覆盖表（每个 host+path 必须 tested/waived/na）。 */
+  coverage?: CoverageEntry[];
+}
+/** peer 间消息；持久化在 project_messages 表，不进入图集合。to_peer 为空为广播。 */
+export interface PeerMessage {
+  id: string;
+  seq: number;
+  from_peer: string | null;
+  to_peer: string | null;
+  kind: "share" | "question" | "reply" | "handoff" | "notice" | "system";
+  body: string;
+  refs: string[];
+  created_at: string;
+}
+/** project_peer_state 表记录：回合调度与投递水位。 */
+export interface PeerState {
+  peer_id: string;
+  /**
+   * ready = 下回合立即可领取；waiting = 仅新消息/图变化/新轮次唤醒；
+   * stuck = 连续业务失败被自动停下，只能由操作员手动重试（见 peer.retry）。
+   */
+  wake: "ready" | "waiting" | "stuck";
+  seen_revision: number;
+  seen_message_seq: number;
+  turns: number;
+  last_turn_at?: string;
+  /** 上一回合摘要。 */
+  summary?: string;
+}
 export interface Project {
   deletion?: { id: string; requested_at: string; volume_prefix: string; error?: string };
   /** Docker volume prefix used when this project's worker was first created. */
@@ -407,6 +476,8 @@ export interface Project {
   title: string;
   status: "active" | "stopped" | "completed";
   created_at: string;
+  /** 任务架构模式；缺省为 classic。创建时选定，不可中途切换。 */
+  mode?: ProjectMode;
   reason: ReasonLease | null;
   decide_retry_at?: string;
   decide_pending_since?: string;
@@ -431,7 +502,11 @@ export interface Project {
   infra_retry_at?: string;
   model_retry_at?: string;
   model_failures?: number;
-  job_failures?: Partial<Record<"decide" | "execute" | "review", number>>;
+  /**
+   * 按任务类别累计连续业务失败；swarm 的 peer 进一步按执行者分桶，
+   * 键形如 `peer:<peer_id>`，避免一个执行者的失败牵连同侪。
+   */
+  job_failures?: Partial<Record<string, number>>;
   /**
    * A bounded review pass over findings that predate the current classification
    * and evidence rules. While set, the project is active only for Review: Decide
@@ -505,6 +580,10 @@ export interface Graph {
   evidence: Evidence[];
   reviews: Review[];
   usage: Usage[];
+  /** swarm 模式的平等执行者；classic 项目始终为空。 */
+  peers?: Peer[];
+  /** swarm 完成共识轮次；classic 项目始终为空。 */
+  rounds?: SwarmRound[];
 }
 export interface Event {
   seq: number;
@@ -517,7 +596,7 @@ export interface Event {
 export interface Job {
   /** Server-produced safe snapshot; Dispatcher removes this envelope before launching the Runner. */
   worker_config?: DispatchConfig;
-  kind: "decide" | "execute" | "review";
+  kind: "decide" | "execute" | "review" | "peer";
   project_id: string;
   worker: string;
   graph_id: string;
@@ -525,6 +604,8 @@ export interface Job {
   finding_id?: string;
   finding_version?: number;
   run_id?: string;
+  /** swarm 模式：本回合运行的 peer。 */
+  peer_id?: string;
 }
 export interface Run {
   capacity?: { current: number | null; peak: number | null; generation: number; source: string };
@@ -548,6 +629,12 @@ export interface Run {
   action_started_at?: string;
   session_path?: string;
   error?: string;
+  /**
+   * swarm 轮次的终局已写入（POST /fgs/peers/:peer/turn-end）。回合租约要到
+   * Worker 退出后的 release 才结束（避免同一执行者两回合并行），release 见到
+   * 该标记就把 Run 记为 succeeded，而不是普通的 cancelled。
+   */
+  peer_turn_ended_at?: string;
   /** 人工确认重试或 Step 结束时写入：失败记录保留，但不再算待人工处理。 */
   resolved_at?: string;
   resolved_by?: string;

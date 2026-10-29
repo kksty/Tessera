@@ -148,6 +148,20 @@ test("项目时间线的每一步都用中文描述，不把 decide.planned 这�
     assert.ok(rows.some((row) => row.kind === "decide.planned"));
     // 默认视图与「全部事件」共用同一条中文标题；未知类型也回落到中文兜底。
     assert.equal(kindLabel("decide.planned"), "提交探索计划");
+    // swarm 事件按服务端真实 kind 命名（retire/turn_end/proposed），不能显示成「其他事件」。
+    for (const [kind, label] of [
+      ["peer.spawn", "执行者裂变"],
+      ["peer.retire", "执行者退出"],
+      ["peer.message", "执行者消息"],
+      ["peer.turn_end", "执行者回合"],
+      ["peer.stuck", "执行者停顿"],
+      ["peer.retry", "重试执行者"],
+      ["round.proposed", "开启完成共识"],
+      ["round.opinion", "执行者表态"],
+      ["round.committed", "完成共识达成"],
+      ["round.invalidated", "完成共识失效"],
+    ] as const)
+      assert.equal(kindLabel(kind), label);
     assert.equal(kindLabel("some.future.kind"), "其他事件");
     for (const row of rows)
       assert.doesNotMatch(row.title, /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/i, `事件类型应显示中文：${row.title}`);

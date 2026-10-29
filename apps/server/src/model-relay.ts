@@ -8,7 +8,21 @@ import type { RuntimeConfig } from "./runtime.js";
 import { modelResponseRedaction } from "./model-redaction.js";
 import { redactModelError } from "../../../packages/protocol/src/model-errors.js";
 import type { Job } from "../../../packages/protocol/src/index.js";
+import type { Graph, Run } from "../../../packages/protocol/src/index.js";
 import type { ModelConfig } from "../../../packages/protocol/src/model-config.js";
+
+/**
+ * The heartbeat that keeps a Run's model relay alive. Decide, Execute and Review
+ * keep it on the graph node they lease; a peer turn has no graph lease, so its
+ * liveness lives on the Run row itself. Omitting the peer branch leaves the lease
+ * undefined and every peer model call fails with 409 "Run lease expired".
+ */
+export function runRelayLease(graph: Graph, run: Run): string | null | undefined {
+  if (run.kind === "decide") return graph.project.reason?.last_heartbeat_at;
+  if (run.kind === "execute") return graph.steps.find((s) => s.id === run.node_id)?.last_heartbeat_at;
+  if (run.kind === "peer") return run.heartbeat_at;
+  return graph.findings.find((f) => f.id === run.node_id)?.review_heartbeat;
+}
 
 export function pinRunModel(store: Store, job: Job, cfg: ModelConfig) {
   store.db.prepare("INSERT OR IGNORE INTO platform_run_models VALUES(?,?)").run(job.run_id!, JSON.stringify(cfg));
@@ -34,12 +48,7 @@ export function registerModelRelay(app: FastifyInstance, store: Store, runtime: 
       const graph = store.get(project);
       if (graph.project.status !== "active" || graph.project.deletion)
         throw new DomainError(409, "Project is not active");
-      const lease =
-        run.kind === "decide"
-          ? graph.project.reason?.last_heartbeat_at
-          : run.kind === "execute"
-            ? graph.steps.find((s) => s.id === run.node_id)?.last_heartbeat_at
-            : graph.findings.find((f) => f.id === run.node_id)?.review_heartbeat;
+      const lease = runRelayLease(graph, run);
       const ttl = run.kind === "decide" ? store.settings().reason_timeout : store.leaseSeconds;
       if (!lease || Date.now() - Date.parse(lease) > ttl * 1000) throw new DomainError(409, "Run lease expired");
       const snapshot = store.db.prepare("SELECT data FROM platform_run_models WHERE run_id=?").get(runId);

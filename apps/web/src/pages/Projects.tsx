@@ -188,6 +188,11 @@ export function ProjectsPage() {
                     </button>
                     <span className="projects-sub">
                       <span className="mono">{project.id}</span>
+                      {project.mode === "swarm" && (
+                        <span className="tag" title="平等执行者编排：无决策者、无 Step">
+                          Swarm
+                        </span>
+                      )}
                       <span className="projects-state">{stateLine(project)}</span>
                     </span>
                   </td>

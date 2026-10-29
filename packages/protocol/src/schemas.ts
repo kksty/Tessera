@@ -74,6 +74,53 @@ export const createProjectSchema = z
     origin: text,
     goal: text,
     hints: z.array(hintSchema).default([]),
+    /** 任务架构模式：classic（默认，Decide/Execute/Review）或 swarm（平等执行者）。创建后不可切换。 */
+    mode: z.enum(["classic", "swarm"]).default("classic"),
+  })
+  .strict();
+/**
+ * swarm 模式：peer 发送消息。to 缺省为广播给所有 active peer。
+ * kind=system 只由运行时写入，模型不可用。
+ */
+export const peerMessageSchema = z
+  .object({
+    to: text.optional(),
+    kind: z.enum(["share", "question", "reply", "handoff", "notice"]).default("share"),
+    body: text,
+    refs: z.array(text).max(200).default([]),
+  })
+  .strict();
+/** swarm 模式：裂变一个新的执行者。parent 由服务端从租约确定，模型只能描述理由与起步方向。 */
+export const peerSpawnSchema = z
+  .object({
+    reason: text,
+    direction: text.optional(),
+    start_message: text.optional(),
+  })
+  .strict();
+/** swarm 模式：退出。理由必填；退出不等于完成。 */
+export const peerRetireSchema = z.object({ reason: text }).strict();
+/**
+ * swarm 模式：一回合的终局契约。wake=ready 表示立即想继续下一回合；
+ * waiting 表示等待新消息/图变化/新共识轮次再被唤醒。direction 为自报方向。
+ */
+export const peerTurnSchema = z
+  .object({
+    worker: text,
+    wake: z.enum(["ready", "waiting"]).default("waiting"),
+    direction: text.optional(),
+    summary: z.string().max(MAX_TEXT_LENGTH).default(""),
+    /** 运行时注入：本回合实际投递给该 peer 的最大消息 seq；模型不填写。 */
+    seen_message_seq: z.number().int().min(0).optional(),
+  })
+  .strict();
+/** swarm 模式：发起完成共识。coverage 覆盖表在提议时提交，服务端按 Facts 推导的 surface 校验。（定义见下方 coverageEntrySchema 之后） */
+/** swarm 模式：对当前开放轮次表态。沉默不等于同意。 */
+export const completionRespondSchema = z
+  .object({
+    round_id: text,
+    opinion: z.enum(["agree", "disagree", "unsure"]),
+    note: text.optional(),
   })
   .strict();
 export const findingIdentitySchema = z
@@ -195,6 +242,13 @@ export const coverageEntrySchema = z
     if (value.status === "waived" && !value.reason?.trim())
       ctx.addIssue({ code: "custom", message: "waived coverage requires a reason" });
   });
+/** swarm 模式：发起完成共识。coverage 覆盖表在提议时提交，服务端按 Facts 推导的 surface 校验。 */
+export const completionProposeSchema = z
+  .object({
+    reason: text.optional(),
+    coverage: z.array(coverageEntrySchema).default([]),
+  })
+  .strict();
 export const deletionPreviewSchema = z.object({ delete_nodes: z.array(nodeDeletionSchema).min(1) }).strict();
 /**
  * Completion accounting for one Review planning issue. The issue is identified

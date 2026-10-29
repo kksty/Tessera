@@ -55,7 +55,7 @@ Server / Store 是业务状态的统一写入入口；Dispatcher 负责领取、
 - **Hint** 是人的指令，不能当证据。每条有效指令需由当前措辞版本的 Step 落实，或由 Decide 在 `hint_notes` 记录建议；**note 只是建议，不会关闭 Hint**。完成前所有未撤回 Hint 都必须由操作员在提示面板（`POST/DELETE /api/projects/:id/hints/:hid/resolve`）确认关闭或撤回，模型无法代替人关单。改写或撤回会停止关联的未关闭旧任务，历史事实与旧 note 保留。
 - **Run** 记录一次 Decide / Execute / Review 的租约、用量和执行情况。Review 读取已有证据，缺口交给 Decide 规划，不自行扫描。
 
-Worker 发现资产时，候选范围以种子或人工已批准主机及其子域名为边界，不按共同域名后缀推断归属。范围外的证书域名、外部链接、第三方登录/API 依赖只落 Fact，不创建审批项；业务关联不等于测试范围，扩展目标须由人工明确指定。已有低价值或无依据的 Finding 可由 Decide 用 `finding_updates` 的 `withdraw:true` 撤回交付，保留 Fact、证据、原文和审核历史。操作员已批准当前版本的 Finding 不能被 Decide 撤回、合并为来源或删除；需操作员先撤销批准，模型仍可修订为待复审新版本。有独立价值的信息类不能仅因不是漏洞就撤回或争议底层 Fact。获得新支持后，Decide 用同一 ID 的 `restore:true`、理由和实质 `changes` 恢复为新版本复审；同身份补交不会被静默吞掉，也不能通过省略 ID 绕过撤回。所有 Finding 继续使用稳定 `v###` 编号。
+Worker 发现资产时，由模型判断哪些主机与目标相关并提交为待批准资产；候选一律 `pending`，不按共同域名后缀自动推断归属，也不自动批准。证书域名、外部链接、第三方登录/API 依赖是否登记由模型判断并写明来源与证据，人工批准前不规划、不发起请求；归属与授权始终由人确认。已有低价值或无依据的 Finding 可由 Decide 用 `finding_updates` 的 `withdraw:true` 撤回交付，保留 Fact、证据、原文和审核历史。操作员已批准当前版本的 Finding 不能被 Decide 撤回、合并为来源或删除；需操作员先撤销批准，模型仍可修订为待复审新版本。有独立价值的信息类不能仅因不是漏洞就撤回或争议底层 Fact。获得新支持后，Decide 用同一 ID 的 `restore:true`、理由和实质 `changes` 恢复为新版本复审；同身份补交不会被静默吞掉，也不能通过省略 ID 绕过撤回。所有 Finding 继续使用稳定 `v###` 编号。
 
 审核页将固定发现编号、内容版本和审核编号分别标为“发现 v002”“第 1 版”“审核 r002”，并提供编号及状态说明。历史审核只在节点仍保留上一版快照时展示当时版本的标题与入口，不借用新版本内容；更早版本的正文不再保留，只留审核结论与版本号。“历史审核 · 当前第 2 版”不表示新版已审核通过。数量、去重口径、字段和脱敏状态须回读完整原件核对，重叠分页不相加。
 
@@ -255,3 +255,11 @@ node /opt/tessera/dist/recover-closeout.mjs --file /workspace/runs/WORKER_ID/rec
 诊断可从网页导出，或登录后读取 `/api/projects/PROJECT_ID/diagnostics`（gzip NDJSON）；同时保留图、证据及 Run 目录的 `model-responses.ndjson`、`diagnostics.ndjson`、`submissions/`。导出文件在 `manifest` 之后带一条 `domain_coverage`（`schema: tessera.domain-coverage.v1`）：各测试域的任务 / 事实 / 发现数、未分类比例、核心域覆盖率、跨域任务数，口径与黑板时间线一致。随后带一条 `step_costs`（`schema: tessera.step-costs.v1`）：按 Step 聚合 execute Run 的 token、缓存读写、未知用量 Run 数、上下文峰值、压缩 / 锚点 / 收尾次数、上下文失败与 `needs_attention` 次数及已结束耗时，并按压缩次数、输入 token 降序排列；压缩次数来自诊断事件，旧 Run 无事件时回退 Pi 会话代数，两种来源不相加，缺失用量只计入 `unknown_usage_runs` 而不按 0 计。项目概览同时提供「工具调用排行」：`/api/projects/PROJECT_ID/tool-usage` 把诊断事件按工具与 Run 类型（决策 / 执行 / 审核）聚合调用次数、失败次数、已结束耗时和最近调用时间，前端按调用次数降序展示并可切换阶段。调用次数只数 `tool_start`；失败与耗时来自同一工具的 `tool_end`（按工具名归组），中断的调用只计次数，旧 Run 缺少诊断事件时不补算，也不能把缺失当作 0。每个 Run 的 `run_end` 也带最终容量快照（窗口、阈值、峰值、压缩代数）、工具调用数、是否收尾、Step attempt 与耗时，便于逐 Run 复核。复核摘要不保存 API Key 或个人数据值；缺失供应商用量与费用保持未知。
 
 运行凭据边界、无损归档参数、一致性备份、旧数据可见后果及本轮压力测试边界见 [运行维护说明](operations.md)。
+
+## swarm 模式（第二种架构：平等执行者）
+
+除默认的 classic（Decide / Execute / Review）外，项目创建时可选择 `mode: "swarm"`：**没有决策者、没有 Step**，多个平等 peer 执行者各自决定方向与方法、通过消息互相协作、可裂变新执行者或退出；完成由全体 peer 一致同意（并叠加覆盖表、审核与 Hint 确认等质量门槛）判定。两套架构在同一个平台内互相隔离：`project.mode` 创建时选定、持久不可变，中途不可切换；classic 项目不含任何 swarm 记录。
+
+黑板（FGS 图）在 swarm 中仍是共享记忆与质量基座而非执行控制面：peer 把观测写成 Fact、结论写成 Finding、原件写成 Evidence，但没有任何组件读图来调度方向。Run 的类型扩展为 `peer` 回合：每个 peer 一条持久 Pi 会话，由 Dispatcher 按回合领取，回合开始时投递收件箱与共享变更摘要。
+
+协议细节、数据模型（Peer / SwarmRound / `project_messages` / `project_peer_state`）、共识失效规则、调度与不变量见 [swarm 模式设计](swarm-mode.md)。当前边界：swarm 回合不提供 `query_traffic` 的按 Step 视图（流量仍录制，可按 Run 查询）；不引入 dsh / nexora 运行时；Lead、Step 与 Decide 工具在 swarm 中不出现。
