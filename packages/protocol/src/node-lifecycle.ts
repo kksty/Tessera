@@ -87,6 +87,8 @@ export function activeGraph(graph: Graph): Graph {
   // A completion proposal is still on the project until Review accepts it; its
   // coverage table cites originals that must stay readable while it is pending.
   if (graph.project.pending_completion) cited.push({ completion: graph.project.pending_completion });
+  // swarm 在完成后把同一份记录留在项目上（classic 留在合成完成 Step 上）。
+  if (graph.project.completion) cited.push({ completion: graph.project.completion });
   const references = collectReferencedEvidence(cited, graph.evidence);
   const production_sources = { ...graph.production_sources };
   const inherited_asset_ids = { ...graph.inherited_asset_ids };

@@ -308,6 +308,42 @@ export function NodeDetail() {
               (!displayFact.request || !displayFact.parameter_sources?.length) && (
                 <p className="detail-meta">负面结论缺少请求或参数溯源，Review 可能要求补证。</p>
               )}
+            {displayFact.status === "not_observed" && (
+              <Field label="负向范围">
+                {displayFact.negative_scope?.attempted?.length ? (
+                  <>
+                    <div className="detail-meta">已尝试：</div>
+                    <ul className="detail-bullets">
+                      {displayFact.negative_scope.attempted.map((item, index) => (
+                        <li key={index}>{item}</li>
+                      ))}
+                    </ul>
+                    {displayFact.negative_scope.not_tested?.length ? (
+                      <>
+                        <div className="detail-meta">未覆盖：</div>
+                        <ul className="detail-bullets">
+                          {displayFact.negative_scope.not_tested.map((item, index) => (
+                            <li key={index}>{item}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p className="detail-meta">未覆盖范围未记录，不表示没有缺口。</p>
+                    )}
+                    <p className="detail-meta">
+                      提交者自评置信度：
+                      {displayFact.negative_scope.confidence === "high"
+                        ? "高"
+                        : displayFact.negative_scope.confidence === "medium"
+                          ? "中"
+                          : "低"}
+                    </p>
+                  </>
+                ) : (
+                  <p className="detail-meta">未记录负向范围；这条结论只能视为本次未观测，不能证明方向已穷尽。</p>
+                )}
+              </Field>
+            )}
             {!isOrigin && (
               <Field label="生产来源">
                 {provenance?.ambiguous && (

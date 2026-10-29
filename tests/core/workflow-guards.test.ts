@@ -49,6 +49,43 @@ function fixture() {
   return { store, id, submit, takeDecide, step, commitStep };
 }
 
+test("classic idle detection requires a grace period and retry schedules one new Decide", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Idle", origin: "https://example.test", goal: "Assess" }),
+    ).project.id;
+    const job = store.claim(id, "planner", 0)!;
+    store.release(id, job);
+    const run = store.execution.get(id, job.run_id!)!;
+    run.status = "succeeded";
+    run.finished_at = new Date().toISOString();
+    store.execution.save(run);
+    store.mutate(id, "", false, (graph) => {
+      graph.decided_planning_revision = graph.planning_revision;
+    });
+    assert.equal(store.classicWorkStatus(id).stalled, false);
+    run.finished_at = new Date(Date.now() - 360_000).toISOString();
+    store.execution.save(run);
+    assert.equal(store.classicWorkStatus(id).stalled, true);
+    store.mutate(id, "", false, (graph) => {
+      graph.project.infra_retry_at = new Date(Date.now() + 60_000).toISOString();
+    });
+    assert.equal(store.classicWorkStatus(id).stalled, false);
+    assert.throws(() => store.retryClassicWork(id), /没有可手动唤醒/);
+    store.mutate(id, "", false, (graph) => {
+      graph.project.infra_retry_at = undefined;
+    });
+    assert.equal(store.classicWorkStatus(id).stalled, true);
+    store.retryClassicWork(id);
+    assert.equal(store.classicWorkStatus(id).stalled, false);
+    assert.throws(() => store.retryClassicWork(id), /没有可手动唤醒/);
+    assert.equal(store.claim(id, "planner2", 0)?.kind, "decide");
+  } finally {
+    store.close();
+  }
+});
+
 test("one Decide round cannot exceed the new-Step budget, and a rejected plan writes nothing", () => {
   const f = fixture();
   try {
@@ -209,10 +246,16 @@ test("a negative claim missing provenance is rejected at write time, not at revi
         { parameter: "a", source: "表单", evidence_ids: [] },
         { parameter: "b", source: "页面 JS", evidence_ids: [] },
       ],
+      negative_scope: {
+        attempted: ["one GET with both parameters"],
+        not_tested: ["POST bodies and other encodings"],
+        confidence: "low",
+      },
       evidence_ids: [],
     });
     assert.equal(accepted.status, "not_observed");
-    assert.equal(accepted.negative_claim_version, 1);
+    assert.equal(accepted.negative_claim_version, 2);
+    assert.equal(accepted.negative_scope?.confidence, "low");
   } finally {
     f.store.close();
   }
@@ -265,6 +308,7 @@ test("revise_fact refuses the origin Fact and provenance-erasing edits on a nega
       status: "not_observed",
       request: { method: "GET", url: "https://example.test/login?a=1" },
       parameter_sources: [{ parameter: "a", source: "表单", evidence_ids: [] }],
+      negative_scope: { attempted: ["one GET with a=1"], confidence: "low" },
       evidence_ids: [],
     });
     assert.throws(
@@ -285,6 +329,59 @@ test("the Decide entry carries per-Step cost and yield", () => {
     assert.deepEqual(entry.step_costs.steps, []);
     assert.equal(entry.open_leads_total, 0);
     assert.equal(entry.control.confirmed_informational, 0);
+  } finally {
+    f.store.close();
+  }
+});
+
+test("a same-batch close frees a slot for a replacement Step", () => {
+  const f = fixture();
+  try {
+    f.store.stepBudget = { maxNewStepsPerRound: 0, maxOpenSteps: 2 };
+    const a = f.commitStep("A");
+    f.commitStep("B");
+    const version = f.store.get(f.id).steps.find((s) => s.id === a)!.version ?? 1;
+    const response = f.submit(f.takeDecide(), {
+      steps: [f.step({ description: "C" })],
+      closes: [{ id: a, reason: "低价值，腾位给更值得的问题", expected_version: version }],
+    });
+    assert.equal(response.settle.ok, true, JSON.stringify(response.settle.conflicts));
+    const open = f.store.get(f.id).steps.filter((s) => !s.deleted && !s.concluded_at && !s.discarded);
+    assert.equal(open.length, 2);
+    assert.deepEqual(open.map((s) => s.description).sort(), ["B", "C"]);
+  } finally {
+    f.store.close();
+  }
+});
+
+test("the Decide entry exposes the effective planning budget", () => {
+  const f = fixture();
+  try {
+    const entry = projectEntry(f.store.get(f.id), "origin", undefined, {
+      max_new_steps_per_round: 3,
+      max_open_steps: 7,
+    }) as Record<string, any>;
+    assert.deepEqual(entry.limits, {
+      max_new_steps_per_round: 3,
+      max_open_steps: 7,
+      open_steps: 0,
+      at_open_cap: false,
+    });
+  } finally {
+    f.store.close();
+  }
+});
+
+test("a method-like Step description yields a soft warning instead of a rejection", () => {
+  const f = fixture();
+  try {
+    const response = f.submit(f.takeDecide(), {
+      steps: [f.step({ description: "用 curl 请求 https://example.test/api/export?id=1，重复 5 次" })],
+    });
+    assert.equal(response.plan.committed, true);
+    assert.ok(response.plan.warnings?.length);
+    assert.match(response.plan.warnings!.join(" "), /具体命令|带参数的 URL|重复次数/);
+    assert.equal(f.store.get(f.id).steps.filter((s) => !s.deleted).length, 1, "a warning must not reject the plan");
   } finally {
     f.store.close();
   }

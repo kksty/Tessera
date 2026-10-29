@@ -144,3 +144,26 @@ test("completion snapshot prefers a pending proposal, then the last completion S
   assert.deepEqual(historical.entries, []);
   assert.equal(historical.step?.id, "s009");
 });
+
+test("a swarm completion record lives on the project because there is no completion Step", () => {
+  const swarmGraph = graph({
+    project: {
+      id: "proj_view",
+      title: "Swarm",
+      status: "completed",
+      mode: "swarm",
+      created_at: "2026-10-23T00:00:00.000Z",
+      reason: null,
+      completion: {
+        coverage: [{ surface: "example.test/a", status: "tested", evidence_ids: ["e001"] }],
+        review_issues: [],
+      },
+    },
+    steps: [],
+  });
+  const snapshot = completionSnapshot(swarmGraph);
+  assert.equal(snapshot.pending, false);
+  assert.equal(snapshot.project_record, true);
+  assert.equal(snapshot.step, undefined);
+  assert.equal(snapshot.entries[0]?.surface, "example.test/a");
+});

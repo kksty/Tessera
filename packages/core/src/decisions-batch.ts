@@ -16,6 +16,7 @@ import {
 import { planNodeDeletions, applyNodeDeletions, previewNodeDeletions } from "./node-deletion.js";
 import { planningRevision } from "../../protocol/src/planning.js";
 import { reviewIssueConflicts } from "./review-issues.js";
+import { stepIntentWarnings } from "./step-quality.js";
 import { acceptInformational, informationalAwaitingReview } from "./informational-review.js";
 import {
   DecisionContext,
@@ -144,18 +145,46 @@ export function submitDecisionBatch(
     // measures the open count without those new Steps — a near-duplicate merge
     // reuses an existing id and adds nothing. An over-cap project stays free to
     // close, discard or delete work down first.
+    // A close or discard in this same submission will free its slot when the
+    // settlement runs, so count it. Version-checked releases are safe: a stale
+    // close would conflict in settlement anyway, and failing to pre-count it only
+    // keeps the plan conservative. If settlement later conflicts, the new Step
+    // remains queued and the next round drains it like any over-cap project.
+    const releasing = new Set<string>();
+    const markRelease = (id: string, expectedVersion?: number) => {
+      const step = g.steps.find((candidate) => candidate.id === id);
+      if (!step || step.deleted || step.concluded_at || step.discarded) return;
+      if (expectedVersion !== undefined && expectedVersion !== (step.version ?? 1)) return;
+      releasing.add(id);
+    };
+    for (const close of body.closes) markRelease(close.id, close.expected_version);
+    for (const update of body.updates) if (update.discard) markRelease(update.id, update.expected_version);
     if (budget.maxOpenSteps > 0 && created.length > 0) {
       const createdSet = new Set(created);
       const open = g.steps.filter(
-        (step) => !step.deleted && !step.concluded_at && !step.discarded && !createdSet.has(step.id),
+        (step) =>
+          !step.deleted && !step.concluded_at && !step.discarded && !createdSet.has(step.id) && !releasing.has(step.id),
       ).length;
       if (open + created.length > budget.maxOpenSteps)
         fail(
           422,
           `在途 Step 将达上限（本次规划后 ${open + created.length}/${budget.maxOpenSteps}）；` +
-            "先 closes 结论化或 discard 放弃在途 Step 再规划新工作；只做结算、不新增 Step 的提交不受此限",
+            "同批 closes/discard 低价值 Step 可以腾位，或先结算再规划新工作；只做结算、不新增 Step 的提交不受此限",
         );
     }
+    const warnings = [
+      ...new Set([
+        ...created.flatMap((stepId) => {
+          const step = g.steps.find((candidate) => candidate.id === stepId);
+          return step ? stepIntentWarnings(step.id, step.description) : [];
+        }),
+        ...body.updates.flatMap((update) => {
+          if (!update.description) return [];
+          const step = g.steps.find((candidate) => candidate.id === update.id);
+          return step ? stepIntentWarnings(step.id, update.description) : [];
+        }),
+      ]),
+    ];
     const plan: DecisionPlanResult = {
       plan_id: `plan_${randomUUID()}`,
       steps,
@@ -163,6 +192,7 @@ export function submitDecisionBatch(
       revision: g.revision + 1,
       committed: true,
       reused: false,
+      ...(warnings.length ? { warnings } : {}),
     };
     ctx.db
       .prepare("INSERT INTO platform_plans(plan_id,project_id,submission_id,data,created_at) VALUES(?,?,?,?,?)")

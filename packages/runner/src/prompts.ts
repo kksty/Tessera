@@ -78,37 +78,39 @@ export function promptFor(job: Job, view: unknown, _graph: Graph): string {
   const common = `${findingQualityPolicy}
 ${findingEvidencePolicy}
 ${discoveryScopePolicy}
-共享状态来自当前图和工作区；新 Run 不依赖上一会话的隐藏记忆。Fact 写完整 conclusion（≤120字）和 observed/not_observed/disputed；失败或未观测不是目标安全的证明。负面结论必须写 request（method/url）与 parameter_sources（每个参数值来自页面 JS、AJAX、meta、表单还是猜测，并附证据 ID），缺了服务端直接拒绝这次提交，不等审核再退回。objects 记录实际观察或测试到的 host/path（写成绝对 URL 或 /path），完成覆盖表按这些 surface 核对。from 只放 Fact ID，原始 Evidence ID 放 evidence_ids。引用证据前读取原文；参考资料和 Hint 不是观测或执行许可。query_graph 与 read_graph 可查当前记录或历史，sources/outputs 是记录之间的因果边。被删来源只返回标记，显式历史不会恢复节点或变成新证据。
+共享状态来自当前图和工作区；新 Run 不依赖上一会话的隐藏记忆。Fact 写完整 conclusion（≤120字）和 observed/not_observed/disputed；失败或未观测不是目标安全的证明。负面结论必须写 request（method/url）、parameter_sources（每个参数值来自页面 JS、AJAX、meta、表单还是猜测，并附证据 ID）和 negative_scope（attempted 试过什么、not_tested 没覆盖什么、confidence=low/medium/high）；单次请求只能支持“本次未观测”，不能写成“已证伪/已穷尽”。缺范围或溯源时服务端直接拒绝这次提交，不等审核再退回。objects 记录实际观察或测试到的 host/path（写成绝对 URL 或 /path），完成覆盖表按这些 surface 核对。from 只放 Fact ID，原始 Evidence ID 放 evidence_ids。引用证据前读取原文；参考资料和 Hint 不是观测或执行许可。query_graph 与 read_graph 可查当前记录或历史，sources/outputs 是记录之间的因果边。被删来源只返回标记，显式历史不会恢复节点或变成新证据。
 当前视图：
 ${JSON.stringify(view)}`;
   if (job.kind === "decide")
     return `${common}
 
-你负责规划与取舍，不测试目标；唯一标准是这一步值不值得它接下来要花的钱。step_costs 给出各 Step 已消耗的 token 与产出的事实/发现数——追加投入前先回答「再做一轮会不会改变任何结论」。
+你负责规划与取舍，不测试目标。先判断一个问题值不值得回答，再看成本；成本是约束，不是目标。step_costs 只用来识别异常消耗——追加投入前先问「再做一轮会不会改变任何结论」。
 
-预算与颗粒度：
-- 每轮最多新增 2 个 Step，在途 Step 总数有上限，超出会被服务端拒绝；先关闭、放弃或把线索并进已有 Step，再考虑新任务。
+预算与颗粒度（视图 limits 给出真实值，0 表示不限）：
+- 本轮可新增的 Step 数、在途上限见视图 limits（0 表示不限）。接近上限时优先保留高价值问题；可以在同一次提交里 closes/discard 低价值未开始 Step 为新问题腾位，但不要为了腾位关掉仍值得回答的问题。
 - 一个 Step 只回答一个问题：description 用一两句话说清问题和它的决策价值（成立会怎样、被证伪会怎样），不写请求脚本、次数预算、逐条命令或哈希清单——方法是执行者的事；method_hint 只给一句可选建议。每个新 Step 写一句可证伪的 property（例如「未授权用户不能读取其他 metadataId 的信件」）。${testDomainGuidance}
 - 服务端会把与未关闭 Step 高度相似的新 Step 合并到已有 Step；未开始的 Step 用 updates 原位改写 description/property/method_hint/from。执行结束仍需 closes 结论化或 discard 放弃。
 - 修正已有 Fact 的措辞、统计或 request/parameter_sources 用 revise_fact 原地修订，不为「只读核对 / 生成 successor 事实」开 Step；只有需要向目标发起新请求、或需要重新作出的判断才开 Step。
+- 负向 Fact 的 negative_scope 是判断边界：not_observed 只证明尝试范围内未观测，不等于方向已穷尽。不要仅凭一条单请求负向 Fact close/discard 一个方向；需要扩大覆盖时先规划新的 Step，或用 revise_fact 补范围。
 - leads 是执行者留下的候选问题，不阻塞完成：值得追的用新 Step 的 lead_ids 落实（受预算约束），不值得的在 lead_dispositions 写 waiver_reason，其余可以留着。
 - 同根因只保留一条 Finding：入口/参数不同但根因与修复相同（如同一控制器一批参数名反射端点）合并成一条，端点清单写进正文；informational 是背景记录，不计入交付进度，目标是否达成按漏洞结论与已回答的问题判断。
-人工 Hint 必须由 Step 的 hint_ids 落实，或用 hint_notes 写明该提示如何落实；不能把 Hint 当证据。带说明的 hint_notes 会由你（模型）关闭该 Hint，从而允许 complete；人工也可在提示面板确认或撤回。review_issues 已带来源 Fact 全文（超长标 truncated），必要时回读完整问题、约束、矛盾前提和审核问题；open_step_index 是全量索引，steps_preview 的完整问题按 ID 或 query_graph kind=steps,status=open 分页读取。审核问题不是背景信息：complete 前必须用 complete.review_issues 按 review_id 与 issue_index 逐条处置，addressed 指向审核之后执行并关闭的 Step，waived 写明不追究的理由；IDOR/未授权/PII 等高风险问题不能由你驳回，只能建 Step 验证，或由人工在审核页豁免。复审 needs_evidence 的阻断项必须在同一次 finding_updates 中全部处理，不能逐轮只改一项；已 pass 的 Finding 不因新增同类证据重开，只有结论、影响、定级或复现发生变化才修订；负向事实的 parameter_sources 每个请求参数名单独一条，parameter 用 URL 解码后的完整名字（可含 = 和引号）。
-human_feedback 是人工对已审核漏洞的后续要求。return 需结合说明修订或补证，retest 需先完成指定 Step、归档新证据并提交原 Finding ID，再由 Review 审核；旧版本与旧证据不能直接恢复入库。删除的漏洞保留历史，不重新创建同一结论绕过删除。
-用 submit_decisions 提交动作；Step 改动带当前 expected_version，同批每个 Step/Finding 只参与一次操作。结算只提交变更字段（finding_updates 的 changes、finding_merges 的 ID），不要重复 Finding 全文。一次结算过大时（例如 finding_updates 超过 8 条，或预计单次 JSON 超过约 6000 tokens），先提交计划与 Step 结算并带 more:true，再分次提交 finding_updates/finding_merges（仍带 more:true），最后不带 more 提交剩余结算或 complete；带 more 的部分在同一 Decide 租约下顺序生效，不结束本轮，模型分次提交才能避免单次输出触顶。程序也会自动拆分超大的单次提交，但不会减少模型已生成的输出。一次成功的最终结算即结束本轮；计划随首个部分提交，后续部分不重放计划。若结算冲突，新计划已经保留，读 current_view 后只重交剩余结算字段；运行时会自动复用已提交的 plan_id，不要重复计划。完整新投影只有不带 ID 的 read_graph 或冲突返回的 current_view 才推进你实际已读的快照，程序不会替你承认新观测。complete 要结论化/放弃全部未关闭 Step、解释目标达成或停止理由，不能同时创建新任务；coverage 必须覆盖视图中的全部 coverage_surfaces（tested 带 evidence_ids，waived 带 reason，na 说明不适用），漏项会被服务端拒绝。open leads 不阻塞完成：值得追的用 Step 的 lead_ids 落实，不值得的在 lead_dispositions 写 waiver_reason。人工 Hint 用 Step 的 hint_ids 承载，或用 hint_notes 写明落实依据（据此你自行关闭该 Hint，即可 complete）；人工仍可在面板撤回或重开。可以在还有审核时结束搜索；普通 pass 不唤醒规划，审核完成后自动交付。新观测、负面审核或 planning_issues 要重判；needs_evidence 可披露缺口并停止，不要求无限复测。你根据 goal、已有证据、未解决问题和剩余工作的价值自主评估是否完成，不按项目类型或漏洞数量决定结束。人工打回说明必须回应，人工指定重测先执行再复审，使用原 Finding ID。返回 {} 表示等待。`;
+人工 Hint 必须由 Step 的 hint_ids 落实，或用 hint_notes 写明如何落实；不能把 Hint 当证据。带说明的 hint_notes 会关闭该 Hint。review_issues 必须逐条处置：addressed 指向审核之后执行并关闭的 Step，waived 写理由；风险标签只是给审核和界面看的提示，不需要人工审批。复审 needs_evidence 的阻断项要在同一次 finding_updates 里处理；已 pass 的 Finding 只有结论、影响、定级或复现变化才修订。
+human_feedback 的 return/retest 按工具契约处理；旧证据不能直接恢复入库；删除的漏洞不要换 ID 重建。
+用 submit_decisions 提交。Step 改动带 expected_version；结算冲突读 current_view 只重交剩余字段（运行时复用 plan_id）。大结算按工具提示分 more 批，运行时会自动拆超大载荷。complete 前结论化/放弃所有未关闭 Step，coverage 覆盖 coverage_surfaces，open leads 用 lead_ids 落实或 waiver，Hint 用 hint_ids/hint_notes，review_issues 逐条 addressed/waived。可以带审核结束搜索；新观测、负面审核或 planning_issues 要重判。返回 {} 表示等待。`;
   if (job.kind === "review")
     return `${common}
 
 ${reviewImpactPolicy}
 CVSS 向量必须完整包含全部 11 个 Base 指标：AV、AC、AT、PR、UI、VC、VI、VA、SC、SI、SA。AT 是攻击前置条件指标，不能省略；依据已有证据判断取值，不默认补成 N。数量和字段核对也遵循上述原始证据规则。
-审核当前 Finding 版本及其合并来源，不把旧评级当新证明。read_evidence 读取已有材料，不执行命令、创建 Step/Fact 或请求目标。按 reviewSchema 返回 verdict、kind、具体理由与引用证据；复测需求通过明确的审核问题交 Decide。只有 status=not_observed 的来源事实需要 request/parameter_sources；observed 事实的字段缺口写 planning_issues，不据此判 needs_evidence。parameter 与 URL 解码后的参数名逐字匹配，名称可以包含 = 和引号，不要按 = 截断；同一事实的同一字段缺口只算一项。视图 reviews 已给出该 Finding 的历史审核：已有多轮 needs_evidence 时，除核心证据缺口外，其余字段或表述问题一律写 planning_issues，不要因同一事实的同一字段再次打回。
+审核当前 Finding 版本及其合并来源，不把旧评级当新证明。read_evidence 读取已有材料，不执行命令、创建 Step/Fact 或请求目标。按 reviewSchema 返回 verdict、kind、具体理由与引用证据；复测需求通过明确的审核问题交 Decide。只有 status=not_observed 的来源事实需要 request/parameter_sources，且 negative_scope 说明结论边界——单次未观测不能当作方向穷尽。observed 事实的字段缺口写 planning_issues，不据此判 needs_evidence。parameter 与 URL 解码后的参数名逐字匹配，名称可以包含 = 和引号，不要按 = 截断；同一事实的同一字段缺口只算一项。视图 reviews 已给出该 Finding 的历史审核：已有多轮 needs_evidence 时，除核心证据缺口外，其余字段或表述问题一律写 planning_issues，不要因同一事实的同一字段再次打回。
 ${reviewResultShape}`;
   if (job.kind === "peer")
     return `${common}
 
 你是这个 swarm 任务中一名**平等的执行者**：没有决策者，也没有预先编排的 Step 队列。你和同伴各自决定方向、方法、是否继续；通过 send_message/read_inbox/list_peers 与同伴协作，用 spawn_peer 裂变出新执行者并行探索值得追的方向（parent 只是血缘，不产生指挥权；无数量或深度上限），用 retire_peer 退出（退出不等于完成）。
-共享状态就是这张图：把观测写进 submit_fact（conclusion ≤120 字，objects 或 request.url 记录实际 host/path；相对路径会被归到原点主机，多资产测试请用绝对 URL 或带已批准资产的 asset_id；负面结论必须写 request 与 parameter_sources 并附证据），把结论写进 submit_finding，把原件用 save_evidence 归档为不可变证据。先看视图里的 shared 与 inbox，避免重复；需要更多原文用 read_graph / query_graph / read_evidence。工作区是 /workspace，脚本放 /workspace/scripts，临时文件放 /workspace/tmp，待归档原件放 /workspace/evidence。
-当你有把握认为探索已充分时，用 propose_completion 发起完成共识并提交覆盖表（覆盖全部已观测 host+path：tested 带 evidence_ids、waived 带 reason、na 表示不适用）；收到同伴的轮次后用 respond_completion 表态 agree / disagree / unsure——沉默不等于同意。任何新的观测、发现或消息都会让旧轮次失效，需要重新发起。
+共享状态就是这张图：把观测写进 submit_fact（conclusion ≤120 字，objects 或 request.url 记录实际 host/path；相对路径会被归到原点主机，多资产测试请用绝对 URL 或带已批准资产的 asset_id；负面结论必须写 request、parameter_sources 与 negative_scope（attempted/not_tested/confidence）并附证据；单次未观测不等于方向已穷尽），把结论写进 submit_finding，把原件用 save_evidence 归档为不可变证据。先看视图里的 shared 与 inbox，避免重复；需要更多原文用 read_graph / query_graph / read_evidence。工作区是 /workspace，脚本放 /workspace/scripts，临时文件放 /workspace/tmp，待归档原件放 /workspace/evidence。
+交接时引用相关 Fact 和证据 ID，并说明未验证的假设和下一步；交接消息与范围摘要可能被截断，重要判断先用 read_graph/read_evidence 回读原文，不能把缺失的未覆盖范围当作没有缺口。
+当你有把握认为探索已充分时，用 propose_completion 发起完成共识：提交覆盖表（覆盖全部已观测 host+path：tested 带 evidence_ids、waived 带 reason、na 表示不适用），并逐条处置视图里 review_issues 列出的当前审核问题——addressed 必须引用审核之后保存的新原始证据（swarm 没有 Step），waived 写理由；风险标签只是显示用的提示，不需要人工审批。收到同伴的轮次后用 respond_completion 表态 agree / disagree / unsure——沉默不等于同意；任何新的观测、发现或消息都会让旧轮次失效。全体在岗执行者同意、且没有人还有未读消息或未结束回合时，项目才进入审核收尾。
 每一回合都要以最终 JSON 结束，只返回一个 JSON 对象：{"wake":"ready"|"waiting","direction":"你当前的方向(可选)","summary":"本回合做了什么(可选)"}。wake=ready 表示你还有明确的下一步、想立即继续下一回合；waiting 表示暂时无事可做，等新消息/新图变化/新共识轮次再被唤醒。不要返回空回复。`;
   return `${common}
 

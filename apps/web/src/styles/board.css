@@ -387,6 +387,18 @@
   color: var(--ink-2);
 }
 
+.detail-bullets {
+  margin: 4px 0 10px;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.detail-bullets li + li {
+  margin-top: 2px;
+}
+
 .detail-muted {
   color: var(--ink-3);
 }

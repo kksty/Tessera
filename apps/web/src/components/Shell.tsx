@@ -31,6 +31,7 @@ import type { Graph, ProjectSummary } from "../../../../packages/protocol/src/in
 import { brand } from "../brand.js";
 import { fromNow } from "../format.js";
 import { pendingReviews } from "../../../../packages/protocol/src/review-scheduling.js";
+import { ModeBadge } from "./ModeBadge.js";
 import {
   pageTitles,
   projectNavGroups,
@@ -235,8 +236,8 @@ export function Sidebar({
                           : "读取中"}
                     {graph
                       ? swarm
-                        ? ` · ${(graph.peers ?? []).filter((peer) => peer.status === "active").length} 个执行者`
-                        : ` · ${graph.steps.filter((step) => !step.concluded_at && !step.discarded).length} 个待办`
+                        ? ` · 蜂群 · ${(graph.peers ?? []).filter((peer) => peer.status === "active").length} 个执行者`
+                        : ` · 决策者 · ${graph.steps.filter((step) => !step.concluded_at && !step.discarded).length} 个待办`
                       : ""}
                   </small>
                 </span>
@@ -383,7 +384,7 @@ export function Topbar({
   refreshing?: boolean;
 }) {
   const inProject = Boolean(projectTitle);
-  // 深链到 tasks 时，swarm 与 classic 都归一到「时间线」这个合并页面。
+  // 深链到 tasks 时，蜂群架构与决策者架构都归一到「时间线」这个合并页面。
   const pageTitle = page === "tasks" && project?.mode === "swarm" ? "时间线" : pageTitles[page];
   return (
     <header className="topbar">
@@ -417,6 +418,7 @@ export function Topbar({
             <span className="crumb current">{pageTitle}</span>
           )}
         </nav>
+        {project && <ModeBadge mode={project.mode} compact />}
         {project?.status === "active" && (
           <span className="topbar-live" title="实时同步中">
             <span className="pulse-dot" aria-hidden="true" />

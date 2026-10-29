@@ -148,6 +148,118 @@ test("merging findings keeps every source's traffic links", () => {
   }
 });
 
+test("unattributed capture still matches inside the Step execution window", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-traffic-window-")),
+    store = new Store(join(dir, "graph.db"));
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Window match", origin: "https://api.example.test", goal: "Assess" }),
+    ).project.id;
+    const opened = new Date(Date.now() - 60_000).toISOString();
+    const inside = new Date(Date.now() - 30_000).toISOString();
+    // Transparent capture records no Step/Run: the flow must still be found by
+    // the execution window and the Finding surface.
+    store.traffic.ingest(id, [
+      flow({
+        id: "flow-inside",
+        created_at: inside,
+        method: "GET",
+        url: "https://api.example.test/users/7",
+        host: "api.example.test",
+      }),
+    ]);
+    store.mutate(id, "seed-step", false, (graph) => {
+      graph.steps.push({
+        id: "s001",
+        from: [],
+        to: null,
+        description: "Test the profile endpoint",
+        priority: 1,
+        discarded: false,
+        creator: "test",
+        worker: null,
+        last_heartbeat_at: null,
+        created_at: opened,
+        executed_at: opened,
+        concluded_at: null,
+        fact_ids: [],
+        summary: "",
+        graph_id: "main",
+        attempts: 0,
+      });
+    });
+    const finding = store.submitFinding(
+      id,
+      findingSchema.parse({
+        title: "IDOR on user profile",
+        description: "Another user's profile was returned.",
+        identity: { category: "access-control", method: "GET", host: "api.example.test", path: "/users/7" },
+      }),
+    );
+    store.mutate(id, "seed-finding-step", false, (graph) => {
+      graph.findings.find((item) => item.id === finding.id)!.step_id = "s001";
+    });
+    const matched = store.findingTraffic(id, finding.id);
+    assert.equal(matched.source, "suggested");
+    assert.deepEqual(
+      matched.records.map((record) => record.id),
+      ["flow-inside"],
+    );
+
+    // A flow captured after the Step concluded must not be matched.
+    store.mutate(id, "close-step", false, (graph) => {
+      graph.steps.find((step) => step.id === "s001")!.concluded_at = new Date(Date.now() - 10_000).toISOString();
+    });
+    const later = store.submitFinding(
+      id,
+      findingSchema.parse({
+        title: "Later claim",
+        description: "Nothing was captured for it.",
+        identity: { category: "access-control", method: "GET", host: "api.example.test", path: "/users/9" },
+      }),
+    );
+    assert.equal(store.findingTraffic(id, later.id).source, "none");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("operator confirmation pins and clears captured flows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-finding-confirm-")),
+    store = new Store(join(dir, "graph.db"));
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Confirm links", origin: "https://api.example.test", goal: "Assess" }),
+    ).project.id;
+    store.traffic.ingest(id, [flow({ id: "flow-a" }), flow({ id: "flow-b", url: "https://api.example.test/users/8" })]);
+    const finding = store.submitFinding(
+      id,
+      findingSchema.parse({ title: "Uncited claim", description: "The executor cited no flow." }),
+    );
+    const confirmed = store.linkFindingTraffic(id, finding.id, ["flow-b", "flow-b", "flow-a"]);
+    assert.equal(confirmed.source, "linked");
+    assert.deepEqual(
+      confirmed.records.map((record) => record.id),
+      ["flow-b", "flow-a"],
+      "order follows the reviewer's list and duplicates collapse",
+    );
+    assert.deepEqual(store.get(id).findings.find((item) => item.id === finding.id)!.traffic_ids, ["flow-b", "flow-a"]);
+
+    const cleared = store.linkFindingTraffic(id, finding.id, []);
+    assert.notEqual(cleared.source, "linked");
+    assert.equal(store.get(id).findings.find((item) => item.id === finding.id)!.traffic_ids, undefined);
+
+    assert.throws(
+      () => store.linkFindingTraffic(id, finding.id, ["missing"]),
+      (error: any) => error.statusCode === 422,
+    );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("traffic suggestions prefer the Finding surface inside the producing Step", () => {
   const dir = mkdtempSync(join(tmpdir(), "tessera-traffic-suggest-")),
     store = new Store(join(dir, "graph.db"));

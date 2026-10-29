@@ -769,7 +769,14 @@ export function buildApp(
               run_id: text.optional(),
             })
             .parse(req.query);
-          return store.traffic.listForStep(req.params.id, step.id, query.run_id || step.run_id, query.limit);
+          return store.traffic.listForStep(
+            req.params.id,
+            step.id,
+            query.run_id || step.run_id,
+            query.limit,
+            step.executed_at || step.created_at,
+            step.concluded_at ?? null,
+          );
         },
       );
       api.put<{ Params: { id: string; step: string } }>("/projects/:id/fgs/steps/:step", (req) => {
@@ -842,9 +849,10 @@ export function buildApp(
         );
       });
       // ─────────────── swarm 模式：平等执行者 ───────────────
-      api.get<{ Params: { id: string } }>("/projects/:id/swarm", (req) => {
+      api.get<{ Params: { id: string }; Querystring: { peer?: string } }>("/projects/:id/swarm", (req) => {
         projectReadCheck(req, req.params.id);
-        return store.swarmView(req.params.id);
+        const peer = req.query.peer?.trim();
+        return store.swarmView(req.params.id, peer || undefined);
       });
       api.get<{ Params: { id: string }; Querystring: { after?: string; limit?: string } }>(
         "/projects/:id/swarm/messages",
@@ -997,6 +1005,24 @@ export function buildApp(
           req.params.peer,
         );
       });
+      api.post<{ Params: { id: string } }>("/projects/:id/fgs/peers/replacement", (req) => {
+        operatorCheck(req);
+        z.object({ confirmed: z.literal(true) })
+          .strict()
+          .parse(req.body);
+        return store.operatorReplacePeer(req.params.id);
+      });
+      api.get<{ Params: { id: string } }>("/projects/:id/work-status", (req) => {
+        operatorCheck(req);
+        return store.classicWorkStatus(req.params.id);
+      });
+      api.post<{ Params: { id: string } }>("/projects/:id/retry-work", (req) => {
+        operatorCheck(req);
+        z.object({ confirmed: z.literal(true) })
+          .strict()
+          .parse(req.body);
+        return store.retryClassicWork(req.params.id);
+      });
       api.post<{ Params: { id: string; peer: string } }>("/projects/:id/fgs/peers/:peer/retry", (req) => {
         operatorCheck(req);
         z.object({ confirmed: z.literal(true) })
@@ -1012,6 +1038,15 @@ export function buildApp(
       api.get<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/traffic", (req) => {
         operatorCheck(req);
         return store.findingTraffic(req.params.id, req.params.fid);
+      });
+      // Operator confirmation: pin the captured flows a reviewer verified as proof.
+      api.put<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/traffic", (req) => {
+        operatorCheck(req);
+        const body = z
+          .object({ traffic_ids: z.array(z.string().min(1).max(160)).max(50) })
+          .strict()
+          .parse(req.body);
+        return store.linkFindingTraffic(req.params.id, req.params.fid, body.traffic_ids);
       });
       api.put<{ Params: { id: string; fid: string } }>("/projects/:id/findings/:fid/details", (req) => {
         operatorCheck(req);
@@ -1727,7 +1762,10 @@ export function buildApp(
           through_revision: graph.observation_revision,
           limit: 0,
         });
-        return memoryEntry(graph, job, changes);
+        return memoryEntry(graph, job, changes, {
+          max_new_steps_per_round: store.stepBudget.maxNewStepsPerRound,
+          max_open_steps: store.stepBudget.maxOpenSteps,
+        });
       });
       api.get<{ Params: { id: string }; Querystring: { format?: string } }>("/projects/:id/export", (req, reply) => {
         operatorCheck(req);

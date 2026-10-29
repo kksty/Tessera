@@ -161,20 +161,44 @@ export class TrafficRecords {
     }
     return records;
   }
-  /** HTTP flows recorded for one Step and/or Run, newest first. */
-  listForStep(projectId: string, stepId: string | undefined, runId: string | undefined, limit = 200): TrafficSummary[] {
-    if (!stepId && !runId) return [];
+  /**
+   * HTTP flows recorded for one Step and/or Run, newest first.
+   *
+   * Transparent capture cannot label a flow with the Step that produced it, so
+   * when the exact match is empty this widens to the execution window instead of
+   * returning nothing. Callers that need precision score the rows by surface.
+   */
+  listForStep(
+    projectId: string,
+    stepId: string | undefined,
+    runId: string | undefined,
+    limit = 200,
+    since?: string | null,
+    until?: string | null,
+  ): TrafficSummary[] {
+    if (stepId || runId) {
+      const rows = this.db
+        .prepare(
+          `SELECT seq,updated_at,data FROM project_traffic WHERE project_id=? AND COALESCE(json_extract(data,'$.capture_kind'),'http')='http' AND ((?<>'' AND json_extract(data,'$.step_id')=?) OR (?<>'' AND json_extract(data,'$.run_id')=?)) ORDER BY seq DESC LIMIT ?`,
+        )
+        .all(projectId, stepId || "", stepId || "", runId || "", runId || "", limit) as any[];
+      if (rows.length) return rows.map((row) => this.summary(row));
+    }
+    if (!since) return [];
     const rows = this.db
       .prepare(
-        `SELECT seq,updated_at,data FROM project_traffic WHERE project_id=? AND COALESCE(json_extract(data,'$.capture_kind'),'http')='http' AND ((?<>'' AND json_extract(data,'$.step_id')=?) OR (?<>'' AND json_extract(data,'$.run_id')=?)) ORDER BY seq DESC LIMIT ?`,
+        `SELECT seq,updated_at,data FROM project_traffic WHERE project_id=? AND COALESCE(json_extract(data,'$.capture_kind'),'http')='http'
+           AND julianday(json_extract(data,'$.created_at')) >= julianday(?)
+           AND (? IS NULL OR julianday(json_extract(data,'$.created_at')) <= julianday(?))
+         ORDER BY seq DESC LIMIT ?`,
       )
-      .all(projectId, stepId || "", stepId || "", runId || "", runId || "", limit) as any[];
+      .all(projectId, since, until ?? null, until ?? null, limit) as any[];
     return rows.map((row) => this.summary(row));
   }
   /**
    * Best-effort match for a Finding whose executor did not cite a flow id.
-   * Uses the Step/Run and the Finding's entry surface; the newest exact match
-   * wins, while unrelated requests from the same Step stay out when possible.
+   * Uses the Step/Run (or its execution window) and the Finding's entry surface;
+   * the newest exact match wins, while unrelated requests stay out when possible.
    */
   suggest(
     projectId: string,
@@ -182,8 +206,10 @@ export class TrafficRecords {
     runId: string | undefined,
     surface: { method?: string; host?: string; path?: string; location?: string } | null | undefined,
     limit = 12,
+    since?: string | null,
+    until?: string | null,
   ): TrafficSummary[] {
-    const rows = this.listForStep(projectId, stepId, runId, 500);
+    const rows = this.listForStep(projectId, stepId, runId, 500, since, until);
     const method = surface?.method?.trim().toUpperCase() || "";
     const host = normalizeHost(surface?.host);
     const target = surface?.path || surface?.location;

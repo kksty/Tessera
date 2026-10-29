@@ -122,7 +122,7 @@ export const projectNavGroups: readonly (readonly [string, readonly (readonly [P
 /**
  * swarm 项目（无 Decide、无 Step）的侧栏分组：新增「执行者」，把以 Step 为中心的
  * 「人工重试」收起；「回合记录」与「时间线」合并为同一个「时间线」页（运行记录 /
- * 事件时间线两个视图）。classic 项目仍用 projectNavGroups。
+ * 事件时间线两个视图）。决策者架构项目仍用 projectNavGroups。
  */
 export const swarmNavGroups: readonly (readonly [string, readonly (readonly [ProjectPage, string])[]])[] = [
   [

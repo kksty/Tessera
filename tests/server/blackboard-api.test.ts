@@ -235,3 +235,38 @@ test("Fact revisions are exposed as an in-place bookkeeping write", async () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the job view carries the effective planning budget", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-job-view-"));
+  const store = new Store(join(dir, "graph.db"));
+  const id = store.create(
+    createProjectSchema.parse({ title: "Budget", origin: "https://example.test", goal: "Assess" }),
+  ).project.id;
+  const app = buildApp(store, new RuntimeConfig(join(dir, "config.json")), join(dir, "no-web"));
+  // The app mirrors the persisted runtime budget at build time; set the test
+  // value afterwards so this asserts the view, not the fixture default.
+  store.stepBudget = { maxNewStepsPerRound: 3, maxOpenSteps: 7 };
+  const job = store.claim(id, "planner", 0, { max_project_workers: 1 });
+  assert.ok(job);
+  assert.equal(job.kind, "decide");
+  await app.listen({ host: "127.0.0.1", port: 0 });
+  try {
+    const view = await app.inject({
+      method: "POST",
+      url: `/api/projects/${id}/jobs/view`,
+      headers: { "x-tessera-worker-token": testWorkerToken },
+      payload: job,
+    });
+    assert.equal(view.statusCode, 200, view.body);
+    assert.deepEqual(view.json().limits, {
+      max_new_steps_per_round: 3,
+      max_open_steps: 7,
+      open_steps: 0,
+      at_open_cap: false,
+    });
+  } finally {
+    await app.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

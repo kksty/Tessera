@@ -32,6 +32,19 @@ export const parameterSourceSchema = z
     evidence_ids: z.array(text).default([]),
   })
   .strict();
+const negativeScopeText = z.string().trim().min(1).max(500);
+/**
+ * A negative observation must state its boundary. `attempted` is what was
+ * actually tried; `not_tested` are known gaps; `confidence` is how far the
+ * result generalizes. One failed request is low confidence, not "exhausted".
+ */
+export const negativeScopeSchema = z
+  .object({
+    attempted: z.array(negativeScopeText).min(1).max(20),
+    not_tested: z.array(negativeScopeText).max(20).optional(),
+    confidence: z.enum(["low", "medium", "high"]),
+  })
+  .strict();
 export const conclusionSchema = z.string().trim().min(1).max(MAX_CONCLUSION_LENGTH);
 /** Application evidence for each claimed CVSS impact; not an extra CVSS metric. */
 export const impactEvidenceSchema = z
@@ -96,6 +109,7 @@ export const peerSpawnSchema = z
     reason: text,
     direction: text.optional(),
     start_message: text.optional(),
+    start_refs: z.array(text).max(200).optional(),
   })
   .strict();
 /** swarm 模式：退出。理由必填；退出不等于完成。 */
@@ -242,13 +256,6 @@ export const coverageEntrySchema = z
     if (value.status === "waived" && !value.reason?.trim())
       ctx.addIssue({ code: "custom", message: "waived coverage requires a reason" });
   });
-/** swarm 模式：发起完成共识。coverage 覆盖表在提议时提交，服务端按 Facts 推导的 surface 校验。 */
-export const completionProposeSchema = z
-  .object({
-    reason: text.optional(),
-    coverage: z.array(coverageEntrySchema).default([]),
-  })
-  .strict();
 export const deletionPreviewSchema = z.object({ delete_nodes: z.array(nodeDeletionSchema).min(1) }).strict();
 /**
  * Completion accounting for one Review planning issue. The issue is identified
@@ -265,8 +272,14 @@ export const reviewIssueDispositionSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.status === "addressed" && !value.step_id)
-      ctx.addIssue({ code: "custom", message: "addressed review issue requires the Step that executed the follow-up" });
+    // swarm 没有 Step：跟进由 peer 提交的新证据证明，因此 addressed 允许用
+    // evidence_ids 代替 step_id。classic 仍由 reviewIssueConflicts 要求
+    // 审核之后执行并关闭的 Step，不会因为这里放宽而绕过。
+    if (value.status === "addressed" && !value.step_id && !value.evidence_ids.length)
+      ctx.addIssue({
+        code: "custom",
+        message: "addressed review issue requires the Step that executed the follow-up, or the Evidence it produced",
+      });
     if (value.status === "waived" && !value.reason)
       ctx.addIssue({ code: "custom", message: "waived review issue requires a reason" });
     if (value.status === "waived" && value.step_id)
@@ -274,6 +287,15 @@ export const reviewIssueDispositionSchema = z
   });
 /** Operator-only: a high-risk Review issue may only be dismissed by a human. */
 export const reviewIssueWaiverSchema = z.object({ reason: text, by: text.default("human") }).strict();
+/** swarm 模式：发起完成共识。coverage 覆盖表在提议时提交，服务端按 Facts 推导的 surface 校验。 */
+export const completionProposeSchema = z
+  .object({
+    reason: text.optional(),
+    coverage: z.array(coverageEntrySchema).default([]),
+    /** swarm 的审核问题处置与 classic 的 complete.review_issues 同义：逐条 addressed/waived。 */
+    review_issues: z.array(reviewIssueDispositionSchema).default([]),
+  })
+  .strict();
 const decisionFields = {
   worker: text,
   revision: z.number().int().nonnegative(),
@@ -520,6 +542,7 @@ export const factSubmissionSchema = z
     objects: z.array(text).max(200).optional(),
     request: factRequestSchema.optional(),
     parameter_sources: z.array(parameterSourceSchema).max(100).optional(),
+    negative_scope: negativeScopeSchema.optional(),
     evidence_ids: z.array(text).default([]),
   })
   .strict();
@@ -537,6 +560,7 @@ export const factRevisionSchema = z
     conclusion: conclusionSchema.optional(),
     request: factRequestSchema.optional(),
     parameter_sources: z.array(parameterSourceSchema).max(100).optional(),
+    negative_scope: negativeScopeSchema.optional(),
     /** Appended to the existing list; existing ids are kept. */
     evidence_ids: z.array(text).max(200).optional(),
     reason: z.string().trim().min(1).max(500).optional(),
@@ -548,6 +572,7 @@ export const factRevisionSchema = z
       v.conclusion !== undefined ||
       v.request !== undefined ||
       v.parameter_sources !== undefined ||
+      v.negative_scope !== undefined ||
       (v.evidence_ids?.length ?? 0) > 0,
     "Fact revision cannot be empty",
   );
@@ -565,6 +590,7 @@ export const executeSchema = z
             objects: z.array(text).max(200).optional(),
             request: factRequestSchema.optional(),
             parameter_sources: z.array(parameterSourceSchema).max(100).optional(),
+            negative_scope: negativeScopeSchema.optional(),
             evidence_ids: z.array(text).default([]),
           }),
         ]),

@@ -10,6 +10,7 @@ import {
   reviewEntry,
   stepState,
   type EntryChanges,
+  type StepLimits,
 } from "./projection.js";
 import { recordText } from "./search.js";
 
@@ -293,9 +294,14 @@ export function readMemoryRecord(
  * Per-job projection: Decide gets every unclosed node; Execute gets its Step and
  * direct support; Review gets the Finding, its source Facts and evidence list.
  */
-export function memoryEntry(graph: Graph, job: Job, changes?: EntryChanges): ReturnType<typeof projectEntry> {
+export function memoryEntry(
+  graph: Graph,
+  job: Job,
+  changes?: EntryChanges,
+  limits?: StepLimits,
+): ReturnType<typeof projectEntry> {
   // Execute/Review views are narrower; the shape is a projection, not a storage contract.
   if (job.kind === "review") return reviewEntry(graph, job) as unknown as ReturnType<typeof projectEntry>;
   if (job.kind === "execute") return executeEntry(graph, job) as unknown as ReturnType<typeof projectEntry>;
-  return projectEntry(graph, job.step_id ?? job.finding_id ?? "goal", changes);
+  return projectEntry(graph, job.step_id ?? job.finding_id ?? "goal", changes, limits);
 }

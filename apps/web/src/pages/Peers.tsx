@@ -2,8 +2,9 @@ import { AlertCircle, MessagesSquare, RefreshCw, RotateCcw, Users } from "lucide
 import { useState } from "react";
 import type { Peer, SwarmRound } from "../../../../packages/protocol/src/index.js";
 import { api, path } from "../api.js";
-import { Card, EmptyState, PageHeader } from "../components/ui.js";
+import { Card, EmptyState, PageHeader, Segmented } from "../components/ui.js";
 import { useSwarm } from "../swarm.js";
+import { useViewState } from "../view-state.js";
 import { useWorkspace } from "../workspace.js";
 
 const wakeLabels: Record<string, string> = { ready: "可唤醒", waiting: "等待唤醒", stuck: "已停顿（需人工重试）" };
@@ -37,6 +38,20 @@ export function PeersPage() {
   const { data, error, reload } = useSwarm(projectId, graph.revision, ws.events.length);
   const [retrying, setRetrying] = useState<string>("");
   const [actionError, setActionError] = useState("");
+  const [filter, setFilter] = useViewState<"all" | "active" | "retired">(`${projectId}:peers:filter`, "all");
+
+  async function replacePeer() {
+    setRetrying("replacement");
+    setActionError("");
+    try {
+      await api(path(projectId, "/fgs/peers/replacement"), { confirmed: true });
+      reload();
+    } catch (failure) {
+      setActionError(failure instanceof Error ? failure.message : "补位失败");
+    } finally {
+      setRetrying("");
+    }
+  }
 
   async function retryPeer(peerId: string) {
     setRetrying(peerId);
@@ -53,6 +68,8 @@ export function PeersPage() {
 
   const peers = data?.peers ?? [];
   const active = peers.filter((peer) => peer.status === "active");
+  const retired = peers.filter((peer) => peer.status === "retired");
+  const visiblePeers = peers.filter((peer) => filter === "all" || peer.status === filter);
   const rounds = [...(data?.rounds ?? [])].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   const messages = [...(data?.messages ?? [])].sort((a, b) => a.seq - b.seq);
   const openRound = rounds.find((round) => round.status === "open");
@@ -100,10 +117,46 @@ export function PeersPage() {
         </div>
       )}
 
-      <Card title="执行者" note={peers.length ? `${active.length} 个在岗` : undefined} icon={<Users size={16} />} flush>
-        {peers.length ? (
+      {data && graph.project.status === "active" && !graph.project.pending_completion && active.length === 0 && (
+        <div className="banner danger" role="alert">
+          <span>没有在岗执行者，项目无法继续探索。</span>
+          <button type="button" className="button small" disabled={!!retrying} onClick={() => void replacePeer()}>
+            补位执行者
+          </button>
+        </div>
+      )}
+      {data?.stalled && (
+        <div className="banner danger" role="alert">
+          <span>所有在岗执行者已等待至少五分钟，且没有可领取工作。请检查目标和运行记录后手动唤醒。</span>
+        </div>
+      )}
+
+      <div className="toolbar">
+        <Segmented
+          ariaLabel="执行者筛选"
+          value={filter}
+          onChange={setFilter}
+          options={
+            [
+              ["all", `全部 ${peers.length}`],
+              ["active", `在岗 ${active.length}`],
+              ["retired", `已退出 ${retired.length}`],
+            ] as const
+          }
+        />
+        <span className="spacer" />
+        <span className="toolbar-hint">已退出执行者保留血缘与退出原因</span>
+      </div>
+
+      <Card
+        title="执行者"
+        note={peers.length ? `${active.length} 在岗 · ${retired.length} 已退出` : undefined}
+        icon={<Users size={16} />}
+        flush
+      >
+        {visiblePeers.length ? (
           <div className="data-table-wrap">
-            <table className="data-table peers-table">
+            <table className="data-table peers-table" aria-label="执行者列表">
               <thead>
                 <tr>
                   <th scope="col">执行者</th>
@@ -117,7 +170,7 @@ export function PeersPage() {
                 </tr>
               </thead>
               <tbody>
-                {peers.map((peer) => {
+                {visiblePeers.map((peer) => {
                   const status = peerStatus(peer);
                   return (
                     <tr key={peer.id}>
@@ -132,12 +185,9 @@ export function PeersPage() {
                         {peer.state?.turns ?? 0}
                       </td>
                       <td>
-                        {peer.state?.wake === "stuck" ? (
-                          <span
-                            className="peers-stuck"
-                            style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
-                          >
-                            <span className="quiet">{wakeLabels.stuck}</span>
+                        {peer.state?.wake === "stuck" || (data?.stalled && peer.state?.wake === "waiting") ? (
+                          <span className="peers-stuck">
+                            <span className="quiet">{wakeLabels[peer.state.wake]}</span>
                             <button
                               type="button"
                               className="button small"
@@ -155,7 +205,9 @@ export function PeersPage() {
                         )}
                       </td>
                       <td className="peers-origin">
-                        <span className="tag">{peer.origin === "initial" ? "初始" : "裂变"}</span>
+                        <span className="tag">
+                          {peer.origin === "initial" ? "初始" : peer.origin === "operator" ? "操作员补位" : "裂变"}
+                        </span>
                         {peer.parent_peer_id && <span className="quiet">来自 {peer.parent_peer_id}</span>}
                         {peer.spawn_reason && <span className="quiet"> · {peer.spawn_reason}</span>}
                         {peer.status === "retired" && peer.retire_reason && (
@@ -168,6 +220,17 @@ export function PeersPage() {
               </tbody>
             </table>
           </div>
+        ) : peers.length ? (
+          <EmptyState
+            icon={<Users size={20} />}
+            title="没有符合筛选的执行者"
+            desc="切换筛选查看其他执行者；已退出的执行者会保留血缘与退出原因。"
+            action={
+              <button type="button" className="button" onClick={() => setFilter("all")}>
+                显示全部
+              </button>
+            }
+          />
         ) : (
           <EmptyState
             icon={<Users size={20} />}

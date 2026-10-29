@@ -32,5 +32,12 @@ test("任务提示词不规定何时删除或使用工具，只保留数据契�
   assert.match(decide, /lead_ids/, "a new Step may carry a lead");
   assert.match(decide, /lead_dispositions[^。]*waiver_reason/, "an open lead can be waived instead of pursued");
   assert.match(decide, /不阻塞完成/, "an open lead is advisory, not a completion gate");
+  assert.match(decide, /limits/, "the decider plans against the effective budget in the view");
+  assert.match(decide, /negative_scope/, "the decider must respect the boundary of a negative fact");
+  assert.match(decide, /本次未观测/, "a failed attempt is not a disproof");
+  assert.match(execute, /negative_scope/, "executors write the negative scope with the fact");
+  assert.match(decide, /成本是约束，不是目标/, "cost is a guardrail, not the planning objective");
+  assert.equal(decide.includes("唯一标准是这一步值不值得它接下来要花的钱"), false);
+  assert.equal(decide.includes("每轮最多新增 2 个 Step"), false, "the prompt must not hard-code a budget");
   assert.match(execute, /traffic_ids/);
 });

@@ -1,10 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowUpRight, Ban, FileText, Pause, Play, RotateCcw, X } from "lucide-react";
+import { AlertCircle, ArrowUpRight, Ban, Check, FileText, Pause, Play, RotateCcw, Route, Users, X } from "lucide-react";
 import type {
   Event,
   Evidence,
   Graph,
   OverviewFinding,
+  ProjectMode,
   ProjectSummary,
   SecurityOverview,
 } from "../../../packages/protocol/src/index.js";
@@ -14,6 +15,7 @@ import { brand } from "./brand.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { RichText } from "./components/RichText.js";
 import { Drawer, Modal, Toast } from "./components/ui.js";
+import { modeLabels } from "./components/ModeBadge.js";
 import { TrafficPreviewModal } from "./components/TrafficInspector.js";
 import { Sidebar, Topbar } from "./components/Shell.js";
 import { ProjectExtras } from "./WorkbenchTools.js";
@@ -127,6 +129,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   const [graphScope, setGraphScope] = useState<GraphScope | null>(null);
   const [projectFilter, setProjectFilter] = useState("all");
   const [newHints, setNewHints] = useState([""]);
+  const [newMode, setNewMode] = useState<ProjectMode>("classic");
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1100);
   const [message, setMessage] = useState("");
@@ -413,6 +416,18 @@ export function App({ session, setSession }: { session: Session; setSession: (se
     setHistoryTab(saved?.historyTab || "detail");
     void refresh();
   }, [id, authenticated, refresh]);
+
+  // 架构决定哪些页面存在：决策者架构没有执行者/消息，蜂群架构没有 Step 重试。
+  // 深链或旧会话落在不属于该架构的页面时，归一到当前架构的入口，避免空白页。
+  useEffect(() => {
+    if (!graph || !id) return;
+    const swarm = graph.project.mode === "swarm";
+    const invalid = swarm ? page === "retry" : page === "peers" || page === "messages";
+    if (!invalid) return;
+    const fallback: ProjectPage = swarm ? "timeline" : "overview";
+    setPage(fallback);
+    history.replaceState(null, "", routeHash(id, fallback));
+  }, [graph, id, page]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -814,7 +829,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
           title: values.get("title"),
           origin: values.get("origin"),
           goal: values.get("goal"),
-          mode: values.get("mode"),
+          mode: newMode,
           hints: [...values.entries()]
             .filter(([key, value]) => key.startsWith("hint_") && String(value).trim())
             .map(([, value]) => ({
@@ -827,6 +842,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
       if (result) {
         setModal(null);
         setNewHints([""]);
+        setNewMode("classic");
       }
     }
     if (modal === "rename") {
@@ -1191,14 +1207,46 @@ export function App({ session, setSession }: { session: Session; setSession: (se
               <span className="field-label">项目名称</span>
               <input name="title" required autoFocus placeholder="例如：业务系统评估" />
             </label>
-            <label className="field">
-              <span className="field-label">架构模式</span>
-              <select name="mode" defaultValue="classic">
-                <option value="classic">经典 · Decide / Execute / Review（单个决策者规划）</option>
-                <option value="swarm">平等执行者 · Swarm（无决策者，执行者互相通信）</option>
-              </select>
-              <span className="field-hint">创建后不可切换；两种模式共用同一套黑板、证据、审核与报告。</span>
-            </label>
+            <fieldset className="mode-field">
+              <legend className="field-label">
+                架构模式
+                <small>二选一，创建后不可切换</small>
+              </legend>
+              <div className="mode-picker" role="radiogroup" aria-label="架构模式">
+                {(["classic", "swarm"] as const).map((mode) => {
+                  const info = modeLabels[mode];
+                  const Icon = mode === "swarm" ? Users : Route;
+                  const selected = newMode === mode;
+                  return (
+                    <label key={mode} className="mode-option" data-mode={mode} data-selected={selected || undefined}>
+                      <input
+                        type="radio"
+                        name="mode"
+                        value={mode}
+                        checked={selected}
+                        onChange={() => setNewMode(mode)}
+                      />
+                      <span className="mode-option-icon" aria-hidden="true">
+                        <Icon size={15} />
+                      </span>
+                      <span className="mode-option-body">
+                        <strong>{info.label}</strong>
+                        <span>{info.summary}</span>
+                        <em>适合：{info.fit}</em>
+                      </span>
+                      <span className="mode-option-check" aria-hidden="true">
+                        <Check size={10} />
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              <span className="field-hint">
+                {newMode === "swarm"
+                  ? "默认只创建一个执行者：它按自己的方向连续探索，也可以自行裂变出同伴，通过消息协作；不需要先把目标拆成任务。"
+                  : "由单一决策入口读图、定方向和拆任务，再交给执行者逐项完成；适合需要统一优先级与确定性队列的目标。"}
+              </span>
+            </fieldset>
             <label className="field">
               <span className="field-label">指定站点 / 起始信息</span>
               <textarea name="origin" required rows={2} placeholder="https://your-site.example" />
@@ -1240,9 +1288,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
                 </div>
               ))}
             </div>
-            <p className="quiet">
-              经典模式由决策者根据目标、证据与未完成事项判断何时结束；swarm 模式由执行者共识完成。
-            </p>
+            <p className="quiet">两种架构并行，不分新旧，共用同一套黑板、证据、审核与报告；区别只在由谁规划下一步。</p>
             <p className="quiet">发现的子域名进入待批准列表，不会自动测试。</p>
           </Modal>
         )}

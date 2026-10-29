@@ -51,6 +51,7 @@ import type {
   Run,
   SecurityOverview,
   Peer,
+  PeerState,
   SwarmRound,
 } from "../../protocol/src/index.js";
 import { ExecutionRecords, digest } from "./execution.js";
@@ -67,7 +68,7 @@ import { acceptInformational, informationalAwaitingReview } from "./informationa
 import { findingKind, classificationReviewRequired } from "../../protocol/src/finding-policy.js";
 import { planningRevision, decidedPlanningRevision, searchState } from "../../protocol/src/planning.js";
 import { planningChanged } from "./planning-changes.js";
-import { reviewIssueConflicts } from "./review-issues.js";
+import { reviewIssueConflicts, openReviewIssues } from "./review-issues.js";
 import { allOverviewFindings, confirmedInformational, confirmedVulnerability, securityOverview } from "./overview.js";
 import { MemorySearch, SEARCH_SCHEMA_VERSION, type PeekPage } from "./search.js";
 import {
@@ -464,20 +465,41 @@ export class Store {
       if (body.action === "retest") {
         for (const assetId of this.findingAssets(g, finding)) this.asset(g, assetId);
         const from = finding.from.filter((source) => g.facts.some((fact) => fact.id === source && !fact.deleted));
-        const step = this.insertStep(
-          g,
-          {
-            from: from.length ? from : ["origin"],
-            asset_id: finding.asset_id,
-            description: `重测漏洞 ${finding.id}：${finding.title}\n人工说明：${feedback.reason}\n核对原始证据和复现条件，执行定向重测，保留新的原始证据；结果提交到 Finding ${finding.id}，说明仍可复现、已修复或证据不足。`,
-            priority: 1,
-          },
-          body.creator,
-          finding.graph_id,
-        );
-        step.retest_finding_id = finding.id;
-        feedback.step_id = step.id;
-        finding.revision_step_id = step.id;
+        if ((g.project.mode ?? "classic") === "swarm") {
+          // swarm 没有 Step 队列：给重测建一个 Step 只会是一个无人调度、又挡住
+          // 完成门槛的孤儿节点。改为投递运行时消息，执行者在下一回合的收件箱里
+          // 认领；证据要求由 checkHumanFeedback 按“审核之后保存的新证据”校验。
+          const message = this.swarm.append(g.project.id, {
+            from: null,
+            to: null,
+            kind: "system",
+            body: `人工要求重测 ${finding.id}（${finding.title}）：${feedback.reason}\n请重新验证并保存新的原始证据，再用相同 ID 修订该发现；通过审核前必须引用本次重测之后保存的新证据。`,
+            refs: [...new Set(finding.evidence_ids)],
+          });
+          for (const peer of activePeers(g))
+            if (this.swarm.state(g.project.id, peer.id).wake !== "stuck")
+              this.swarm.setWake(g.project.id, peer.id, "ready");
+          this.swarmAudit(g, "peer.message", {
+            message_id: message.id,
+            kind: "system",
+            retest_finding_id: finding.id,
+          });
+        } else {
+          const step = this.insertStep(
+            g,
+            {
+              from: from.length ? from : ["origin"],
+              asset_id: finding.asset_id,
+              description: `重测漏洞 ${finding.id}：${finding.title}\n人工说明：${feedback.reason}\n核对原始证据和复现条件，执行定向重测，保留新的原始证据；结果提交到 Finding ${finding.id}，说明仍可复现、已修复或证据不足。`,
+              priority: 1,
+            },
+            body.creator,
+            finding.graph_id,
+          );
+          step.retest_finding_id = finding.id;
+          feedback.step_id = step.id;
+          finding.revision_step_id = step.id;
+        }
       }
       g.reviews.push({
         id: this.next(g.reviews, "r"),
@@ -494,7 +516,7 @@ export class Store {
         planning_issues: [
           body.action === "return"
             ? `人工打回：${feedback.reason}。修订或补证后重新 Review。`
-            : `人工重测 ${feedback.step_id}：${feedback.reason}。执行完成后重新 Review。`,
+            : `人工重测 ${feedback.step_id ?? finding.id}：${feedback.reason}。执行完成后重新 Review。`,
         ],
       });
       return finding;
@@ -602,6 +624,17 @@ export class Store {
     if (finding.version <= feedback.version)
       fail(409, "人工打回或重测后的原版本不能直接通过，请先修订或提交重测结果。");
     if (feedback.action !== "retest") return;
+    if ((g.project.mode ?? "classic") === "swarm") {
+      // swarm 没有可检查的 Step：只接受请求之后保存、且不在基线里的原始证据。
+      const baseline = new Set(feedback.baseline_evidence_ids ?? []);
+      const fresh = new Set(
+        g.evidence
+          .filter((evidence) => evidence.created_at >= feedback.at && !baseline.has(evidence.id))
+          .map((evidence) => evidence.id),
+      );
+      if (!evidenceIds.some((id) => fresh.has(id))) fail(422, "人工重测通过审核需引用此次重测的新原始证据。");
+      return;
+    }
     const step = g.steps.find((s) => s.id === feedback.step_id);
     if (!step) fail(409, "人工指定的重测尚未执行完成，不能通过审核。");
     const retest = step!;
@@ -1192,27 +1225,38 @@ export class Store {
       return;
     // Completion proposals made before the Review-issue contract carry no
     // accounting field and keep their legacy behavior. New proposals always do.
-    if (pending.review_issues !== undefined && reviewIssueConflicts(g, pending.review_issues).length) return;
+    if (
+      pending.review_issues !== undefined &&
+      reviewIssueConflicts(g, pending.review_issues, { mode: g.project.mode ?? "classic" }).length
+    )
+      return;
     // Pass only the Step-shaped fields: the proposal also carries worker/run
     // bookkeeping that must not leak into the synthetic Step record.
-    const step = this.insertStep(
-      g,
-      { from: pending.from, description: pending.description },
-      pending.worker,
-      pending.graph_id,
-      true,
-    );
-    step.to = "goal";
-    step.concluded_at = now();
-    step.summary = pending.description;
-    // `pending_completion` is cleared below; copy the accepted accounting onto
-    // the completion Step so the coverage table stays on the graph afterwards.
-    step.completion = {
+    const completion = {
       coverage: pending.coverage ?? [],
       ...(pending.review_issues !== undefined ? { review_issues: pending.review_issues } : {}),
       observation_revision: pending.observation_revision,
       ...(pending.planning_revision !== undefined ? { planning_revision: pending.planning_revision } : {}),
     };
+    if ((g.project.mode ?? "classic") === "swarm") {
+      // swarm 没有 Step：完成记录留在项目上，不再合成一个无人调度、也不会被
+      // 任何执行者领取的“完成任务”Step。
+      g.project.completion = completion;
+    } else {
+      const step = this.insertStep(
+        g,
+        { from: pending.from, description: pending.description },
+        pending.worker,
+        pending.graph_id,
+        true,
+      );
+      step.to = "goal";
+      step.concluded_at = now();
+      step.summary = pending.description;
+      // `pending_completion` is cleared below; copy the accepted accounting onto
+      // the completion Step so the coverage table stays on the graph afterwards.
+      step.completion = completion;
+    }
     g.project.pending_completion = undefined;
     g.project.status = "completed";
     g.goals.find((v) => v.id === "goal")!.state = "satisfied";
@@ -1532,15 +1576,16 @@ export class Store {
       objects?: string[];
       request?: Fact["request"];
       parameter_sources?: Fact["parameter_sources"];
+      negative_scope?: Fact["negative_scope"];
       evidence_ids?: string[];
     },
   ): Fact {
     const evidence_ids = input.evidence_ids ?? [];
     // Provenance is a write-time contract, not a Review-time surprise: a negative
-    // claim without the exact request and one source per URL parameter is rejected
-    // here, so the executor fixes it while the request is still in hand.
+    // claim without the exact request, one source per URL parameter and a bounded
+    // scope is rejected here, so the executor fixes it while the request is in hand.
     if ((input.status ?? "observed") === "not_observed") {
-      const problem = negativeClaimProblem(input, originHost(g));
+      const problem = negativeClaimProblem(input, originHost(g), { requireScope: true });
       if (problem) fail(422, `负向观测被拒绝：${problem}`);
     }
     this.evidenceIds(g, evidence_ids);
@@ -1567,10 +1612,11 @@ export class Store {
       conclusion: conclusion.slice(0, MAX_CONCLUSION_LENGTH),
       ...(input.conclusion?.trim() ? {} : { conclusion_inferred: true }),
       status: input.status ?? "observed",
-      ...((input.status ?? "observed") === "not_observed" ? { negative_claim_version: 1 as const } : {}),
+      ...((input.status ?? "observed") === "not_observed" ? { negative_claim_version: 2 as const } : {}),
       ...(input.objects?.length ? { objects: input.objects } : {}),
       ...(input.request ? { request: input.request } : {}),
       ...(input.parameter_sources?.length ? { parameter_sources: input.parameter_sources } : {}),
+      ...(input.negative_scope ? { negative_scope: input.negative_scope } : {}),
       graph_id: s.graph_id,
       step_id: s.id,
       ...(productionRun ? { run_id: productionRun.id } : {}),
@@ -1948,6 +1994,7 @@ export class Store {
       objects?: string[];
       request?: Fact["request"];
       parameter_sources?: Fact["parameter_sources"];
+      negative_scope?: Fact["negative_scope"];
       evidence_ids: string[];
     },
   ) {
@@ -1972,6 +2019,7 @@ export class Store {
       conclusion?: string;
       request?: Fact["request"];
       parameter_sources?: Fact["parameter_sources"];
+      negative_scope?: Fact["negative_scope"];
       evidence_ids?: string[];
       reason?: string;
     },
@@ -2001,6 +2049,12 @@ export class Store {
         edit("parameter_sources", fact.parameter_sources ? JSON.stringify(fact.parameter_sources) : undefined);
         fact.parameter_sources = body.parameter_sources;
       }
+      if (body.negative_scope !== undefined) {
+        edit("negative_scope", fact.negative_scope ? JSON.stringify(fact.negative_scope) : undefined);
+        fact.negative_scope = body.negative_scope;
+        // Adding a scope upgrades a legacy fact to the current negative contract.
+        if (fact.status === "not_observed") fact.negative_claim_version = 2;
+      }
       if (body.evidence_ids?.length) {
         const added = body.evidence_ids.filter((eid) => !fact.evidence_ids.includes(eid));
         if (added.length) {
@@ -2010,7 +2064,9 @@ export class Store {
         }
       }
       if ((fact.status ?? "observed") === "not_observed") {
-        const problem = negativeClaimProblem(fact, originHost(g));
+        const problem = negativeClaimProblem(fact, originHost(g), {
+          requireScope: fact.negative_claim_version === 2,
+        });
         if (problem) fail(422, `负向观测被拒绝：${problem}`);
       }
       fact.last_referenced_round = g.project.decision_round ?? 0;
@@ -2042,6 +2098,7 @@ export class Store {
       objects?: string[];
       request?: Fact["request"];
       parameter_sources?: Fact["parameter_sources"];
+      negative_scope?: Fact["negative_scope"];
       evidence_ids: string[];
       asset_id?: string;
     },
@@ -2063,7 +2120,7 @@ export class Store {
       }
       const evidence_ids = body.evidence_ids ?? [];
       if ((body.status ?? "observed") === "not_observed") {
-        const problem = negativeClaimProblem(body, originHost(g));
+        const problem = negativeClaimProblem(body, originHost(g), { requireScope: true });
         if (problem) fail(422, `负向观测被拒绝：${problem}`);
       }
       this.evidenceIds(g, evidence_ids);
@@ -2080,10 +2137,11 @@ export class Store {
         conclusion: conclusion.slice(0, MAX_CONCLUSION_LENGTH),
         ...(body.conclusion?.trim() ? {} : { conclusion_inferred: true }),
         status: body.status ?? "observed",
-        ...((body.status ?? "observed") === "not_observed" ? { negative_claim_version: 1 as const } : {}),
+        ...((body.status ?? "observed") === "not_observed" ? { negative_claim_version: 2 as const } : {}),
         ...(body.objects?.length ? { objects: body.objects } : {}),
         ...(body.request ? { request: body.request } : {}),
         ...(body.parameter_sources?.length ? { parameter_sources: body.parameter_sources } : {}),
+        ...(body.negative_scope ? { negative_scope: body.negative_scope } : {}),
         graph_id: "main",
         ...(assetId ? { asset_id: assetId } : {}),
         ...(run ? { run_id: run.id } : {}),
@@ -2119,8 +2177,26 @@ export class Store {
       step?.run_id,
       finding.identity,
       12,
+      step ? step.executed_at || step.created_at : null,
+      step?.concluded_at ?? null,
     );
     return { source: suggested.length ? "suggested" : "none", records: suggested };
+  }
+  /**
+   * Operator confirmation of captured flows: replaces the Finding's references
+   * with an explicit list the reviewer verified. An empty list clears them.
+   */
+  linkFindingTraffic(id: string, findingId: string, flowIds: string[]): FindingTraffic {
+    const unique = [...new Set(flowIds)];
+    const found = this.traffic.byIds(id, unique);
+    if (found.length !== unique.length) fail(422, "流量不存在或不是 HTTP 记录，未关联");
+    this.mutate(id, "finding.traffic", false, (g) => {
+      const finding = g.findings.find((item) => item.id === findingId) || fail(404, "Finding not found");
+      finding.traffic_ids = unique.length ? unique : undefined;
+      return finding;
+    });
+    this.audit(id, "finding.traffic", { finding: findingId, flow_ids: unique });
+    return this.findingTraffic(id, findingId);
   }
   /**
    * 人工补分类。测试域是标签而不是工作变更：不检查版本、不推进规划水位，
@@ -3127,6 +3203,57 @@ export class Store {
       return null;
     });
   }
+  /** A conservative idle signal: all human gates and pending work take precedence. */
+  private classicStalled(g: Graph): boolean {
+    if (
+      (g.project.mode ?? "classic") !== "classic" ||
+      g.project.status !== "active" ||
+      g.project.pending_completion ||
+      g.project.reaudit ||
+      g.project.reason
+    )
+      return false;
+    if (
+      [g.project.model_retry_at, g.project.infra_retry_at, g.project.decide_retry_at].some(
+        (at) => at && Date.parse(at) > Date.now(),
+      )
+    )
+      return false;
+    if (planningRevision(g) > decidedPlanningRevision(g)) return false;
+    if (
+      g.steps.some(
+        (s) => !s.deleted && !s.concluded_at && !s.discarded && (!s.executed_at || s.worker || s.blocked_run_id),
+      )
+    )
+      return false;
+    if (g.assets.some((a) => a.approval === "pending") || g.hints.some((h) => !h.withdrawn_at && !h.resolved))
+      return false;
+    if (pendingReviews(g, 1).length) return false;
+    const runs = this.execution.list(g.project.id, 1000);
+    if (this.execution.hasRunning(g.project.id) || this.execution.hasUnresolvedAttention(g.project.id)) return false;
+    const last = runs.find((run) => run.kind === "decide");
+    if (!last || last.status !== "succeeded" || !last.finished_at) return false;
+    const lastActivity = Math.max(
+      Date.parse(last.finished_at),
+      ...runs.map((run) => Date.parse(run.finished_at ?? run.started_at) || 0),
+    );
+    return Date.now() - lastActivity >= 5 * 60_000;
+  }
+  classicWorkStatus(id: string) {
+    return { stalled: this.classicStalled(this.get(id)) };
+  }
+  retryClassicWork(id: string) {
+    return this.mutate(id, "project.retry_work", false, (g) => {
+      if (!this.classicStalled(g)) fail(409, "项目当前没有可手动唤醒的停滞状态");
+      g.planning_revision = g.revision + 1;
+      g.last_planning_at = now();
+      g.project.decide_pending_since = g.last_planning_at;
+      g.project.decide_trigger_at = g.last_planning_at;
+      g.project.decide_trigger_revision = g.planning_revision;
+      this.audit(id, "project.retry_work", { by: "operator" }, g.revision);
+      return { ok: true };
+    });
+  }
   // ───────────────────────────── swarm 模式 ─────────────────────────────
   /** swarm 项目的回合调度：Review 照常；未进入“搜索结束”时派发到期的 peer 回合。 */
   private claimSwarm(
@@ -3230,30 +3357,122 @@ export class Store {
       (g.peers ?? []).map((peer) => peer.id),
     );
   }
-  swarmView(id: string) {
+  /**
+   * 执行者页与 peer 回合入口共用的 swarm 视图。带 peerId 时额外给出该 peer
+   * 自 seen_revision 以来的图变化摘要与当前未处置的 Review 问题，避免回合入口
+   * 只能靠“最近 200 条 Fact”猜测同伴做了什么；不带 peerId 时供运营页使用。
+   */
+  swarmView(id: string, peerId?: string) {
     const graph = this.get(id);
     const states = this.swarm.states(id);
+    const stalled = this.swarmStalled(graph, states);
+    const state = peerId ? (states.get(peerId) ?? this.swarm.state(id, peerId)) : undefined;
+    const changes =
+      peerId && state
+        ? this.memoryChanges(id, {
+            after_revision: Math.min(state.seen_revision, graph.revision),
+            through_revision: graph.revision,
+            limit: 40,
+          })
+        : undefined;
     return {
       mode: graph.project.mode ?? "classic",
       peers: (graph.peers ?? []).map((peer) => ({ ...peer, state: states.get(peer.id) })),
       rounds: graph.rounds ?? [],
       messages: this.swarm.list(id, Math.max(0, this.swarm.maxSeq(id) - 1000), 1000),
       max_message_seq: this.swarm.maxSeq(id),
+      stalled,
+      // 完成门槛所需：未处置的当前 Review 问题。swarm 没有 Step，跟进要用证据证明。
+      review_issues: openReviewIssues(graph).map((item) => ({
+        review_id: item.review.id,
+        issue_index: item.index,
+        risk: item.risk,
+        issue: item.issue,
+      })),
+      ...(changes && state
+        ? {
+            peer_id: peerId,
+            since_revision: state.seen_revision,
+            changes: changes.items,
+            changes_total: changes.total,
+            changes_remaining: changes.remaining,
+          }
+        : {}),
     };
   }
   swarmMessages(id: string, afterSeq = 0, limit = 500) {
     this.get(id);
     return this.swarm.list(id, afterSeq, limit);
   }
+  /** swarm 的停滞判定：无在途回合、无待审发现、所有在岗执行者都已等待超过五分钟。 */
+  private swarmStalled(graph: Graph, states: Map<string, PeerState>) {
+    const id = graph.project.id;
+    const peers = activePeers(graph);
+    if (!peers.length) return false;
+    if (graph.project.status !== "active" || graph.project.pending_completion) return false;
+    if (this.execution.hasRunning(id)) return false;
+    if ([graph.project.infra_retry_at, graph.project.model_retry_at].some((at) => !!at && Date.parse(at) > Date.now()))
+      return false;
+    if (
+      graph.findings.some(
+        (finding) =>
+          !finding.deleted && !finding.withdrawn_at && !finding.merged_into && finding.review_status === "pending",
+      )
+    )
+      return false;
+    return peers.every((peer) => {
+      const state = states.get(peer.id) ?? this.swarm.state(id, peer.id);
+      return (
+        state.wake === "waiting" &&
+        !!state.last_turn_at &&
+        Date.now() - Date.parse(state.last_turn_at) >= 5 * 60_000 &&
+        !peerTurnDue(graph, peer, state, this.swarm.inbox(id, peer.id, state.seen_message_seq, 1).length > 0)
+      );
+    });
+  }
+  /**
+   * swarm 项目需要人工介入的三种状态，供飞书通知与「执行者」页共用：执行者被
+   * 连续失败停下、全员退出无法继续、或全员停滞。classic 项目始终返回 null。
+   */
+  swarmAttention(id: string): { kind: "stuck" | "empty" | "stalled"; line: string; at?: string } | null {
+    const graph = this.get(id);
+    if ((graph.project.mode ?? "classic") !== "swarm" || graph.project.status !== "active") return null;
+    const active = activePeers(graph);
+    if (!active.length) return { kind: "empty", line: "所有执行者已退出，需要人工补位后才能继续" };
+    const stuck = active.filter((peer) => this.swarm.state(id, peer.id).wake === "stuck");
+    if (stuck.length) {
+      const at = this.execution
+        .list(id, 200)
+        .filter((run) => run.kind === "peer" && stuck.some((peer) => peer.id === run.node_id))
+        .map((run) => run.finished_at || run.heartbeat_at)
+        .sort()
+        .at(-1);
+      return { kind: "stuck", line: `${stuck.length} 个执行者被连续失败停下，等待人工重试`, ...(at ? { at } : {}) };
+    }
+    if (this.swarmStalled(graph, this.swarm.states(id)))
+      return { kind: "stalled", line: "所有执行者已等待超过 5 分钟且无到期工作，需要人工检查或补位" };
+    return null;
+  }
   swarmInbox(id: string, peerId: string, afterSeq?: number) {
     const graph = this.get(id);
     const state = this.swarm.state(id, peerId);
     return this.swarm.inbox(id, peerId, afterSeq ?? state.seen_message_seq);
   }
+  private validateHandoffRefs(g: Graph, refs: string[]) {
+    if (
+      !refs.some(
+        (id) =>
+          g.facts.some((fact) => fact.id === id && !fact.deleted && id !== "origin") ||
+          g.evidence.some((evidence) => evidence.id === id),
+      )
+    )
+      fail(422, "交接须引用至少一条已有 Fact（非 origin）或 Evidence；尚无观测时请使用 question 或 notice");
+  }
   swarmSendMessage(id: string, peerId: string, input: z.infer<typeof peerMessageSchema>, runId?: string) {
     return this.mutate(id, "peer.message", false, (g) => {
       this.active(g);
       const peer = this.swarmLease(g, id, peerId, runId);
+      if (input.kind === "handoff") this.validateHandoffRefs(g, input.refs);
       if (input.to) {
         if (input.to === peer.id) fail(422, "不能给自己发消息");
         const target = (g.peers ?? []).find((value) => value.id === input.to);
@@ -3280,6 +3499,7 @@ export class Store {
     return this.mutate(id, "peer.spawn", false, (g) => {
       this.active(g);
       const parent = this.swarmLease(g, id, peerId, runId);
+      if (input.start_message) this.validateHandoffRefs(g, input.start_refs ?? []);
       const peers = (g.peers ??= []);
       const created: Peer = {
         id: newPeerId(peers),
@@ -3311,11 +3531,39 @@ export class Store {
           to: created.id,
           kind: "handoff",
           body: input.start_message,
-          refs: [],
+          refs: input.start_refs ?? [],
         });
       this.swarmAudit(g, "peer.spawn", { peer_id: created.id, parent_peer_id: parent.id, reason: input.reason });
       this.pruneSwarm(g);
       return created;
+    });
+  }
+  operatorReplacePeer(id: string) {
+    return this.mutate(id, "peer.spawn", false, (g) => {
+      this.active(g);
+      if (g.project.mode !== "swarm") fail(409, "Only a swarm project has peers");
+      if (g.project.pending_completion) fail(409, "Completion is awaiting review");
+      if (activePeers(g).length) fail(409, "An active peer already exists");
+      if (this.execution.hasRunning(id, "peer")) fail(409, "A peer turn is still running");
+      const peers = (g.peers ??= []);
+      const peer: Peer = {
+        id: newPeerId(peers),
+        graph_id: "main",
+        origin: "operator",
+        status: "active",
+        created_at: now(),
+      };
+      peers.push(peer);
+      this.swarm.setWake(id, peer.id, "ready");
+      this.swarm.append(id, {
+        from: null,
+        to: null,
+        kind: "system",
+        body: `操作员补位执行者 ${peer.id}`,
+        refs: [peer.id],
+      });
+      this.swarmAudit(g, "peer.spawn", { peer_id: peer.id, origin: "operator" });
+      return peer;
     });
   }
   swarmRetire(id: string, peerId: string, input: z.infer<typeof peerRetireSchema>, runId?: string) {
@@ -3398,18 +3646,33 @@ export class Store {
       return { ok: true, wake: input.wake };
     });
   }
-  swarmProposeCompletion(id: string, peerId: string, input: z.infer<typeof completionProposeSchema>, runId?: string) {
+  swarmProposeCompletion(
+    id: string,
+    peerId: string,
+    input: {
+      reason?: string;
+      coverage?: z.infer<typeof completionProposeSchema>["coverage"];
+      review_issues?: z.infer<typeof completionProposeSchema>["review_issues"];
+    },
+    runId?: string,
+  ) {
     return this.mutate(id, "round.proposed", false, (g) => {
       this.active(g);
       const peer = this.swarmLease(g, id, peerId, runId);
       const participants = activePeers(g).map((value) => value.id);
       if (!participants.length) fail(409, "没有可参与共识的执行者");
-      // 质量门槛：未确认的人工 Hint 必须由操作员在提示面板确认或撤回后才能完成。
-      if (g.hints.some((hint) => !hint.withdrawn_at && !hint.resolved))
-        fail(422, "仍有未确认的 Hint；请先由操作员在提示面板确认或撤回后再发起完成共识");
-      const check = validateCoverage(g, input.coverage);
+      // 人工 Hint 不设人工确认闸门：没有操作员到场时，要求逐条点“已确认”才会
+      // 把自动化卡死。Hint 仍在每个 peer 的入口视图里，peer 可在回合中落实；
+      // 操作员也可以在提示面板随时关闭或改写，不阻塞共识。
+      const check = validateCoverage(g, input.coverage ?? []);
       if (check.missing.length) fail(422, `完成覆盖表缺少已观测 surface：${check.missing.slice(0, 20).join("、")}`);
       if (check.invalid.length) fail(422, `完成覆盖表无效：${check.invalid.slice(0, 20).join("；")}`);
+      // 审核问题与 classic 的 complete.review_issues 同权：未处置、又没有人工
+      // 豁免的当前问题必须挡住完成，而不是等到项目结束后才发现。swarm 没有历史
+      // 版本，一律按新契约处理（缺省空数组也算“明确处置了 0 条”）。
+      const reviewIssues = input.review_issues ?? [];
+      const issues = reviewIssueConflicts(g, reviewIssues, { mode: "swarm" });
+      if (issues.length) fail(422, `完成共识被拒绝：${issues.slice(0, 10).join("；")}`);
       const rounds = (g.rounds ??= []);
       const existing = rounds.find(
         (round) =>
@@ -3419,7 +3682,14 @@ export class Store {
           participants.every((value) => round.peer_ids.includes(value)) &&
           round.peer_ids.length === participants.length,
       );
-      if (existing) return existing;
+      if (existing) {
+        // 同一份共享状态下重复提议是幂等的，但处置内容可能是最终版本：
+        // 以最后一次提议为准，避免旧轮次仍带着已过时的审核问题处置。
+        existing.coverage = input.coverage ?? [];
+        existing.review_issues = reviewIssues;
+        if (input.reason) existing.reason = input.reason;
+        return existing;
+      }
       for (const round of rounds) if (round.status === "open") round.status = "invalidated";
       const round: SwarmRound = {
         id: newRoundId(rounds),
@@ -3432,7 +3702,8 @@ export class Store {
         opinions: {},
         status: "open",
         created_at: now(),
-        coverage: input.coverage,
+        coverage: input.coverage ?? [],
+        review_issues: reviewIssues,
       };
       rounds.push(round);
       for (const participant of participants)
@@ -3480,6 +3751,13 @@ export class Store {
     if (!round || !roundValid(g, round, seq, ids) || !ids.length) return;
     if (!ids.every((value) => round.opinions[value]?.opinion === "agree")) return;
     if (this.execution.running(id, "peer") > 0) return;
+    // 文档承诺的提交条件是“无未读消息”：任何执行者还没在回合里读到的东西，
+    // 都可能是反对完成的依据。seen_message_seq 只在回合结束时推进，因此这里
+    // 要求每个在岗 peer 都已把收件箱清空，而不是靠“沉默即默认同意”。
+    const unread = ids.filter(
+      (value) => this.swarm.inbox(id, value, this.swarm.state(id, value).seen_message_seq, 1).length > 0,
+    );
+    if (unread.length) return;
     round.status = "committed";
     round.closed_at = now();
     round.close_reason = "全体执行者一致同意";
@@ -3488,6 +3766,7 @@ export class Store {
       from: [],
       description: round.reason?.trim() || "全体执行者一致同意：探索结束，进入审核",
       coverage: round.coverage ?? [],
+      review_issues: round.review_issues ?? [],
       graph_id: "main",
       worker: "peer",
       observation_revision: g.observation_revision,

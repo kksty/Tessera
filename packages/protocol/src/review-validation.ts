@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { Finding, Graph } from "./models.js";
-import type { reviewSchema } from "./schemas.js";
+import { negativeScopeSchema, type reviewSchema } from "./schemas.js";
 import { scoreCvss, validateImpactEvidence } from "./cvss.js";
 import { originHost } from "./coverage.js";
 import { missingReportFields } from "./report-quality.js";
@@ -49,7 +49,7 @@ export function validateReviewResult(g: Graph, f: Finding, body: z.infer<typeof 
       if (!sourceIds.has(fact.id) || fact.deleted || fact.status !== "not_observed") continue;
       // Facts created before the provenance contract remain reviewable; facts
       // written by this version always carry the marker and must satisfy it.
-      if (fact.negative_claim_version !== 1) continue;
+      if (fact.negative_claim_version !== 1 && fact.negative_claim_version !== 2) continue;
       if (!fact.request?.method?.trim() || !fact.request.url?.trim())
         throw new Error(
           `Negative observation ${fact.id} lacks request/parameter_sources; record the exact request and where each parameter came from before passing, or return needs_evidence`,
@@ -69,6 +69,10 @@ export function validateReviewResult(g: Graph, f: Finding, body: z.infer<typeof 
       if (missing.length)
         throw new Error(
           `Negative observation ${fact.id} does not explain where these request parameters came from: ${missing.join(", ")}; add one parameter_sources entry per exact URL-decoded parameter name (names may contain "=" or quotes)`,
+        );
+      if (fact.negative_claim_version === 2 && !negativeScopeSchema.safeParse(fact.negative_scope).success)
+        throw new Error(
+          `Negative observation ${fact.id} lacks negative_scope: record what was attempted, what remains untested and confidence; a single attempt does not prove the direction is exhausted`,
         );
     }
     if (body.disputed_fact_ids.length) throw new Error("Passing review cannot dispute source observations");
@@ -102,15 +106,19 @@ export function validateReviewResult(g: Graph, f: Finding, body: z.infer<typeof 
 /**
  * Submission-time contract for a negative claim, checked when the Fact is
  * written rather than weeks later at Review. Returns the problem text, or
- * undefined when the claim carries a parseable request and one provenance
- * entry per URL parameter.
+ * undefined when the claim carries a parseable request, one provenance entry
+ * per URL parameter, and (for new-contract facts) a bounded negative scope.
  */
 export function negativeClaimProblem(
   claim: {
     request?: { method?: string; url?: string };
     parameter_sources?: readonly { parameter: string }[];
+    negative_scope?: { attempted?: readonly string[]; confidence?: string };
+    conclusion?: string;
+    description?: string;
   },
   origin: string,
+  options: { requireScope?: boolean } = {},
 ): string | undefined {
   if (!claim.request?.method?.trim() || !claim.request.url?.trim())
     return "negative claim lacks request: record the exact request (method/url) that produced it";
@@ -131,6 +139,12 @@ export function negativeClaimProblem(
   const missing = parameters.filter((parameter) => !sourced.has(parameter));
   if (missing.length)
     return `negative claim does not explain where these request parameters came from: ${missing.join(", ")}; add one parameter_sources entry per exact URL-decoded parameter name (names may contain "=" or quotes)`;
+  if (options.requireScope) {
+    if (!claim.negative_scope?.attempted?.length)
+      return "negative claim lacks negative_scope: record attempted attempts, not_tested gaps and confidence (low/medium/high); a single request does not prove the direction is exhausted";
+    if (!negativeScopeSchema.safeParse(claim.negative_scope).success)
+      return "negative claim negative_scope is invalid: attempted/not_tested must contain bounded nonempty strings and confidence must be low, medium or high";
+  }
   return undefined;
 }
 

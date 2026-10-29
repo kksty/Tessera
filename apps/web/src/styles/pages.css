@@ -1728,6 +1728,26 @@
 .projects-toolbar {
   margin-bottom: 14px;
 }
+/* 执行者表：方向可截断，唤醒/血缘列保持单行可读。 */
+.peers-stuck {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.peers-direction {
+  max-width: 34ch;
+  color: var(--ink-2);
+}
+
+.peers-origin {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
 /* 项目列表：一行一个项目的台账，决策信息在左、数字右对齐。 */
 .projects-table {
   min-width: 960px;
@@ -2197,6 +2217,164 @@
 .progress-head strong {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* 决策者架构的任务状态：四个计数并排，比一条「已关闭 x/y」更容易扫读。 */
+.step-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.step-status-tile {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-faint);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.step-status-tile span {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.step-status-tile strong {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.step-status-tile[data-tone="accent"] strong {
+  color: var(--accent-ink);
+}
+
+.step-status-tile[data-tone="warn"] strong {
+  color: var(--warn);
+}
+
+.step-status-tile[data-tone="danger"] strong {
+  color: var(--danger);
+}
+
+.step-status-tile[data-tone="success"] strong {
+  color: var(--success);
+}
+
+.step-status-total {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+/* 蜂群模式：在岗执行者与共识状态直接放进概览，不必先跳去执行者页。 */
+.peer-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.peer-preview-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  text-align: left;
+  transition: background var(--fast);
+}
+
+.peer-preview-row:hover {
+  background: var(--surface-3);
+}
+
+.peer-preview-id {
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.peer-preview-direction {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.peer-preview-more {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.round-preview {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-faint);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.round-preview-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-4);
+}
+
+.round-preview[data-status="open"] .round-preview-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.round-preview[data-status="committed"] .round-preview-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+}
+
+.round-preview[data-status="invalidated"] .round-preview-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+}
+
+.round-preview-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.round-preview-main strong {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.round-preview-main small {
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+.round-preview .inline-toggle {
+  flex: none;
+  font-size: 12px;
 }
 
 .explore-state {

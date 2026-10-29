@@ -1,4 +1,10 @@
-import type { Graph, Review, ReviewIssueDisposition, ReviewIssueWaiver } from "../../protocol/src/models.js";
+import type {
+  Graph,
+  ProjectMode,
+  Review,
+  ReviewIssueDisposition,
+  ReviewIssueWaiver,
+} from "../../protocol/src/models.js";
 import { activeGraph } from "../../protocol/src/node-lifecycle.js";
 import { reviewIssueRisk, reviewIssueWaiver, type ReviewIssueRisk } from "../../protocol/src/review-issues.js";
 
@@ -49,14 +55,17 @@ export interface ReviewIssueGateOptions {
   closingIds?: Set<string>;
   /** Steps this settlement reopens; they no longer answer anything. */
   reopenedIds?: Set<string>;
+  /** swarm 没有 Step：addressed 必须由 Review 之后保存的原始证据证明。 */
+  mode?: ProjectMode;
 }
 
 /**
  * The completion gate for Review planning issues. A passing Review may raise an
- * explicit new question ("suspected IDOR", "unauthorized data", "PII"); Decide
- * cannot complete until it names work executed after that Review, or explains a
- * dismissal. High-risk dismissals additionally require an operator waiver on
- * the Review; this function never trusts a model-supplied waiver for them.
+ * explicit new question ("suspected IDOR", "unauthorized data", "PII"); completion
+ * must name work that answered it, or record a reasoned dismissal. There is no
+ * human-only class: `reviewIssueRisk` is an advisory label for reviewers and the
+ * UI, not an approval gate. An operator waiver stays available as an optional
+ * shortcut and simply removes the question from the open list.
  */
 export function reviewIssueConflicts(
   graph: Graph,
@@ -77,7 +86,7 @@ export function reviewIssueConflicts(
     const disposition = byKey.get(issueKey(item.review.id, item.index));
     if (!disposition) {
       conflicts.push(
-        `${label} 尚未处置；complete.review_issues 逐条写明 addressed（指向审核后执行并关闭的 Step）或 waived（说明不追究的理由），高风险问题只能由人工豁免`,
+        `${label} 尚未处置；complete.review_issues 逐条写明 addressed（指向审核后执行并关闭的 Step，swarm 用审核后的新证据）或 waived（说明不追究的理由）`,
       );
       continue;
     }
@@ -87,6 +96,20 @@ export function reviewIssueConflicts(
       continue;
     }
     if (disposition.status === "addressed") {
+      // swarm：没有 Step 可以“执行并关闭”。跟进只能由审核之后保存的原始证据
+      // 证明；口头声明或旧证据都不算，避免用一条 message 抹掉问题。
+      if (options.mode === "swarm") {
+        const fresh = (disposition.evidence_ids ?? []).filter((id) => {
+          const evidence = g.evidence.find((item) => item.id === id);
+          return !!evidence && evidence.created_at >= item.review.created_at;
+        });
+        if (!fresh.length) {
+          conflicts.push(
+            `${label} 标记为 addressed，但没有引用审核之后保存的新原始证据；swarm 请把跟进产生的 Evidence 列入 evidence_ids`,
+          );
+        }
+        continue;
+      }
       const step = g.steps.find((candidate) => candidate.id === disposition.step_id);
       const answeredAfterReview = !!step?.executed_at && step.executed_at >= item.review.created_at;
       const concluded =
@@ -96,12 +119,6 @@ export function reviewIssueConflicts(
           `${label} 标记为 addressed，但 ${disposition.step_id ?? "未指定 Step"} 不是在审核之后执行并关闭的有效 Step；请先建 Step、执行并关闭，再用同一 Step 完成`,
         );
       }
-      continue;
-    }
-    if (item.risk === "high") {
-      conflicts.push(
-        `${label} 属于高风险类别（授权 / 越权 / 个人信息），Decide 不能自行驳回；请建 Step 验证，或由操作员在审核页人工豁免`,
-      );
       continue;
     }
     if (!disposition.reason?.trim()) conflicts.push(`${label} 标记为 waived，但缺少不追究的理由`);

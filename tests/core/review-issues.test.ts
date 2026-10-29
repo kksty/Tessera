@@ -142,21 +142,42 @@ test("a low-risk Review issue can be waived with a reason, but not silently", ()
   }
 });
 
-test("a high-risk Review issue cannot be waived by the model; an operator waiver closes it", () => {
+test("an authorization or PII Review issue can be waived by the model with a reason", () => {
   const f = fixture("疑似未授权访问：对象引用可以读取其他用户的信息");
   try {
+    const silent = settle(f.store, f.id, f.planner, completeBody());
+    assert.equal(silent.settle.ok, false);
+    assert.match(silent.settle.conflicts[0].reason, /尚未处置/);
+
     const modelWaiver = settle(
       f.store,
       f.id,
       f.planner,
       completeBody({
-        review_issues: [{ review_id: f.review.id, issue_index: 0, status: "waived", reason: "该接口只返回公开页面" }],
+        review_issues: [
+          {
+            review_id: f.review.id,
+            issue_index: 0,
+            status: "waived",
+            reason: "已核对响应只包含公开页面，没有跨用户数据",
+          },
+        ],
       }),
     );
-    assert.equal(modelWaiver.settle.ok, false);
-    assert.match(modelWaiver.settle.conflicts.map((conflict) => conflict.reason).join("\n"), /高风险/);
-    assert.match(modelWaiver.settle.conflicts.map((conflict) => conflict.reason).join("\n"), /人工豁免/);
+    assert.equal(
+      modelWaiver.settle.ok,
+      true,
+      modelWaiver.settle.conflicts.map((conflict) => conflict.reason).join("; "),
+    );
+    assert.equal(f.store.get(f.id).project.status, "completed");
+  } finally {
+    f.store.close();
+  }
+});
 
+test("operator waiver remains an optional shortcut and validates its input", () => {
+  const f = fixture("疑似 IDOR：不同 metadataId 的归属校验需要复测");
+  try {
     assert.throws(() => f.store.waiveReviewIssue(f.id, f.review.id, 0, { reason: "   " }), /豁免理由不能为空/);
     assert.throws(() => f.store.waiveReviewIssue(f.id, "r999", 0, { reason: "x" }), /Review not found/);
     assert.throws(() => f.store.waiveReviewIssue(f.id, f.review.id, 9, { reason: "x" }), /issue not found/);
@@ -268,7 +289,7 @@ test("reopening an operator waiver puts the issue back in front of completion", 
     );
     const blocked = settle(f.store, f.id, f.planner, completeBody());
     assert.equal(blocked.settle.ok, false);
-    assert.match(blocked.settle.conflicts.map((conflict) => conflict.reason).join("\n"), /高风险/);
+    assert.match(blocked.settle.conflicts.map((conflict) => conflict.reason).join("\n"), /尚未处置/);
   } finally {
     f.store.close();
   }

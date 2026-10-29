@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Store } from "../../packages/core/src/store.js";
+import { factLine } from "../../packages/core/src/entry-lines.js";
 import {
   createProjectSchema,
   executeSchema,
@@ -23,6 +24,13 @@ function fixture() {
   });
   return { store, id, step, evidence };
 }
+
+/** Every new negative fact must state the boundary of the attempt. */
+const negativeScope = {
+  attempted: ["one GET with the siteId taken from page JS"],
+  not_tested: ["authenticated endpoints and POST bodies"],
+  confidence: "low" as const,
+};
 
 /**
  * Write a negative Fact straight into the graph, bypassing the write-time
@@ -61,10 +69,12 @@ test("the fact contract carries the request and parameter provenance of a negati
     objects: ["https://example.test/IGI/nbhd/openGovmsgbox.do"],
     request: { method: "GET", url: "https://example.test/IGI/nbhd/openGovmsgbox.do?siteId=6400000100" },
     parameter_sources: [{ parameter: "siteId", source: "首页 meta SiteIDCode", evidence_ids: [] }],
+    negative_scope: negativeScope,
     evidence_ids: [],
   });
   assert.equal(parsed.request?.method, "GET");
   assert.equal(parsed.parameter_sources?.[0].source, "首页 meta SiteIDCode");
+  assert.equal(parsed.negative_scope?.confidence, "low");
 
   const { store, id, step, evidence } = fixture();
   try {
@@ -82,6 +92,7 @@ test("the fact contract carries the request and parameter provenance of a negati
             objects: ["https://example.test/IGI/nbhd/openGovmsgbox.do"],
             request: { method: "GET", url: "https://example.test/IGI/nbhd/openGovmsgbox.do?siteId=6400000100" },
             parameter_sources: [{ parameter: "siteId", source: "首页 meta SiteIDCode", evidence_ids: [evidence.id] }],
+            negative_scope: negativeScope,
             evidence_ids: [evidence.id],
           },
         ],
@@ -93,6 +104,7 @@ test("the fact contract carries the request and parameter provenance of a negati
       url: "https://example.test/IGI/nbhd/openGovmsgbox.do?siteId=6400000100",
     });
     assert.equal(stored.parameter_sources?.length, 1);
+    assert.match(factLine(stored), /范围：尝试1项.*置信low/);
     assert.ok(fact);
   } finally {
     store.close();
@@ -135,6 +147,107 @@ test("a negative claim without provenance is rejected at write time and by Revie
       () => recordReview(store, id, finding.id, "confirmed", "reviewer", "checked the response", "informational"),
       /Negative observation .* lacks request\/parameter_sources/,
     );
+  } finally {
+    store.close();
+  }
+});
+
+test("negative_scope requires at least one attempt and a known confidence", () => {
+  const base = {
+    description: "GET /x returned nothing",
+    status: "not_observed" as const,
+    request: { method: "GET", url: "https://example.test/x" },
+    evidence_ids: [],
+  };
+  assert.throws(() => factSubmissionSchema.parse({ ...base, negative_scope: { attempted: [], confidence: "low" } }));
+  assert.throws(() =>
+    factSubmissionSchema.parse({ ...base, negative_scope: { attempted: ["one GET"], confidence: "certain" } }),
+  );
+  assert.equal(
+    factSubmissionSchema.parse({ ...base, negative_scope: { attempted: ["one GET"], confidence: "low" } })
+      .negative_scope?.confidence,
+    "low",
+  );
+});
+
+test("negative wording is preserved without a brittle hard rejection", () => {
+  const { store, id, step } = fixture();
+  try {
+    const fact = store.fact(id, step.id, {
+      worker: step.worker!,
+      description: "本次尝试未观测",
+      conclusion: "不能据此认为已证伪",
+      status: "not_observed",
+      request: { method: "GET", url: "https://example.test/login" },
+      negative_scope: { attempted: ["one request"], confidence: "low" },
+      evidence_ids: [],
+    });
+    assert.equal(fact.conclusion, "不能据此认为已证伪");
+  } finally {
+    store.close();
+  }
+});
+
+test("a negative claim with provenance but no scope is rejected at write time and by Review", () => {
+  const { store, id, step, evidence } = fixture();
+  try {
+    const partial = {
+      description: "Mailbox list returned totalCount 0",
+      conclusion: "未发现公开信件数据",
+      status: "not_observed" as const,
+      objects: ["https://example.test/IGI/nbhd/openGovmsgbox.do"],
+      request: { method: "GET", url: "https://example.test/IGI/nbhd/openGovmsgbox.do?siteId=267" },
+      parameter_sources: [{ parameter: "siteId", source: "页面 JS：var psiteId=267", evidence_ids: [evidence.id] }],
+      evidence_ids: [evidence.id],
+    };
+    assert.throws(() => store.fact(id, step.id, { worker: step.worker!, ...partial }), /negative_scope/);
+    // Even a record that claims the new contract but lacks a scope cannot pass Review.
+    const fact = injectLegacyNegative(store, id, step, { ...partial, negative_claim_version: 2 });
+    const finding = store.submitFinding(
+      id,
+      findingSchema.parse({
+        title: "未发现数据",
+        description: "缺少负向范围",
+        from: [fact.id],
+        evidence_ids: [evidence.id],
+      }),
+    );
+    assert.throws(
+      () => recordReview(store, id, finding.id, "confirmed", "reviewer", "checked", "informational"),
+      /lacks negative_scope/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("version 1 facts remain reviewable and editable until explicitly upgraded", () => {
+  const { store, id, step, evidence } = fixture();
+  try {
+    const fact = injectLegacyNegative(store, id, step, {
+      description: "No result from GET",
+      conclusion: "本次请求未观测到结果",
+      request: { method: "GET", url: "https://example.test/x" },
+      evidence_ids: [evidence.id],
+    });
+    const edited = store.reviseFact(id, fact.id, { worker: "reviewer", conclusion: "该请求未返回结果" });
+    assert.equal(edited.negative_claim_version, 1);
+    const finding = store.submitFinding(
+      id,
+      findingSchema.parse({
+        title: "历史观测",
+        description: "历史负向观测",
+        from: [fact.id],
+        evidence_ids: [evidence.id],
+      }),
+    );
+    assert.equal(
+      recordReview(store, id, finding.id, "confirmed", "reviewer", "checked", "informational").review_status,
+      "pass",
+    );
+    const upgraded = store.reviseFact(id, fact.id, { worker: "reviewer", negative_scope: negativeScope });
+    assert.equal(upgraded.negative_claim_version, 2);
+    assert.deepEqual(upgraded.negative_scope, negativeScope);
   } finally {
     store.close();
   }
@@ -204,6 +317,7 @@ test("Review matches an injected parameter name that itself contains an equals s
                 evidence_ids: [evidence.id],
               },
             ],
+            negative_scope: negativeScope,
             evidence_ids: [evidence.id],
           },
         ],
@@ -246,6 +360,7 @@ test("Review accepts name=value provenance entries when the name is a real reque
               { parameter: "siteId=267", source: "页面 JS：var psiteId=267", evidence_ids: [evidence.id] },
               { parameter: "appID=128", source: "页面 JS：applist appid 128", evidence_ids: [evidence.id] },
             ],
+            negative_scope: negativeScope,
             evidence_ids: [evidence.id],
           },
         ],
@@ -364,6 +479,7 @@ test("Review can pass a negative claim that records the request and parameter so
               { parameter: "siteId", source: "hdjl 页面 JS：var psiteId=267", evidence_ids: [evidence.id] },
               { parameter: "appID", source: "hdjl 页面 JS：applist appid 128", evidence_ids: [evidence.id] },
             ],
+            negative_scope: negativeScope,
             evidence_ids: [evidence.id],
           },
         ],
@@ -391,5 +507,66 @@ test("Review can pass a negative claim that records the request and parameter so
     assert.equal(reviewed.review_status, "pass");
   } finally {
     store.close();
+  }
+});
+
+test("scope revisions advance planning and invalidate pending completion", () => {
+  const { store, id, step } = fixture();
+  try {
+    const fact = store.fact(id, step.id, {
+      worker: step.worker!,
+      description: "No result",
+      status: "not_observed",
+      request: { method: "GET", url: "https://example.test/x" },
+      negative_scope: negativeScope,
+      evidence_ids: [],
+    });
+    store.mutate(id, "", false, (g) => {
+      g.project.pending_completion = {
+        planning_revision: g.planning_revision,
+        from: [fact.id],
+        description: "done",
+        graph_id: "main",
+        worker: "planner",
+        observation_revision: g.observation_revision,
+      };
+    });
+    const before = store.get(id).planning_revision!;
+    store.reviseFact(id, fact.id, {
+      worker: "operator",
+      negative_scope: { ...negativeScope, not_tested: ["new gap"] },
+    });
+    assert.ok(store.get(id).planning_revision! > before);
+    assert.equal(store.get(id).project.pending_completion, undefined);
+  } finally {
+    store.close();
+  }
+});
+test("Review rejects malformed version 2 scope in stored facts", () => {
+  for (const scope of [
+    { attempted: ["one request"], confidence: "certain" },
+    { attempted: [" "], confidence: "low" },
+    { attempted: ["one request"], not_tested: [42], confidence: "low" },
+  ]) {
+    const { store, id, step, evidence } = fixture();
+    try {
+      const fact = injectLegacyNegative(store, id, step, {
+        description: "No result",
+        request: { method: "GET", url: "https://example.test/x" },
+        negative_claim_version: 2,
+        negative_scope: scope,
+        evidence_ids: [evidence.id],
+      });
+      const finding = store.submitFinding(
+        id,
+        findingSchema.parse({ title: "Result", description: "Result", from: [fact.id], evidence_ids: [evidence.id] }),
+      );
+      assert.throws(
+        () => recordReview(store, id, finding.id, "confirmed", "reviewer", "checked", "informational"),
+        /negative_scope/,
+      );
+    } finally {
+      store.close();
+    }
   }
 });

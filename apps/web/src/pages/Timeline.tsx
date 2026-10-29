@@ -108,7 +108,11 @@ export function TimelinePage({ initialView = "tasks" }: { initialView?: Timeline
       <PageHeader
         eyebrow="PROJECT / TIMELINE"
         title="时间线"
-        description="任务队列、运行记录与项目进展收在同一个入口：上面看还在做什么，下面按时间倒序回看每一步。"
+        description={
+          swarm
+            ? "执行者回合、共识与项目进展收在同一个入口：上面看每个回合的运行记录，下面按时间倒序回看每一步。"
+            : "任务队列、运行记录与项目进展收在同一个入口：上面看还在做什么，下面按时间倒序回看每一步。"
+        }
         actions={
           <>
             {view === "events" && (

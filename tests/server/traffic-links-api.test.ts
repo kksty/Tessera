@@ -89,6 +89,64 @@ test("finding traffic API returns linked flows and the worker Step query returns
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("operator confirmation pins a captured flow that the executor did not cite", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-traffic-confirm-api-")),
+    store = new Store(join(dir, "graph.db")),
+    app = buildApp(store, new RuntimeConfig(join(dir, "runtime.json")), join(dir, "no-web"));
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Confirm API", origin: "https://api.example.test", goal: "Assess" }),
+    ).project.id;
+    store.traffic.ingest(id, [
+      trafficRecordSchema.parse({
+        id: "flow-proof",
+        created_at: new Date().toISOString(),
+        method: "GET",
+        url: "https://api.example.test/users/7",
+        host: "api.example.test",
+        status: 200,
+        duration_ms: 4,
+        request: { head: "GET /users/7 HTTP/1.1\r\nHost: api.example.test", size: 0 },
+        response: { head: "HTTP/1.1 200 OK\r\nContent-Type: application/json", size: 2, body_base64: "e30=" },
+      }),
+    ]);
+    const finding = store.submitFinding(
+      id,
+      findingSchema.parse({ title: "Uncited claim", description: "No flow was cited." }),
+    );
+
+    const confirmed = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${id}/findings/${finding.id}/traffic`,
+      payload: { traffic_ids: ["flow-proof"] },
+    });
+    assert.equal(confirmed.statusCode, 200, confirmed.body);
+    assert.equal(confirmed.json().source, "linked");
+    assert.deepEqual(
+      confirmed.json().records.map((item: any) => item.id),
+      ["flow-proof"],
+    );
+
+    const cleared = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${id}/findings/${finding.id}/traffic`,
+      payload: { traffic_ids: [] },
+    });
+    assert.equal(cleared.statusCode, 200, cleared.body);
+    assert.notEqual(cleared.json().source, "linked");
+
+    const unknown = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${id}/findings/${finding.id}/traffic`,
+      payload: { traffic_ids: ["missing"] },
+    });
+    assert.equal(unknown.statusCode, 422, unknown.body);
+  } finally {
+    await app.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 test("operator resend API sends a real request without adding a traffic record", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tessera-traffic-resend-api-")),
     store = new Store(join(dir, "graph.db")),

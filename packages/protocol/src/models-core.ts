@@ -37,6 +37,19 @@ export interface Bookmark {
   withdrawn_at?: string;
 }
 
+/**
+ * Boundary of a negative observation. A failed attempt proves only what was
+ * attempted inside this scope; it does not prove the direction is exhausted.
+ */
+export interface NegativeScope {
+  /** Concrete attempts: requests, payload sets, tools, wordlists, repetition. */
+  attempted: string[];
+  /** Known gaps outside this attempt. */
+  not_tested?: string[];
+  /** How far the negative result generalizes; high still needs a broad attempt. */
+  confidence: "low" | "medium" | "high";
+}
+
 export interface Fact {
   deleted?: NodeDeletion;
   id: string;
@@ -52,12 +65,13 @@ export interface Fact {
   request?: { method: string; url: string };
   /** Where each parameter value came from; required before a negative claim can pass Review. */
   parameter_sources?: { parameter: string; source: string; evidence_ids?: string[] }[];
+  /** Boundary of a negative result; required for new not_observed facts. */
+  negative_scope?: NegativeScope;
   /**
-   * Marks facts created under the strict negative-claim contract. Legacy facts
-   * lack it and stay reviewable; new not_observed facts always carry it, so a
-   * missing request/provenance is rejected instead of silently accepted.
+   * Version 1 requires request provenance; version 2 also requires scope.
+   * Facts without a marker predate both contracts.
    */
-  negative_claim_version?: 1;
+  negative_claim_version?: 1 | 2;
   graph_id: string;
   evidence_ids: string[];
   /** Server-recorded production identity. Legacy/manual records may omit these fields. */
@@ -149,7 +163,7 @@ export interface Step {
 export interface TextEdit {
   at: string;
   editor: string;
-  field: "description" | "property" | "method_hint" | "conclusion" | "request" | "parameter_sources";
+  field: "description" | "property" | "method_hint" | "conclusion" | "request" | "parameter_sources" | "negative_scope";
   /** The replaced text. A first-time provenance addition has nothing to replace. */
   from?: string;
 }

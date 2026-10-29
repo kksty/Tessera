@@ -47,6 +47,11 @@ test("every write path records a full conclusion and a three-state status", () =
             conclusion: "匿名写入被拒绝",
             status: "not_observed",
             request: { method: "POST", url: "https://example.test/admin" },
+            negative_scope: {
+              attempted: ["one anonymous POST to /admin"],
+              not_tested: ["authenticated requests"],
+              confidence: "low",
+            },
             evidence_ids: [],
           },
           {

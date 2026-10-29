@@ -26,7 +26,17 @@ import {
   stepLine,
 } from "./projection-lines.js";
 
-export function projectEntry(graph: Graph, focusId: string, changes?: EntryChanges) {
+/**
+ * Effective planning budget for this Decide round. `0` means unlimited, matching
+ * the server config; the entry carries the real numbers so the decider plans
+ * against the same constraint the settlement enforces instead of guessing.
+ */
+export interface StepLimits {
+  max_new_steps_per_round: number;
+  max_open_steps: number;
+}
+
+export function projectEntry(graph: Graph, focusId: string, changes?: EntryChanges, limits?: StepLimits) {
   graph = activeGraph(graph);
   const facts = graph.facts ?? [];
   const steps = graph.steps ?? [];
@@ -141,8 +151,11 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
       })
       .filter((row) => row.input > 0)
       .sort((a, b) => b.input - a.input);
-    const shown = rows.slice(0, 15);
-    const rest = rows.slice(15);
+    // Cost is an anomaly signal, not a budget objective: show only the most
+    // expensive turns instead of turning every planning view into an invoice.
+    // The full per-Step history stays in diagnostics.
+    const shown = rows.slice(0, 5);
+    const rest = rows.slice(5);
     return {
       total_input: rows.reduce((sum, row) => sum + row.input, 0),
       total_output: rows.reduce((sum, row) => sum + row.output, 0),
@@ -153,6 +166,19 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
   return {
     // The first line is a fact, not a cap: the decider must see progress towards closure.
     unclosed: open.length,
+    // Planning is a search decision, not a queue-quota puzzle: give the decider
+    // the same hard numbers the settlement enforces (0 = unlimited) so it can
+    // spend attention on what to ask next instead of discovering the cap via 422.
+    ...(limits
+      ? {
+          limits: {
+            max_new_steps_per_round: limits.max_new_steps_per_round,
+            max_open_steps: limits.max_open_steps,
+            open_steps: open.length,
+            at_open_cap: limits.max_open_steps > 0 && open.length >= limits.max_open_steps,
+          },
+        }
+      : {}),
     snapshot_revision: graph.revision,
     planning_revision: planningRevision(graph),
     decided_planning_revision: decidedPlanningRevision(graph),
@@ -315,6 +341,6 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
     cold,
     ...(changes ? { changes } : {}),
     instructions:
-      "未关闭 Step 超过 200 条时，open_step_index 保留全部 ID/版本，steps 是前 200 条预览；按 steps_preview.query 分页或按 ID 读完整问题。conclusion 完整，正文只保留首句（≤300）。review_issues 给出当前审核问题（review_id#issue_index、risk）、直接来源 Fact 全文（超长标 truncated）与证据 ID，审核理由全文用 review_id 回读；unresolved_review_issues 未处置前 complete 会被拒绝：complete.review_issues 的 addressed 必须指向审核之后执行并关闭的 Step，waived 必须写理由，授权/越权/个人信息类高风险问题只能由人工在审核页豁免。执行完不等于答够，只能由你用 closes 关闭。用 read_graph 按 id 读原始记录与完整正文，query_graph 检索全部历史（含已关闭节点与证据正文）。failures 是上一轮的失败清单（最后错误、决策冲突、模型失败、被阻塞的 Step），先处理它再规划。assets 是可规划的资产；cooled_assets 是你判定与当前目标无关、已移出列表的资产（仍是 approved，可用 submit_decisions 的 assets 恢复）。hints 按 p 从大到小（数字越大越先）；unaddressed_hints 里的 Hint 还没有任何 Step 承载，应建 Step 或在 hint_notes 说明理由。unresolved_hints 里的每条 Hint 尚未处置；用 Step 的 hint_ids 承载它，或用 hint_notes 写明该提示如何落实——带说明的 hint_notes 会让你（模型）关闭该 Hint 从而允许 complete；人工也可在提示面板确认或撤回。leads 是执行阶段留下的候选问题，不阻塞完成：值得追的用新 Step 的 lead_ids 落实（受每轮新增上限约束），不值得的在 lead_dispositions 用 waiver_reason 说明，其余可以留在列表里。每轮新增 Step 数与在途 Step 数都有上限，超限的规划会被拒绝：先把未开始的 Step 用 updates 改写或 discard，或等执行完再规划；若在途数已经超过上限，先单独提交一个只含 closes/discard（不带任何新 steps）的批次把它降到上限以内，再规划新工作——只做结算、不新增 Step 的批次永远放行。step_costs 给出每个 Step 已消耗的 token 与它产出的事实/发现数，追加投入前先判断再做一轮会不会改变结论。修正已有 Fact 的措辞、统计或 request/parameter_sources 用 revise_fact 原地修订，不要为记账新建 Step。complete 的 coverage 还要逐项覆盖 coverage_surfaces（tested 带 evidence_ids，waived 带 reason，na 说明不适用）。",
+      "未关闭 Step 超过 200 条时，open_step_index 保留全部 ID/版本，steps 是前 200 条预览；按 steps_preview.query 分页或按 ID 读完整问题。用 read_graph 按 id 读原始记录与完整正文，query_graph 检索全部历史。failures 是上一轮失败清单（最后错误、决策冲突、模型失败、被阻塞的 Step），先处理再规划。step_costs 只列消耗最高的几轮，用来识别异常，不是预算目标；limits 是本轮真实规划预算（0 表示不限）。complete 的 coverage 必须逐项覆盖 coverage_surfaces（tested 带 evidence_ids，waived 带 reason，na 说明不适用）。",
   };
 }

@@ -78,6 +78,21 @@ export class ExecutionRecords {
       .get(project, kind);
     return Number(row?.n ?? 0);
   }
+  hasRunning(project: string, kind?: Job["kind"]): boolean {
+    const row = kind
+      ? this.db
+          .prepare("SELECT 1 FROM platform_runs WHERE project_id=? AND status='running' AND kind=? LIMIT 1")
+          .get(project, kind)
+      : this.db.prepare("SELECT 1 FROM platform_runs WHERE project_id=? AND status='running' LIMIT 1").get(project);
+    return !!row;
+  }
+  hasUnresolvedAttention(project: string): boolean {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM platform_runs WHERE project_id=? AND status='needs_attention' AND json_extract(data, '$.resolved_at') IS NULL LIMIT 1",
+      )
+      .get(project);
+  }
   save(run: Run) {
     this.db
       .prepare(

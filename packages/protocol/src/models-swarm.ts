@@ -1,5 +1,5 @@
 import { CoverageEntry, Step } from "./models-core.js";
-import { Review } from "./models-finding.js";
+import { Review, ReviewIssueDisposition } from "./models-finding.js";
 
 /**
  * 任务架构模式。缺省（含旧项目）为 classic：Decide/Execute/Review 三类任务。
@@ -15,7 +15,7 @@ export type ProjectMode = "classic" | "swarm";
 export interface Peer {
   id: string;
   graph_id: string;
-  origin: "initial" | "spawn";
+  origin: "initial" | "spawn" | "operator";
   /** 裂变出处；只是血缘记录，不产生任何指挥权。 */
   parent_peer_id?: string;
   spawn_reason?: string;
@@ -45,6 +45,8 @@ export interface SwarmRound {
   close_reason?: string;
   /** 提议时提交的覆盖表（每个 host+path 必须 tested/waived/na）。 */
   coverage?: CoverageEntry[];
+  /** 提议时逐条处置的当前 Review 问题；未处置的有效问题会拒绝提议。 */
+  review_issues?: ReviewIssueDisposition[];
 }
 
 /** peer 间消息；持久化在 project_messages 表，不进入图集合。to_peer 为空为广播。 */

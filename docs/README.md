@@ -5,6 +5,7 @@
 ## 当前实现
 
 - [项目说明](project.md)：架构、图与任务契约、上下文与提交、部署维护、验证边界与后续工作。这是描述当前实现的唯一主文档。
+- [两种并行架构](architectures.md)：决策者架构与蜂群架构的定位、蜂群开单 `mode: "swarm"`、单 peer/多 peer 形态与选择建议。
 - [运行、数据归档与升级](operations.md)：模型凭据边界、SQLite 保留策略、一致性备份、控制面指标和升级注意事项。
 - [容器镜像](containers.md)：本地构建、标签、更新、回退和 Registry 覆盖。
 - [项目出口与回连](network-gateway.md)：独立网关、VPS 回连端口自动分配、HTTP/HTTPS 采集及实测步骤。

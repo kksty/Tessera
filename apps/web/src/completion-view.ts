@@ -20,10 +20,13 @@ export interface CompletionSnapshot {
   /** The proposal still waiting for its gates, or undefined once completed. */
   pending: boolean;
   step?: Step;
+  /** swarm 把完成记录保存在 project.completion 上，没有合成的完成 Step。 */
+  project_record?: boolean;
 }
 
 /**
- * The completion Step is the durable home of the accepted coverage table:
+ * The accepted coverage table has two durable homes: classic writes a synthetic
+ * completion Step, swarm keeps the same record on the project (it has no Steps).
  * `finalizeCompletion` clears `pending_completion`, so reading only that field
  * would lose the table the moment the project completes.
  */
@@ -40,6 +43,8 @@ export function completionSnapshot(graph: Graph): CompletionSnapshot {
   const pending = graph.project.pending_completion;
   if (pending) return { entries: pending.coverage ?? [], pending: true };
   if (graph.project.status !== "completed") return { entries: [], pending: false };
+  if (graph.project.completion)
+    return { entries: graph.project.completion.coverage ?? [], pending: false, project_record: true };
   const step = latestCompletionStep(graph);
   return { entries: step?.completion?.coverage ?? [], pending: false, step };
 }

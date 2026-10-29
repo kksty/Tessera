@@ -45,6 +45,21 @@ test("swarm worker routes: facts, messages, inbox, consensus and turn release ar
     assert.equal(fact.statusCode, 200, fact.body);
     assert.equal(store.get(id).facts.filter((f) => f.id !== "origin").length, 1);
 
+    // The peer entry view carries the graph changes since this peer's watermark,
+    // so a long turn does not have to guess what happened from the last 200 facts.
+    const peerView = await app.inject({
+      method: "GET",
+      url: `/api/projects/${id}/swarm?peer=p001`,
+      headers: worker,
+    });
+    assert.equal(peerView.statusCode, 200, peerView.body);
+    assert.equal(peerView.json().peer_id, "p001");
+    assert.ok(
+      peerView.json().changes.some((item: { kind: string }) => item.kind === "facts"),
+      "the newly observed fact appears in the delivery delta",
+    );
+    assert.deepEqual(peerView.json().review_issues, []);
+
     const message = await app.inject({
       method: "POST",
       url: `${base}/messages`,
@@ -130,6 +145,30 @@ test("operator can retry a stuck peer over the API", async () => {
     assert.deepEqual(retry.json(), { ok: true, peer_id: "p001" });
     assert.equal(store.swarm.state(id, "p001").wake, "ready");
     assert.equal(store.get(id).project.job_failures?.["peer:p001"], 0);
+  } finally {
+    await app.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("operator replacement endpoint rejects a live peer and creates a replacement after retirement", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tessera-swarm-replace-"));
+  const store = new Store(join(dir, "graph.db"));
+  const id = store.create(
+    createProjectSchema.parse({ title: "Replacement", origin: "https://example.test", goal: "Assess", mode: "swarm" }),
+  ).project.id;
+  const app = buildApp(store, new RuntimeConfig(join(dir, "config.json")), join(dir, "no-web"));
+  await app.listen({ host: "127.0.0.1", port: 0 });
+  try {
+    const url = `/api/projects/${id}/fgs/peers/replacement`;
+    assert.equal((await app.inject({ method: "POST", url, payload: { confirmed: true } })).statusCode, 409);
+    const job = store.claim(id, "w1", 0)!;
+    store.swarmRetire(id, "p001", { reason: "finished" }, job.run_id!);
+    store.release(id, job);
+    const result = await app.inject({ method: "POST", url, payload: { confirmed: true } });
+    assert.equal(result.statusCode, 200, result.body);
+    assert.equal(result.json().origin, "operator");
   } finally {
     await app.close();
     store.close();

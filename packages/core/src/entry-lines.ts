@@ -71,7 +71,15 @@ export function factLine(fact: Fact): string {
     : status === "not_observed"
       ? " ⚠ 缺参数溯源"
       : "";
-  return `${fact.id}${objects} ${status} ${inferred}${conclusion} — ${body}${request}${sources}`;
+  const scope = fact.negative_scope?.attempted?.length
+    ? ` 范围：尝试${fact.negative_scope.attempted.length}项（${firstSentence(fact.negative_scope.attempted[0], 120)}）；未覆盖：${fact.negative_scope.not_tested?.length ? firstSentence(fact.negative_scope.not_tested[0], 120) : "未记录"}；自评置信${fact.negative_scope.confidence}（详情读 Fact）`
+    : status === "not_observed"
+      ? " ⚠ 缺负向范围（本次未观测，不代表方向穷尽）"
+      : "";
+  const evidence = fact.evidence_ids.length
+    ? ` 证据：${fact.evidence_ids.slice(0, 5).join(",")}${fact.evidence_ids.length > 5 ? "…（详情读 Fact）" : ""}`
+    : " 证据：未引用";
+  return `${fact.id}${objects} ${status} ${inferred}${conclusion} — ${body}${request}${sources}${scope}${evidence}`;
 }
 
 export function findingLine(finding: Finding): string {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -36,6 +36,7 @@ import { CoverageTable } from "../components/CoverageTable.js";
 import { LeadList } from "../components/LeadList.js";
 import { ToolLeaderboard } from "../components/ToolLeaderboard.js";
 import { Card, EmptyState, Kpi, Modal, SeverityBadge, StatusPill } from "../components/ui.js";
+import { ModeBadge } from "../components/ModeBadge.js";
 import { ProjectHeader } from "../components/Shell.js";
 import { StepDecision } from "../components/StepDecision.js";
 import { locateRecord, readableError, stepState, useWorkspace } from "../workspace.js";
@@ -56,6 +57,29 @@ export function ProjectOverviewPage() {
   const [errorDismissed, setErrorDismissed] = useState(false);
   const [errorExpanded, setErrorExpanded] = useState(false);
   const [goalExpanded, setGoalExpanded] = useState(false);
+  const [stalled, setStalled] = useState(false);
+  const [workStatusTick, setWorkStatusTick] = useState(0);
+  useEffect(() => {
+    if (project.mode === "swarm" || project.status !== "active") {
+      setStalled(false);
+      return;
+    }
+    let live = true;
+    const refresh = () =>
+      api<{ stalled: boolean }>(path(project.id, "/work-status"))
+        .then((status) => {
+          if (live) setStalled(status.stalled);
+        })
+        .catch(() => {
+          if (live) setStalled(false);
+        });
+    void refresh();
+    const timer = setInterval(() => void refresh(), 15000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [project.id, project.mode, project.status, graph.revision, workStatusTick]);
   const errorText = project.last_error ? readableError(project.last_error) : "";
   const errorIsTimeout = /timeout|aborted/i.test(errorText);
   const errorSummary = errorIsTimeout
@@ -68,7 +92,20 @@ export function ProjectOverviewPage() {
   const pendingAssets = graph.assets.filter((asset) => asset.approval === "pending");
   const pending = pendingReviews(graph).map((row) => row.finding);
   const reviewing = pending.filter((finding) => finding.review_worker).length;
-  const activePeerCount = (graph.peers ?? []).filter((peer) => peer.status === "active").length;
+  const swarm = project.mode === "swarm";
+  const peers = graph.peers ?? [];
+  const activePeers = peers.filter((peer) => peer.status === "active");
+  const activePeerCount = activePeers.length;
+  const rounds = graph.rounds ?? [];
+  const openRound = rounds.find((round) => round.status === "open");
+  const latestRound = [...rounds].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))[0];
+  const roundNote = openRound
+    ? `征集中 · ${Object.keys(openRound.opinions).length}/${openRound.peer_ids.length} 已表态`
+    : latestRound?.status === "committed"
+      ? "最近一轮已达成"
+      : latestRound?.status === "invalidated"
+        ? "最近一轮已失效"
+        : "尚未发起";
   const confirmed = graph.findings.filter((f) => confirmedVulnerability(f, graph));
   const informational = graph.findings.filter((f) => confirmedInformational(f, graph)).length;
   const running = graph.steps.filter((step) => stepState(step) === "running");
@@ -81,9 +118,16 @@ export function ProjectOverviewPage() {
     .slice(0, 5);
   const completed = graph.steps.filter((step) => step.concluded_at).length;
   const approved = graph.assets.filter((asset) => asset.approval === "approved");
-  const covered = approved.filter((asset) =>
-    graph.steps.some((step) => step.concluded_at && stepAssets(graph, step).includes(asset.id)),
-  ).length;
+  // 蜂群没有 Step：以 Fact / Finding 是否引用该资产判断它是否已进入探索。
+  const covered = swarm
+    ? approved.filter(
+        (asset) =>
+          graph.facts.some((fact) => !fact.deleted && fact.asset_id === asset.id) ||
+          graph.findings.some((finding) => !finding.deleted && !finding.withdrawn_at && finding.asset_id === asset.id),
+      ).length
+    : approved.filter((asset) =>
+        graph.steps.some((step) => step.concluded_at && stepAssets(graph, step).includes(asset.id)),
+      ).length;
   const leads = graph.leads ?? [];
   const openLeads = leads.filter((lead) => lead.status === "open");
   const completion = completionSnapshot(graph);
@@ -126,6 +170,12 @@ export function ProjectOverviewPage() {
         : "暂无定级漏洞"
       : `${severitySummary}${informational ? ` · 信息类 ${informational}` : ""}`;
   const todoCount = pendingAssets.length + attention.length + awaiting.length;
+  const stepTiles = [
+    { label: "执行中", value: running.length, tone: running.length ? "accent" : "neutral" },
+    { label: "待关闭", value: awaiting.length, tone: awaiting.length ? "warn" : "neutral" },
+    { label: "需处理", value: attention.length, tone: attention.length ? "danger" : "neutral" },
+    { label: "已关闭", value: completed, tone: completed ? "success" : "neutral" },
+  ] as const;
 
   function openSeverity(value: string) {
     ws.setFindingSeverity(value);
@@ -181,6 +231,23 @@ export function ProjectOverviewPage() {
         }
       />
 
+      {stalled && (
+        <div className="banner danger" role="alert">
+          <span>项目已空闲至少五分钟，没有待执行任务。请检查目标和运行记录后决定是否继续规划。</span>
+          <button
+            type="button"
+            className="button small"
+            disabled={ws.busy}
+            onClick={async () => {
+              await ws.action(() => api(path(project.id, "/retry-work"), { confirmed: true }));
+              setWorkStatusTick((value) => value + 1);
+            }}
+          >
+            继续规划
+          </button>
+        </div>
+      )}
+
       <div className="page-meta project-meta">
         <StatusPill
           value={project.status}
@@ -196,10 +263,11 @@ export function ProjectOverviewPage() {
           <Timer size={13} aria-hidden="true" />
           运行 {duration(runtime)}
         </span>
-        {project.mode === "swarm" && (
+        <ModeBadge mode={project.mode} />
+        {swarm && (
           <span className="meta-pill" title="平等执行者编排：无决策者、无 Step，执行者互相通信">
             <Users size={13} aria-hidden="true" />
-            Swarm · {activePeerCount} 个执行者
+            {activePeerCount} 个在岗 · {rounds.length} 轮共识
           </span>
         )}
         <span className="meta-pill">
@@ -224,7 +292,9 @@ export function ProjectOverviewPage() {
           title={
             project.status === "completed"
               ? "项目已完成；先继续评估，再改写目标或起点"
-              : "下一轮 Decide 直接读取；旧文本保留在事件流里"
+              : swarm
+                ? "下一个执行者回合直接读取；旧文本保留在事件流里"
+                : "下一轮 Decide 直接读取；旧文本保留在事件流里"
           }
         >
           改写目标与起点
@@ -270,7 +340,7 @@ export function ProjectOverviewPage() {
           className="todo-card"
           title="需要你处理"
           note={`${todoCount} 项`}
-          actions={<span className="quiet">批准资产、关闭任务、检查异常</span>}
+          actions={<span className="quiet">{swarm ? "批准资产、检查异常" : "批准资产、关闭任务、检查异常"}</span>}
         >
           {pendingAssets.slice(0, 4).map((asset) => (
             <div className="todo-row" key={asset.id}>
@@ -335,7 +405,7 @@ export function ProjectOverviewPage() {
           </span>
           <span className="overview-clear-text">
             <strong>没有需要你处理的事项</strong>
-            <small>资产批准、任务关闭与运行异常都已清空。</small>
+            <small>{swarm ? "资产批准与运行异常都已清空。" : "资产批准、任务关闭与运行异常都已清空。"}</small>
           </span>
         </div>
       )}
@@ -374,20 +444,20 @@ export function ProjectOverviewPage() {
           onClick={() => ws.navigate("review")}
         />
         <Kpi
-          label={project.mode === "swarm" ? "在岗执行者" : "进行中任务"}
-          value={project.mode === "swarm" ? activePeerCount : running.length}
+          label={swarm ? "在岗执行者" : "进行中任务"}
+          value={swarm ? activePeerCount : running.length}
           note={
-            project.mode === "swarm"
-              ? `${graph.peers?.length ?? 0} 个执行者 · ${graph.rounds?.length ?? 0} 轮共识`
+            swarm
+              ? `${peers.length} 个执行者 · ${rounds.length} 轮共识`
               : `${graph.steps.length - completed} 个未关闭 / 共 ${graph.steps.length}`
           }
           icon={<Play size={15} />}
-          onClick={() => ws.navigate(project.mode === "swarm" ? "peers" : "tasks")}
+          onClick={() => ws.navigate(swarm ? "peers" : "tasks")}
         />
         <Kpi
           label="已批准资产"
           value={approved.length}
-          note={`${covered} 个已进入任务`}
+          note={`${covered} 个已进入${swarm ? "探索" : "任务"}`}
           icon={<Globe2 size={15} />}
           onClick={() => ws.navigate("assets")}
         />
@@ -456,35 +526,80 @@ export function ProjectOverviewPage() {
         </Card>
 
         <Card
-          title={project.mode === "swarm" ? "执行者状态" : "任务状态"}
+          title={swarm ? "执行者状态" : "任务状态"}
           note={
-            project.mode === "swarm"
-              ? `${activePeerCount} 在岗 · 共 ${graph.peers?.length ?? 0} 个执行者`
+            swarm
+              ? `${activePeerCount} 在岗 · 共 ${peers.length} 个执行者`
               : `${completed} 已关闭 · ${graph.steps.length - completed} 未关闭`
           }
+          actions={
+            swarm ? (
+              <button type="button" className="button subtle" onClick={() => ws.navigate("peers")}>
+                执行者
+                <ArrowUpRight size={13} />
+              </button>
+            ) : undefined
+          }
         >
-          {project.mode === "swarm" ? (
-            <div className="progress-block">
-              <div className="progress-head">
-                <span>在岗执行者</span>
-                <strong>
-                  {activePeerCount} / {graph.peers?.length ?? 0}
-                </strong>
+          {swarm ? (
+            <>
+              <div className="progress-block">
+                <div className="progress-head">
+                  <span>在岗执行者</span>
+                  <strong>
+                    {activePeerCount} / {peers.length}
+                  </strong>
+                </div>
               </div>
-            </div>
+              <div className="peer-preview" aria-label="在岗执行者">
+                {activePeers.length ? (
+                  activePeers.slice(0, 3).map((peer) => (
+                    <button
+                      key={peer.id}
+                      type="button"
+                      className="peer-preview-row"
+                      onClick={() => ws.navigate("peers")}
+                      title={peer.direction ? `方向：${peer.direction}` : "尚未声明方向"}
+                    >
+                      <span className="peer-preview-id mono">{peer.id}</span>
+                      <span className="peer-preview-direction">{peer.direction || "尚未声明方向"}</span>
+                      <span className="tag">
+                        {peer.origin === "initial" ? "初始" : peer.origin === "operator" ? "补位" : "裂变"}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="quiet explore-quiet">没有在岗执行者，项目无法继续探索。</p>
+                )}
+                {activePeers.length > 3 && (
+                  <span className="quiet peer-preview-more">还有 {activePeers.length - 3} 个在岗执行者</span>
+                )}
+              </div>
+              <div className="round-preview" data-status={openRound ? "open" : latestRound?.status}>
+                <span className="round-preview-dot" aria-hidden="true" />
+                <span className="round-preview-main">
+                  <strong>共识</strong>
+                  <small>{roundNote}</small>
+                </span>
+                <button type="button" className="inline-toggle" onClick={() => ws.navigate("messages")}>
+                  查看消息
+                </button>
+              </div>
+            </>
           ) : (
-            <div className="progress-block">
-              <div className="progress-head">
-                <span>已关闭任务</span>
-                <strong>
-                  {completed} / {graph.steps.length}
-                </strong>
-              </div>
+            <div className="step-status-grid">
+              {stepTiles.map((tile) => (
+                <div className="step-status-tile" data-tone={tile.tone} key={tile.label}>
+                  <span>{tile.label}</span>
+                  <strong>{tile.value}</strong>
+                </div>
+              ))}
+              <span className="step-status-total">共 {graph.steps.length} 个任务</span>
             </div>
           )}
           <div className="progress-block">
             <div className="progress-head">
-              <span>已进入任务的批准资产</span>
+              <span>已进入{swarm ? "探索" : "任务"}的批准资产</span>
               <strong>
                 {covered} / {approved.length}
               </strong>
@@ -522,7 +637,19 @@ export function ProjectOverviewPage() {
             </p>
           )}
           <div className="explore-state">
-            {project.reason ? (
+            {swarm ? (
+              <p className="quiet explore-quiet">
+                {project.status === "stopped"
+                  ? "项目已暂停，执行者状态与证据已保留。"
+                  : project.status === "completed"
+                    ? "探索已结束，可回查共识与证据。"
+                    : project.pending_completion
+                      ? "搜索结束、审核中。当前发现审核结束后完成交付。"
+                      : activePeerCount
+                        ? `${activePeerCount} 个在岗执行者正在自主探索与协作；完成需要全体共识。`
+                        : "没有在岗执行者，需要在执行者页补位后才能继续。"}
+              </p>
+            ) : project.reason ? (
               <div className="explore-line">
                 <Activity size={14} aria-hidden="true" />
                 <span>正在分析下一步探索方向</span>
@@ -549,9 +676,7 @@ export function ProjectOverviewPage() {
                     ? "探索已结束，可回查结论和证据。"
                     : project.pending_completion
                       ? "搜索结束、审核中。当前发现审核结束后完成交付。"
-                      : project.mode === "swarm"
-                        ? `${activePeerCount} 个在岗执行者正在自主探索与协作；完成需要全体共识。`
-                        : "当前没有执行中的任务。"}
+                      : "当前没有执行中的任务。"}
               </p>
             )}
           </div>
@@ -652,13 +777,15 @@ export function ProjectOverviewPage() {
           note={
             completion.pending
               ? "完成提案已提交：逐 surface 处置等待审核与关闭条件满足"
-              : completion.step?.completion
-                ? `完成于 ${fmt(completion.step.concluded_at)}，记录保留在完成任务 ${completion.step.id}`
-                : "历史项目：完成时未记录逐项处置"
+              : completion.project_record
+                ? "完成记录保存在项目完成记录中（蜂群架构没有完成 Step）"
+                : completion.step?.completion
+                  ? `完成于 ${fmt(completion.step.concluded_at)}，记录保留在完成任务 ${completion.step.id}`
+                  : "历史项目：完成时未记录逐项处置"
           }
         >
           <CoverageTable graph={graph} entries={completion.entries} />
-          {!completion.pending && !completion.step?.completion && (
+          {!completion.pending && !completion.project_record && !completion.step?.completion && (
             <p className="quiet overview-coverage-note">
               该项目完成时尚未强制记录覆盖表；上表由当前图的事实提取，处置状态为「未登记」。原始完成提交仍可在运行记录中回查。
             </p>

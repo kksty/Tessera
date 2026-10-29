@@ -73,6 +73,8 @@ export interface DecisionPlanResult {
   revision: number;
   committed: boolean;
   reused: boolean;
+  /** Soft, non-blocking quality warnings for the plan that was just committed. */
+  warnings?: string[];
 }
 
 export interface SettleResult {

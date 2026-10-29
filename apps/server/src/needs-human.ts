@@ -40,6 +40,16 @@ export function collectPendingItems(store: Store): PendingItem[] {
           .sort()
           .at(-1),
       });
+    // swarm 的人工闸门不在 Step/Run 上：执行者被停下、全员退出或全员停滞都需要
+    // 操作员处理。与「执行者」页共用同一判定，避免界面提示了但飞书没通知。
+    const attention = store.swarmAttention(project.id);
+    if (attention)
+      items.push({
+        key: `${project.id}:peers`,
+        kind: "retry",
+        line: `${project.title}：${attention.line}`,
+        ...(attention.at ? { at: attention.at } : {}),
+      });
     if (project.last_error)
       items.push({
         key: `${project.id}:error`,

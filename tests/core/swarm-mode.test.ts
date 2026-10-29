@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Store } from "../../packages/core/src/store.js";
-import { createProjectSchema } from "../../packages/protocol/src/index.js";
+import { createProjectSchema, findingSchema, reviewSchema } from "../../packages/protocol/src/index.js";
+import { peerEntry } from "../../packages/runner/src/run-support.js";
+import { cvss } from "../fixtures/cvss.js";
+import { reportFields } from "../fixtures/report.js";
+import { deferDecideMs } from "../helpers/scheduling.js";
 
 function swarm(store: Store, title = "Swarm") {
   return store.create(
@@ -27,6 +31,73 @@ test("swarm project starts with one active peer; classic still schedules Decide"
   ).project.id;
   assert.equal(store.get(classic).project.mode, undefined);
   assert.equal(store.claim(classic, "w2", 0)!.kind, "decide");
+});
+
+test("operator replaces the last retired peer without reviving its session", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    assert.throws(() => store.operatorReplacePeer(id), /active peer/);
+    const job = store.claim(id, "w1", 0)!;
+    store.swarmRetire(id, "p001", { reason: "finished" }, job.run_id!);
+    assert.throws(() => store.operatorReplacePeer(id), /still running/);
+    store.release(id, job);
+    const peer = store.operatorReplacePeer(id);
+    assert.equal(peer.id, "p002");
+    assert.equal(peer.origin, "operator");
+    assert.equal(store.claim(id, "w2", 0)?.peer_id, "p002");
+    assert.equal(store.get(id).peers?.[0].status, "retired");
+  } finally {
+    store.close();
+  }
+});
+
+test("stalled warning waits for the grace period and can be cleared by retry", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    const job = store.claim(id, "w1", 0)!;
+    store.swarmTurnEnd(id, "p001", { worker: "w1", wake: "waiting", summary: "waiting" }, job.run_id!);
+    store.release(id, job);
+    assert.equal(store.swarmView(id).stalled, false);
+    store.db
+      .prepare("UPDATE project_peer_state SET last_turn_at=? WHERE project_id=?")
+      .run(new Date(Date.now() - 360_000).toISOString(), id);
+    assert.equal(store.swarmView(id).stalled, true);
+    store.retryPeer(id, "p001");
+    assert.equal(store.swarmView(id).stalled, false);
+    assert.equal(store.claim(id, "w2", 0)?.peer_id, "p001");
+  } finally {
+    store.close();
+  }
+});
+
+test("peer handoff bounds negative scope and preserves evidence references", () => {
+  const store = new Store(":memory:");
+  try {
+    const graph = store.get(swarm(store));
+    graph.facts.push({
+      id: "f001",
+      graph_id: "main",
+      description: "negative",
+      status: "not_observed",
+      evidence_ids: ["e001"],
+      run_id: "r001",
+      request: { method: "GET", url: "https://example.test/x" },
+      negative_scope: {
+        attempted: Array(20).fill("x".repeat(500)),
+        not_tested: Array(20).fill("y".repeat(500)),
+        confidence: "low",
+      },
+    });
+    const fact = peerEntry(graph, {}, [], "p001").shared.facts.find((item) => item.id === "f001")!;
+    assert.deepEqual(fact.evidence_ids, ["e001"]);
+    assert.equal(fact.run_id, "r001");
+    assert.equal(fact.negative_scope?.truncated, true);
+    assert.ok(JSON.stringify(fact).length < 1500);
+  } finally {
+    store.close();
+  }
 });
 
 test("turn-end advances seen watermarks and wake; waiting peer is not claimed again", () => {
@@ -63,7 +134,7 @@ test("messages are delivered by seq and make a spawned peer eligible for a turn"
   const message = store.swarmSendMessage(
     id,
     "p001",
-    { to: "p002", kind: "handoff", body: "check login", refs: [] },
+    { to: "p002", kind: "question", body: "check login", refs: [] },
     job.run_id!,
   );
   assert.equal(message.seq, 2);
@@ -76,6 +147,43 @@ test("messages are delivered by seq and make a spawned peer eligible for a turn"
   const next = store.claim(id, "w2", 0)!;
   assert.equal(next.kind, "peer");
   assert.equal(next.peer_id, "p002");
+});
+
+test("handoffs require a real fact or evidence and spawn preserves references", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    const job = store.claim(id, "w1", 0)!;
+    const evidence = store.addEvidence(id, {
+      title: "response",
+      content: "response",
+      encoding: "utf8",
+      mime_type: "text/plain",
+    });
+    assert.throws(
+      () => store.swarmSendMessage(id, "p001", { kind: "handoff", body: "result", refs: ["missing"] }, job.run_id!),
+      /交接须引用/,
+    );
+    assert.throws(
+      () => store.swarmSpawn(id, "p001", { reason: "split", start_message: "result" }, job.run_id!),
+      /交接须引用/,
+    );
+    assert.equal(store.get(id).peers?.length, 1);
+    const peer = store.swarmSpawn(
+      id,
+      "p001",
+      { reason: "split", start_message: "result", start_refs: [evidence.id] },
+      job.run_id!,
+    );
+    const handoff = store.swarmInbox(id, peer.id).find((message) => message.kind === "handoff")!;
+    assert.deepEqual(handoff.refs, [evidence.id]);
+    assert.deepEqual(
+      store.swarmSendMessage(id, "p001", { kind: "handoff", body: "result", refs: [evidence.id] }, job.run_id!).refs,
+      [evidence.id],
+    );
+  } finally {
+    store.close();
+  }
 });
 
 test("unanimous consensus completes a swarm project once the turn releases", () => {
@@ -293,5 +401,239 @@ test("swarm message retention prunes only acknowledged messages beyond the windo
   } finally {
     if (previous === undefined) delete process.env.TESSERA_SWARM_MESSAGE_KEEP;
     else process.env.TESSERA_SWARM_MESSAGE_KEEP = previous;
+  }
+});
+
+test("replacement cannot overlook a running peer beyond history pagination", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store),
+      job = store.claim(id, "w1", 0)!;
+    const run = store.execution.get(id, job.run_id!)!;
+    store.swarmRetire(id, "p001", { reason: "retiring" }, job.run_id!);
+    for (let i = 0; i < 1000; i++)
+      store.execution.save({ ...run, id: "history-" + i, status: "succeeded", finished_at: new Date().toISOString() });
+    assert.equal(store.execution.hasRunning(id), true);
+    assert.throws(() => store.operatorReplacePeer(id), /still running/);
+    store.release(id, job);
+    assert.equal(store.execution.hasRunning(id), false);
+    assert.equal(store.operatorReplacePeer(id).origin, "operator");
+  } finally {
+    store.close();
+  }
+});
+
+/** A reviewed finding with one high-risk Review question, the shape that used to slip past swarm completion. */
+function reviewedSwarmFinding(store: Store, id: string, issue = "疑似 IDOR：可按记录编号读取他人数据") {
+  const evidence = store.addEvidence(id, {
+    title: "Original",
+    content: "response",
+    encoding: "utf8",
+    mime_type: "text/plain",
+  });
+  const finding = store.swarmFinding(
+    id,
+    "p001",
+    findingSchema.parse({
+      ...reportFields,
+      title: "跨账号记录读取",
+      description: "使用测试账号读取了另一账号的记录。",
+      evidence_ids: [evidence.id],
+    }),
+  );
+  const reviewer = store.claim(id, "reviewer", deferDecideMs)!;
+  assert.equal(reviewer.kind, "review");
+  store.review(
+    id,
+    finding.id,
+    reviewSchema.parse({
+      worker: reviewer.worker,
+      finding_version: finding.version,
+      verdict: "pass",
+      kind: "vulnerability",
+      reason: "已核对原始响应",
+      evidence_ids: [evidence.id],
+      cvss: cvss.high,
+      planning_issues: [issue],
+    }),
+  );
+  return { evidence, finding };
+}
+
+test("swarm completion cannot skip a Review issue and only fresh evidence can address it", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    const { evidence } = reviewedSwarmFinding(store, id);
+    const job = store.claim(id, "w1", 0)!;
+    assert.equal(job.kind, "peer");
+
+    assert.throws(
+      () => store.swarmProposeCompletion(id, "p001", { reason: "done", coverage: [] }, job.run_id!),
+      /完成共识被拒绝[\s\S]*尚未处置/,
+    );
+    // Reusing the evidence that predates the Review is not "addressing" the question.
+    assert.throws(
+      () =>
+        store.swarmProposeCompletion(
+          id,
+          "p001",
+          {
+            reason: "done",
+            coverage: [],
+            review_issues: [{ review_id: "r001", issue_index: 0, status: "addressed", evidence_ids: [evidence.id] }],
+          },
+          job.run_id!,
+        ),
+      /没有引用审核之后保存的新原始证据/,
+    );
+
+    // The follow-up becomes proof only once it is saved after the Review and referenced by a Fact.
+    const fresh = store.addEvidence(id, {
+      title: "Retest",
+      content: "still exposed",
+      encoding: "utf8",
+      mime_type: "text/plain",
+    });
+    store.swarmFact(id, "p001", {
+      worker: "w1",
+      description: "重测仍可跨账号读取记录",
+      evidence_ids: [fresh.id],
+    });
+    const round = store.swarmProposeCompletion(
+      id,
+      "p001",
+      {
+        reason: "done",
+        coverage: [],
+        review_issues: [{ review_id: "r001", issue_index: 0, status: "addressed", evidence_ids: [fresh.id] }],
+      },
+      job.run_id!,
+    );
+    store.swarmRespondCompletion(id, "p001", { round_id: round.id, opinion: "agree" }, job.run_id!);
+    store.release(id, job);
+
+    const graph = store.get(id);
+    assert.equal(graph.project.status, "completed");
+    // swarm has no Step queue: completion must not synthesize the classic completion Step.
+    assert.equal(graph.steps.length, 0);
+    assert.equal(graph.project.completion?.review_issues?.[0]?.status, "addressed");
+    assert.equal(graph.project.pending_completion, undefined);
+  } finally {
+    store.close();
+  }
+});
+
+test("swarm completion waits until every active peer has read its messages", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    // A peer's finding that nobody has read yet must not be overridden by silence.
+    store.swarm.append(id, {
+      from: "p002",
+      to: "p001",
+      kind: "share",
+      body: "still checking the upload path",
+      refs: [],
+    });
+    const job = store.claim(id, "w1", 0)!;
+    const round = store.swarmProposeCompletion(id, "p001", { reason: "done", coverage: [] }, job.run_id!);
+    store.swarmRespondCompletion(id, "p001", { round_id: round.id, opinion: "agree" }, job.run_id!);
+    store.release(id, job);
+    assert.equal(store.get(id).project.status, "active", "unread messages must block the commit");
+    assert.equal(store.get(id).rounds?.find((r) => r.id === round.id)?.status, "open");
+
+    // The next turn delivers the message; turn-end advances the watermark and the same round commits.
+    const next = store.claim(id, "w2", 0)!;
+    assert.equal(next.kind, "peer");
+    store.swarmTurnEnd(
+      id,
+      "p001",
+      { worker: "w2", wake: "waiting", summary: "", seen_message_seq: store.swarm.maxSeq(id) },
+      next.run_id!,
+    );
+    // The turn's own Run is still leased at turn-end; releasing it is what lets the commit evaluate again.
+    store.release(id, next);
+    const graph = store.get(id);
+    assert.equal(graph.project.status, "completed");
+    assert.equal(graph.rounds?.find((r) => r.id === round.id)?.status, "committed");
+  } finally {
+    store.close();
+  }
+});
+
+test("an open operator Hint never requires a manual click before swarm completion", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    store.hint(id, "重点看上传接口", "operator");
+    const job = store.claim(id, "w1", 0)!;
+    const round = store.swarmProposeCompletion(id, "p001", { reason: "hint was read", coverage: [] }, job.run_id!);
+    store.swarmRespondCompletion(id, "p001", { round_id: round.id, opinion: "agree" }, job.run_id!);
+    store.release(id, job);
+    const graph = store.get(id);
+    assert.equal(graph.project.status, "completed");
+    // The directive stays on the graph for the operator: autonomy does not delete instructions.
+    assert.equal(graph.hints[0].resolved, undefined);
+  } finally {
+    store.close();
+  }
+});
+
+test("a human retest in swarm is a runtime message, not an orphan Step", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    const { finding } = reviewedSwarmFinding(store, id, "复核错误页是否泄露组件版本");
+    store.findingAction(id, finding.id, {
+      action: "retest",
+      expected_version: finding.version,
+      creator: "operator",
+      reason: "在真实环境下再确认一次",
+    });
+    const graph = store.get(id);
+    assert.equal(graph.steps.length, 0, "swarm must not create a Step nobody can claim");
+    assert.equal(graph.findings[0].human_feedback?.step_id, undefined);
+    const message = store.swarmMessages(id).find((item) => item.kind === "system" && item.body.includes(finding.id));
+    assert.ok(message?.body.includes("重测"));
+    // The retest request still has to clear the completion gates: unread message + Review issue.
+    const job = store.claim(id, "w1", 0)!;
+    assert.throws(
+      () => store.swarmProposeCompletion(id, "p001", { reason: "done", coverage: [] }, job.run_id!),
+      /完成共识被拒绝/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("peer entry carries changes since the peer's watermark and the open Review issues", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = swarm(store);
+    const graph = store.get(id);
+    const view = peerEntry(
+      graph,
+      {
+        peers: [],
+        rounds: [],
+        review_issues: [{ review_id: "r001", issue_index: 0, risk: "high", issue: "疑似 IDOR：读取他人记录" }],
+        changes: [{ kind: "facts", id: "f001", revision: 4, event_kind: "fact.observed", preview: "观测到上传入口" }],
+        changes_total: 1,
+        changes_remaining: 0,
+        since_revision: 3,
+      },
+      [],
+      "p001",
+    ) as unknown as {
+      changes_since_seen: { since_revision: number; total: number; items: { id: string; kind: string }[] };
+      review_issues: { review_id: string; risk: string }[];
+    };
+    assert.equal(view.changes_since_seen.since_revision, 3);
+    assert.equal(view.changes_since_seen.total, 1);
+    assert.equal(view.changes_since_seen.items[0]?.id, "f001");
+    assert.equal(view.review_issues[0]?.review_id, "r001");
+  } finally {
+    store.close();
   }
 });

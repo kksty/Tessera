@@ -12,6 +12,7 @@ export interface SwarmSnapshot {
   rounds: SwarmRound[];
   messages: PeerMessage[];
   max_message_seq: number;
+  stalled: boolean;
 }
 
 /**

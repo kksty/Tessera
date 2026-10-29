@@ -23,7 +23,7 @@ flowchart LR
   Server -->|已确认漏洞| Report[冻结报告]
 ```
 
-Server / Store 是业务状态的统一写入入口；Dispatcher 负责领取、启动和取消项目 Worker。Decide、Execute、Review 共用 Runner / Pi 会话机制，使用各自投影、提示和工具。Review 的补证问题先进入图，再由 Decide 判断后续 Step；授权、越权、IDOR、个人信息类高风险问题在完成前还必须由操作员明确豁免。FGS 保存业务状态，工作区保存运行产物，Pi 会话保存单次 Run 的上下文，三者各有用途。
+Server / Store 是业务状态的统一写入入口；Dispatcher 负责领取、启动和取消项目 Worker。决策者架构中 Decide、Execute、Review 共用 Runner / Pi 会话机制，使用各自投影、提示和工具；swarm 中 peer 回合同样走 Runner / Pi，但使用 peer 投影、消息与 swarm 工具。Review 的补证问题先进入图，再由 Decide 判断后续 Step；授权、越权、IDOR、个人信息类问题带风险标签，但完成前只需逐条 addressed/waived，不要求人工审批。FGS 保存业务状态，工作区保存运行产物，Pi 会话保存单次 Run 的上下文，三者各有用途。
 
 关键取舍：保留 Pi 完整会话 SDK 负责单 Run 的消息、压缩、协议与重试，Tessera 只控制任务提示词、资源加载、工具权限与业务状态，不重写 Agent Loop，也不修改 Pi 包源码；新增能力通过既有图工具表达，不引入专家调度层或任意 Finding Schema 引擎。[Cairn 背景文章](background/cairn-ai-pentest-architecture.md)用于校准搜索机制，不是必须逐项照搬的产品规范；其中的榜单与“0 RAG”等表述只代表作者报告，不构成本平台的效果结论。节点删除是 Decide 的通用规划动作，不设白名单、Hint 前置、人工确认或 Review 审批；服务端只保证引用、运行状态与事务一致，不替模型裁决删除是否明智。发现删除只是可见性标记，操作者可随时从删除历史恢复原 ID 和原版本；Fact、Step 与子 Goal 只保留历史。
 
@@ -46,15 +46,15 @@ Server / Store 是业务状态的统一写入入口；Dispatcher 负责领取、
 
 ## 图与任务契约
 
-- **Fact** 保存观测、结论、状态与 Evidence 引用，证据 ID 放 `evidence_ids`。负面结论（`status: not_observed`）还必须写 `request`（method/url）与 `parameter_sources`（参数值来自页面 JS、AJAX、meta、表单或猜测，附证据 ID）；Review 对缺少溯源的负面结论拒绝 pass，避免把参数猜错当成“未发现”。Fact 提交不接受 `from`；Step / Finding 的 `from` 只引用 Fact ID。新事实应写简体中文结论（≤120 字）；兼容读取缺失结论时明确标为推断。新观测的 `step_id`、`run_id`、`created_at` 由服务端从租约记录，资产发现生成的 Fact 也保留生产来源；人工观测可有 Step 而没有 Run。生产来源只读取服务端记录的元数据，缺失时保持未知，不从 Step 反推历史归属。
+- **Fact** 保存观测、结论、状态与 Evidence 引用，证据 ID 放 `evidence_ids`。负面结论（`status: not_observed`）还必须写 `request`（method/url）、`parameter_sources`（参数值来自页面 JS、AJAX、meta、表单或猜测，附证据 ID）与 `negative_scope`（`attempted` 试过什么、`not_tested` 没覆盖什么、`confidence=low/medium/high`）。`not_observed` 只表示该范围内未观测到，不等于“已证伪/已穷尽”；缺范围或溯源的提交在写入时被拒绝，Review 应判断是否把单次未观测误当作方向穷尽；程序不以关键词代替语义判断。Fact 提交不接受 `from`；Step / Finding 的 `from` 只引用 Fact ID。新事实应写简体中文结论（≤120 字）；兼容读取缺失结论时明确标为推断。新观测的 `step_id`、`run_id`、`created_at` 由服务端从租约记录，资产发现生成的 Fact 也保留生产来源；人工观测可有 Step 而没有 Run。生产来源只读取服务端记录的元数据，缺失时保持未知，不从 Step 反推历史归属。
 - **Goal** 表达人类根目标或模型子目标。人工改写保留旧文本，并取消基于旧目标的在途 Decide。
-- **Step** 是要回答的问题，带来源、资产、子目标、Hint、版本及执行结果引用；新 Step 用 `property` 写一句可证伪的安全属性，`method_hint` 只是建议，执行者仍可自选方法。`test_domain`（固定枚举：recon / entry / auth / access / inject / file / config / logic / post / other）与 `focus`（≤20 字）是可选分类标签，只用于黑板分组、筛选与统计，不参与完成、审核、授权或报告入库判定；旧 Step 缺失即「未分类」，不迁移、不回填。Decide 规划新 Step 时填写，人工建单和 `submit_decisions.updates` 可补；黑板节点详情也提供人工补分类入口（`PUT /api/projects/:id/fgs/steps/:step/classification`，事件 `step.classified`）；补分类不改 Step 版本，也不推进规划水位。Decide 的 Step 行只带一个已分类短码 ` [recon]`，Execute / Review 投影不重复。未执行的旧 Step 可在 `updates` 里原位改写 `description` / `property` / `method_hint` / `from`；已执行、运行中或等待人工检查的 Step 不允许改写。新 Step 与未关闭 Step 高度相似时，服务端合并到已有 Step 并保留较完整文本，不建立第二个队列项。执行完成只写 `executed_at`；答够、证伪或放弃由 Decide 或人工关闭，不以百分比或漏洞数量自动判断。
+- **Step** 是要回答的问题，带来源、资产、子目标、Hint、版本及执行结果引用；新 Step 用 `property` 写一句可证伪的安全属性，`method_hint` 只是建议，执行者仍可自选方法。若 `description` 出现具体命令、HTTP 方法+路径、完整 URL、请求载荷、重复次数或哈希清单，服务端在计划结果里返回**非阻断**的 `warnings`，提示方法应留给执行者，但不会拒绝计划；这是提示，不是新的硬约束。`test_domain`（固定枚举：recon / entry / auth / access / inject / file / config / logic / post / other）与 `focus`（≤20 字）是可选分类标签，只用于黑板分组、筛选与统计，不参与完成、审核、授权或报告入库判定；旧 Step 缺失即「未分类」，不迁移、不回填。Decide 规划新 Step 时填写，人工建单和 `submit_decisions.updates` 可补；黑板节点详情也提供人工补分类入口（`PUT /api/projects/:id/fgs/steps/:step/classification`，事件 `step.classified`）；补分类不改 Step 版本，也不推进规划水位。Decide 的 Step 行只带一个已分类短码 ` [recon]`，Execute / Review 投影不重复。未执行的旧 Step 可在 `updates` 里原位改写 `description` / `property` / `method_hint` / `from`；已执行、运行中或等待人工检查的 Step 不允许改写。新 Step 与未关闭 Step 高度相似时，服务端合并到已有 Step 并保留较完整文本，不建立第二个队列项。执行完成只写 `executed_at`；答够、证伪或放弃由 Decide 或人工关闭，不以百分比或漏洞数量自动判断。
 - **Lead** 是执行阶段发现的具体下一问题（`surface`、可选 `parameter`、`why`、`suggested_property`、证据）。它比 Fact 弱、比摘要强，作为一等记录落图，但**只是候选线索、不阻塞完成**：值得追的由 Decide 用新 Step 的 `lead_ids` 落实（受每轮预算约束），不值得的在 `lead_dispositions` 用 `waiver_reason` 说明，其余可以留在图上；同一 `surface` + `parameter` 的 open lead 合并证据，不重复计数。投影只列前 20 条 open lead 并给出 `open_leads_total`。
 - **Fact 修订**：已有 Fact 的措辞、统计或 `request` / `parameter_sources` 由 `revise_fact` 原地修订（`POST /fgs/facts/:fact/revisions`），不新建 Step、不唤醒执行者，逐字段把被替换文本存入 `edits`；这是对过去「只读核对 / 生成 successor 事实」记账 Step 的替代。负向观测（`status=not_observed`）的 `request` 与逐参数 `parameter_sources` 在**写入时**校验，缺项直接 422 退回，不再拖到审核阶段。
-- **规划预算**：单个 Decide 轮次最多新增 `max_new_steps_per_round`（默认 2）个 Step，在途未关闭 Step 最多 `max_open_steps`（默认 8）；超限的计划被整体拒绝、不落任何节点。近似重复的合并与 `updates` 原位改写不计入新增。**在途上限只约束"增长"、不约束"结算"**：检查只在本轮确实新增 Step 时触发，并按"不含本轮新增"的当前在途数判断（closes/discard/delete 在随后的 settle 事务里才生效），因此只做结算、不新增 Step 的提交永远放行；已被历史推进到上限之上的项目仍可先关闭/放弃排空，不会因每轮被判 422 而耗尽 Decide 重试、最终整项目暂停。若终局计划被服务端以 4xx（预算、版本、来源无效等）拒绝，Runner 按"规划冲突"释放本轮、不记失败，交下一轮 Decide 重新规划。两值由运行时配置（`TESSERA_MAX_NEW_STEPS_PER_ROUND` / `TESSERA_MAX_OPEN_STEPS`）控制，0 表示不限制。
+- **规划预算**：单个 Decide 轮次最多新增 `max_new_steps_per_round`（默认 2）个 Step，在途未关闭 Step 最多 `max_open_steps`（默认 8）；超限的计划被整体拒绝、不落任何节点。近似重复的合并与 `updates` 原位改写不计入新增。**在途上限只约束"增长"、不约束"结算"**：检查只在本轮确实新增 Step 时触发，并按"不含本轮新增"的当前在途数判断；同批 `closes` / `updates.discard` 会在结算时释放的槽位也预先扣除，因此可以在一次提交里边收口低价值 Step 边规划替代问题。只做结算、不新增 Step 的提交永远放行；已被历史推进到上限之上的项目仍可先关闭/放弃排空，不会因每轮被判 422 而耗尽 Decide 重试、最终整项目暂停。Decide 视图的 `limits` 携带本轮真实值、当前在途数与是否到达上限（0 表示不限），提示词不再硬编码具体数字；模型按同一组约束规划，不必用 422 试探。若终局计划被服务端以 4xx（预算、版本、来源无效等）拒绝，Runner 按"规划冲突"释放本轮、不记失败，交下一轮 Decide 重新规划。两值由运行时配置（`TESSERA_MAX_NEW_STEPS_PER_ROUND` / `TESSERA_MAX_OPEN_STEPS`）控制，0 表示不限制。
 - **Finding** 保存需要独立管理的结论。`kind=vulnerability|informational|null` 与危险度分开；Execute 可提出分类，Review 通过时必须明确分类。信息类有核查证据即可通过并保留，当前危险度与 CVSS 为空。只有明确漏洞类、当前版本 pass、引用有效原始证据、合法正分 CVSS 和完整影响证明，且未合并/撤回/删除的记录才进入漏洞库、风险分布、漏洞趋势、报告正文及漏洞导出。`finding-policy.ts` 是 Server 与 Web 共用的纯函数契约；不会把“非 informational”反推为漏洞。每个非 N 影响指标用 `impact_evidence` 写明受损对象、安全边界、已证明后果及证据，程序从 vector 算分并复核持久评级；Review 负责判断因果是否成立。
 - **Evidence** 是被黑板引用的不可变原件，支持大文件分块。Fact、Finding、Review、资产、Lead 与完成覆盖表引用后才会出现在证据页；工具输出、进程日志、临时文件和未被引用的归档留在项目文件，不作为证据。旧项目已有的未引用归档不删除、不迁移；默认证据页不再列出，显式 evidence ID 仍可读取。证据页正文对显式 Markdown（`text/markdown` MIME 或 `.md` 来源）以及正文呈「两级标题 + 空行分段」的 `.txt`、进程日志默认排版，可切回未渲染原文；渲染保留原始换行与缩进，其他正文默认原文，也可在页内手动渲染。工具栏的 Markdown 渲染开关可整体关闭渲染并保存在本浏览器；HTTP 报文、JSON、HTML 与只有一级 `#` 注释的脚本、清单不按正文猜测格式。路径、摘要、模型会话和工具告警均不能替代证据 ID；新增或修订 Finding 需要重新审核。
-- **Hint** 是人的指令，不能当证据。每条有效指令需由当前措辞版本的 Step 落实，或由 Decide 在 `hint_notes` 记录建议；**note 只是建议，不会关闭 Hint**。完成前所有未撤回 Hint 都必须由操作员在提示面板（`POST/DELETE /api/projects/:id/hints/:hid/resolve`）确认关闭或撤回，模型无法代替人关单。改写或撤回会停止关联的未关闭旧任务，历史事实与旧 note 保留。
+- **Hint** 是人的指令，不能当证据。每条有效指令需由当前措辞版本的 Step 落实，或由 Decide 在 `hint_notes` 说明落实方式并关闭 Hint。操作员也可在提示面板（`POST/DELETE /api/projects/:id/hints/:hid/resolve`）确认关闭、重开或撤回。改写或撤回会停止关联的未关闭旧任务，历史事实与旧 note 保留。
 - **Run** 记录一次 Decide / Execute / Review 的租约、用量和执行情况。Review 读取已有证据，缺口交给 Decide 规划，不自行扫描。
 
 Worker 发现资产时，由模型判断哪些主机与目标相关并提交为待批准资产；候选一律 `pending`，不按共同域名后缀自动推断归属，也不自动批准。证书域名、外部链接、第三方登录/API 依赖是否登记由模型判断并写明来源与证据，人工批准前不规划、不发起请求；归属与授权始终由人确认。已有低价值或无依据的 Finding 可由 Decide 用 `finding_updates` 的 `withdraw:true` 撤回交付，保留 Fact、证据、原文和审核历史。操作员已批准当前版本的 Finding 不能被 Decide 撤回、合并为来源或删除；需操作员先撤销批准，模型仍可修订为待复审新版本。有独立价值的信息类不能仅因不是漏洞就撤回或争议底层 Fact。获得新支持后，Decide 用同一 ID 的 `restore:true`、理由和实质 `changes` 恢复为新版本复审；同身份补交不会被静默吞掉，也不能通过省略 ID 绕过撤回。所有 Finding 继续使用稳定 `v###` 编号。
@@ -65,7 +65,7 @@ Worker 发现资产时，由模型判断哪些主机与目标相关并提交为�
 
 项目只有一张 `main` 图，续图已移除，决策协议拒绝 `continuation`。持久图必须带 `format_version: 1`；旧格式被拒绝或隐藏，不提供自动迁移。书签只是原节点导航索引，不是事实、授权或调度依据。
 
-项目完成统一由 Decide 根据 goal、已有证据、未解决问题及剩余工作的价值判断，创建项目不再接受 objective / assessment 类型参数。Decide 只通过 `POST /fgs/decisions` 提交计划和结算，旧 `/fgs/decide` 已移除。分类由 `kind` 明确给出，不从旧危险度或评分推断，不提供旧库转换或启动迁移。
+决策者架构的项目完成由 Decide 根据 goal、已有证据、未解决问题及剩余工作的价值判断（蜂群架构由全体在岗 peer 共识判定，见下文）；创建项目不再接受 objective / assessment 类型参数。Decide 只通过 `POST /fgs/decisions` 提交计划和结算，旧 `/fgs/decide` 已移除。分类由 `kind` 明确给出，不从旧危险度或评分推断，不提供旧库转换或启动迁移。
 
 人工操作放在项目「发现」的漏洞详情中，黑板只展示和定位。经过 Review 的发现可使用 `POST /findings/:fid/actions` 执行删除、打回或重测，必须带当前 `expected_version`、操作人和说明。删除从当前交付移除，历史证据和报告保留，并可在项目「删除历史」中恢复；打回使当前结论退出漏洞库，交 Decide 修订或补证；重测创建定向 Step，复用原 Finding ID，执行后由 Review 核对新证据。人工操作取消冲突的在途审核，迟到结果不能覆盖人工要求。重测可重新打开已完成项目；暂停状态保持到人工恢复。
 
@@ -91,11 +91,13 @@ Decide 可在 `submit_decisions.delete_nodes` 自主批量删除 Fact、Step、F
 
 完成使用独立的 `planning_revision` / `decided_planning_revision`。新 Fact、新 Lead、执行结果/重开、有效目标/Hint/授权变化、Finding 声明修订、负面审核、显式 `planning_issues`、事实争议及节点删除推进规划水位并使旧搜索提议失效；Lead 的落实/豁免属于结算记录，不再次推进规划。分类在 `planning-changes.ts` 集中比较实际业务变化。普通 pass 只确认当前版本并记录分类与评分，不单独唤醒 Decide；原 `observation_revision` 仍记录这次交付变化，不会自动推进模型的旧 `decided_revision`。心跳、用量、读取、书签和冷热操作不推进规划水位。Review 的 `planning_issues` 不只是提示：每条都必须由完成提议逐条处置，授权、越权、IDOR、个人信息类问题只能由操作员豁免。
 
-Decide 可在已有 Finding 待审核时提出 complete，项目保持 active 并显示「搜索结束、审核中」。提议覆盖最新实际已读规划水位、没有未结束搜索工作或在途 Decide/Review，且应审核当前版本都有结果后，最后一次普通 pass 可直接完成交付。`complete` 还必须带覆盖表：图里 Facts 记录的每个 host+path（`objects`、绝对 URL 或 `request.url`，忽略工作区文件路径）都要以 `tested`（至少一个 `evidence_ids`）、`waived`（带 `reason`）或 `na` 出现；漏项会点名 surface 并拒绝结算。`complete.review_issues` 同时逐条处置当前版本最新 Review 的问题（`review_id` + 零基 `issue_index`）：`addressed` 必须指向审核之后执行并关闭的 Step；`waived` 必须写理由，且高风险问题还要求操作员在审核页记录豁免（`POST/DELETE /api/projects/:id/reviews/:rid/issues/:index/waive`）。未处置、Step 未执行或未关闭、引用未知证据都会拒绝结算；同一批修订 Finding 不能用来抹掉当版问题。没有可提取 surface 的旧项目仍可完成，历史 pending completion 不回溯补表。完成结算会把覆盖表与 Review 问题处置写入合成的完成 Step 的 `completion` 字段；`pending_completion` 清空后网页仍能逐 surface 回看已测/豁免/不适用、理由与证据，旧项目则从当前图的事实提取 surface 并标为「未登记」。负面结果或新问题重新规划；`needs_evidence` 可以在披露缺口与停止理由后结束，不要求无限复测。暂停阻止领取；完成后人的新 Hint 或明确继续评估重新开放搜索，旧 Run 不能补交恢复行动。旧项目的缺失规划已读字段不由旧 `decided_revision` 自动补齐，旧完成提议也不升级，下一轮 Decide 必须基于新投影确认。Runner 只携带实际返回给模型的规划快照，查询刷新、删除预览和用量回执不能承认未读输入。
+Decide 可在已有 Finding 待审核时提出 complete，项目保持 active 并显示「搜索结束、审核中」。提议覆盖最新实际已读规划水位、没有未结束搜索工作或在途 Decide/Review，且应审核当前版本都有结果后，最后一次普通 pass 可直接完成交付。`complete` 还必须带覆盖表：图里 Facts 记录的每个 host+path（`objects`、绝对 URL 或 `request.url`，忽略工作区文件路径）都要以 `tested`（至少一个 `evidence_ids`）、`waived`（带 `reason`）或 `na` 出现；漏项会点名 surface 并拒绝结算。`complete.review_issues` 同时逐条处置当前版本最新 Review 的问题（`review_id` + 零基 `issue_index`）：`addressed` 必须指向审核之后执行并关闭的 Step；`waived` 必须写理由。风险标签（授权 / 越权 / 个人信息）只用于审核与界面提示，不构成人工审批门槛；操作员仍可在审核页人工豁免作为可选捷径（`POST/DELETE /api/projects/:id/reviews/:rid/issues/:index/waive`）。未处置、Step 未执行或未关闭、引用未知证据都会拒绝结算；同一批修订 Finding 不能用来抹掉当版问题。没有可提取 surface 的旧项目仍可完成，历史 pending completion 不回溯补表。完成结算会把覆盖表与 Review 问题处置写入合成的完成 Step 的 `completion` 字段（swarm 没有 Step，写入 `project.completion`）；`pending_completion` 清空后网页仍能逐 surface 回看已测/豁免/不适用、理由与证据，旧项目则从当前图的事实提取 surface 并标为「未登记」。负面结果或新问题重新规划；`needs_evidence` 可以在披露缺口与停止理由后结束，不要求无限复测。暂停阻止领取；完成后人的新 Hint 或明确继续评估重新开放搜索，旧 Run 不能补交恢复行动。旧项目的缺失规划已读字段不由旧 `decided_revision` 自动补齐，旧完成提议也不升级，下一轮 Decide 必须基于新投影确认。Runner 只携带实际返回给模型的规划快照，查询刷新、删除预览和用量回执不能承认未读输入。
 
 ## 上下文、检索与提交
 
-Decide 看到全部未关闭 Step 的精确索引、执行/产出引用、Step 的 `property`、open leads（前 20 条与 `open_leads_total`）、未确认 Hints、`coverage_surfaces`（已观测 host+path 及来源 Fact）、每个 Step 的 `step_costs`（已花 token 与产出的事实/发现数）以及热 Fact/Finding；`control` 分列 `confirmed_vulnerabilities` 与 `confirmed_informational`，信息类不计入交付进度。超过 200 条未关闭工作时，`steps` 仅预览前 200 条，`open_step_index` 保留全部 ID/版本/状态及关联，`steps_preview` 给出 `query_graph kind=steps,status=open` 分页入口；完整问题继续按 ID 和哈希分页读取。Execute 直接获得完整问题、根目标、关联子目标、当前 Hint、直接 Fact 全文、关联 Finding 的声明字段（impact/reproduction/remediation，标注 `claim:true`，超出预算标 `claims_omitted` 或 `truncated_fields`）、当前 Step 上一次执行/中断摘要、生产 Step 的摘要/关闭理由及当前资产；更深历史按需查询。Review 从 Finding、来源 Fact 与原始证据清单出发。Execute/Review 的直接 Fact 带 `provenance`，生产 Step 的完整问题与输入 ID 另列于 `source_steps`，不会把 Step 的当前 Run 冒充为旧 Fact 的生产 Run。
+决策者架构项目在最近一次成功 Decide 结束五分钟后，若没有到期规划、执行或审核，也没有人工闸门、退避或收尾，项目概览会提示空闲；操作员可点「继续规划」唤醒一次 Decide。运行中、待审核、待批准资产、未处置 Hint 和未执行或阻塞的 Step 均不视为空闲。系统不会自动循环重试。
+
+Decide 看到全部未关闭 Step 的精确索引、执行/产出引用、Step 的 `property`、open leads（前 20 条与 `open_leads_total`）、未确认 Hints、`coverage_surfaces`（已观测 host+path 及来源 Fact）、消耗最高的几轮 `step_costs`（已花 token 与产出的事实/发现数，用于识别异常而非预算目标）、`limits`（本轮真实规划预算、当前在途数与是否到顶）以及热 Fact/Finding；`control` 分列 `confirmed_vulnerabilities` 与 `confirmed_informational`，信息类不计入交付进度。超过 200 条未关闭工作时，`steps` 仅预览前 200 条，`open_step_index` 保留全部 ID/版本/状态及关联，`steps_preview` 给出 `query_graph kind=steps,status=open` 分页入口；完整问题继续按 ID 和哈希分页读取。Execute 直接获得完整问题、根目标、关联子目标、当前 Hint、直接 Fact 全文、关联 Finding 的声明字段（impact/reproduction/remediation，标注 `claim:true`，超出预算标 `claims_omitted` 或 `truncated_fields`）、当前 Step 上一次执行/中断摘要、生产 Step 的摘要/关闭理由及当前资产；更深历史按需查询。Review 从 Finding、来源 Fact 与原始证据清单出发。Execute/Review 的直接 Fact 带 `provenance`，生产 Step 的完整问题与输入 ID 另列于 `source_steps`，不会把 Step 的当前 Run 冒充为旧 Fact 的生产 Run。
 
 因果关系由 `graph-relations.ts` 共用解析：Fact 上游是生产 Step 和直接 Evidence；Step 上游是输入 Fact，下游是产出 Fact 和关联 Finding；Finding 上游包括来源 Fact、直接 Evidence 和生产/修订 Step；Review 边保留被审核的 Finding 版本。`query_graph` 的 `related_to` / `relation=sources|outputs` 在 1–3 层内双向遍历，返回有类型的 `relations`、生产来源及歧义标记。去环时不把查询种子作为结果返回；保留稳定排序和快照游标，较深链从返回的边界节点继续查询。`read_graph` 原文 JSON 不因兼容来源推断而被改写。
 
@@ -105,11 +107,11 @@ Decide 看到全部未关闭 Step 的精确索引、执行/产出引用、Step �
 
 FTS 索引覆盖活动图节点文本及被引用证据正文；未引用的工具输出与进程日志留在工作区，不进入证据索引。中文支持 trigram，短词用 LIKE，二进制只索引元数据。索引可重建。检索游标绑定快照与过滤条件，原文分页用哈希识别修订。
 
-Decide 只有一个 `submit_decisions` 写工具：先提交新计划，再结算旧节点修改。新 Step 可带 `test_domain` / `focus`（分类标签，见上文 Step 定义），旧 Step 可在 `updates` 里补分类；分类字段不计入业务变化、不改版本。未执行的旧 Step 还可在 `updates` 里原位改写 `description` / `property` / `method_hint` / `from`，改写会计版本并保留旧文本；新 Step 与未关闭 Step 高度相似时服务端合并到已有 Step，不再新增第二个队列项。一次结算可以分多个带 `more:true` 的部分在同一 Decide 租约下顺序提交（先计划/Step 结算，再 `finding_updates`/`finding_merges`，最后不带 `more` 的结算或 `complete`）；只有最终部分结束租约、推进决策轮次，`complete` 不能与 `more` 同批。Runner 会在单次载荷超过预算时自动按同样顺序拆批，但模型主动分次提交才能避免单次输出触顶。结算冲突保留计划和租约，模型读取 `current_view` 重判，只重交剩余结算字段；同一批每个 Step 只允许一次 update、close 或 reopen。计划阶段校验 `lead_ids` 指向的 Lead 并执行规划预算（每轮新增 Step 数与在途 Step 数上限，超限整体拒绝），结算时把 Lead 落实为 `converted` 或按 `lead_dispositions` 豁免；完成检查未人工确认的 Hints、覆盖表与当前 Review 的 `planning_issues`（`complete.review_issues` 的 addressed/waived 处置），open leads 不再阻止完成。局部修改检查 Step 版本，完成检查实际已读规划水位及完整服务端状态；删除仍检查业务快照和精确预览。Runner 不自动改版本、不承认模型未读的新快照；不带 ID 的 `read_graph` 返回最新完整投影。
+Decide 只有一个 `submit_decisions` 写工具：先提交新计划，再结算旧节点修改。新 Step 可带 `test_domain` / `focus`（分类标签，见上文 Step 定义），旧 Step 可在 `updates` 里补分类；分类字段不计入业务变化、不改版本。未执行的旧 Step 还可在 `updates` 里原位改写 `description` / `property` / `method_hint` / `from`，改写会计版本并保留旧文本；新 Step 与未关闭 Step 高度相似时服务端合并到已有 Step，不再新增第二个队列项。一次结算可以分多个带 `more:true` 的部分在同一 Decide 租约下顺序提交（先计划/Step 结算，再 `finding_updates`/`finding_merges`，最后不带 `more` 的结算或 `complete`）；只有最终部分结束租约、推进决策轮次，`complete` 不能与 `more` 同批。Runner 会在单次载荷超过预算时自动按同样顺序拆批，但模型主动分次提交才能避免单次输出触顶。结算冲突保留计划和租约，模型读取 `current_view` 重判，只重交剩余结算字段；同一批每个 Step 只允许一次 update、close 或 reopen。计划阶段校验 `lead_ids` 指向的 Lead 并执行规划预算（每轮新增 Step 数与在途 Step 数上限，超限整体拒绝），结算时把 Lead 落实为 `converted` 或按 `lead_dispositions` 豁免；完成检查未关闭的 Hints（用 hint_ids 或 hint_notes 落实）、覆盖表与当前 Review 的 `planning_issues`（`complete.review_issues` 的 addressed/waived 处置），open leads 不再阻止完成。局部修改检查 Step 版本，完成检查实际已读规划水位及完整服务端状态；删除仍检查业务快照和精确预览。Runner 不自动改版本、不承认模型未读的新快照；不带 ID 的 `read_graph` 返回最新完整投影。
 
 Decide 可用 `finding_updates` 直接修订 Finding 内容，用 `finding_merges` 合并相同资产、根因与影响的发现；操作须带当前版本和理由，同批每个 Finding 仅参与一次操作。修改保留旧内容和审核记录，合并汇总来源与证据，目标新版本重新审核；源节点记录 `merged_into`，不再进入漏洞列表、报告或审核队列。精确重复候选组始终进入决策投影（含冷记录），完成前须处理；同一资产入口的不同身份另进入 `finding_related` 和界面关联候选，提醒核对根因、修复方式与独立影响，不自动合并、不作为完成硬门槛。语义去重由 Decide 检索全图判断。同一 Step 的增量与最终结果按结构化身份更新同一个 Finding，避免改写摘要导致重复入库。
 
-审核继续采用发现就绪即审，探索与审核可并行。CVSS 向量的 11 项 Base 指标在 Runner 提交前校验，缺失 AT 等格式问题进入同一 Run 的有界修正流程；不自动猜测指标。Runner 的 `submit_fact` 与服务端复用 `factSubmissionSchema`，在上传前拒绝多余字段；负向观测还必须在写入时通过 `request` + 逐参数 `parameter_sources` 溯源校验（`negative-claim` 契约），否则服务端 422 退回而不是留到审核；`submit_finding` 复用 `findingSchema` 检查身份等跨字段约束。`severity:null` 表示无当前评级，不要求评级理由；漏洞通过仍须合法正分 CVSS、影响证明和报告字段。结构校验、评分计算与证据引用检查由程序执行，结论与因果是否成立仍需 Review 和人工复核。
+审核继续采用发现就绪即审，探索与审核可并行。CVSS 向量的 11 项 Base 指标在 Runner 提交前校验，缺失 AT 等格式问题进入同一 Run 的有界修正流程；不自动猜测指标。Runner 的 `submit_fact` 与服务端复用 `factSubmissionSchema`，在上传前拒绝多余字段；负向观测还必须在写入时通过 `request` + 逐参数 `parameter_sources` 溯源与 `negative_scope` 范围校验（`negative-claim` 契约），否则服务端 422 退回而不是留到审核；`submit_finding` 复用 `findingSchema` 检查身份等跨字段约束。`severity:null` 表示无当前评级，不要求评级理由；漏洞通过仍须合法正分 CVSS、影响证明和报告字段。结构校验、评分计算与证据引用检查由程序执行，结论与因果是否成立仍需 Review 和人工复核。
 
 默认及 full Worker 镜像不提供 Nuclei，工具环境说明要求不重新安装引擎或下载模板库。历史扫描证据和 Finding 保留，不受工具移除影响。
 
@@ -147,10 +149,12 @@ Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，�
 
 “获取模型”向已填写的 API 地址查询 `/models`；既有 Pi 原生供应商配置在地址留空时仍从 Pi 目录读取模型。接口返回的 `max_model_len` / `context_length` 与 `max_tokens` 会填入上下文窗口和输出上限（自定义 / 中转模式同样适用），可手动修改或设为 0 回退 Pi 默认值。“测试连接”经 Pi 发一次极短请求（提示词为固定的一句「只回复 OK。」，输出上限 128 tokens，超时 60 秒），只确认地址、密钥和协议可用，并返回与 Runner 相同的有效 provider / API / 地址 / 容量 / 压缩设置。它不再构造按声明窗口填充的大上下文：此前的容量探测每次点击要发送数万输入 tokens，一次操作的成本与真实 Run 相当，因此已取消。代价是设置页不再提前发现“声明窗口高于真实上限”的部署；这类部署在真实 Run 中仍会失败——请求往往仍回 HTTP 200 只是流内没有 `finish_reason`，Run 以“未得到完整响应”失败并进入待处理，诊断里保留实际发出的上下文与 `max_tokens` 及部署上报的提示词 tokens。容量与工具调用能力都以真实任务为准。密钥从对应主 / 审核配置按连接匹配复用，返回结果不含密钥。
 
-| 存储                                        | 内容                                       |
-| ------------------------------------------- | ------------------------------------------ |
-| 平台 `/data` 命名卷（默认 `tessera-data`）  | SQLite、归档证据、配置、登录和内部凭据     |
-| 项目 `/workspace` 命名卷                    | 会话、outbox、脚本、原始工具输出与工作文件 |
+飞书机器人通知是可选部署能力：设置页填写 Webhook 后，`notify_new_finding` 与 `notify_needs_human` 分别控制「新发现」与「需要人工处理」两类卡片。决策者架构与蜂群架构共用同一套投递：两种模式提交的 Finding 都发新发现卡片，swarm 的执行者被停下、全员退出或停滞也进入待人工事项。投递尽力而为，不阻塞也不影响请求；Webhook 属于密钥，只保存在服务端并在接口中脱敏。
+
+| 存储                                       | 内容                                       |
+| ------------------------------------------ | ------------------------------------------ |
+| 平台 `/data` 命名卷（默认 `tessera-data`） | SQLite、归档证据、配置、登录和内部凭据     |
+| 项目 `/workspace` 命名卷                   | 会话、outbox、脚本、原始工具输出与工作文件 |
 
 平台数据卷（默认 `tessera-data`，可由 `TESSERA_DATA_VOLUME` 改名）与各项目工作区卷都由 Docker 管理，命名卷是唯一形态，不再支持宿主机目录挂载。日常启动为 `docker compose up -d`。卷不会随 `docker compose down` 删除；备份同时覆盖平台卷和各项目工作区，SQLite 使用一致性备份或先停止写入。
 
@@ -183,23 +187,23 @@ VPS 配置 TESSERA_CALLBACK_HOST 后，平台从端口池为每个项目保留�
 
 ## 开发与验证入口
 
-| 命令                                                          | 范围                                                                                                                 |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `pnpm typecheck` / `pnpm test`                                | 类型检查与递归发现全部 TS 测试                                                                                       |
-| `pnpm test:traffic`                                           | Python 录制钩子、代理变量与路由的本地测试                                                                            |
-| `pnpm build`                                                  | Server、Dispatcher、Runner、恢复入口及 Web；不调用模型                                                               |
-| `pnpm export:work-prompts`                                    | 从当前源码与已安装 SDK 导出 `.tessera/work-prompts.md`，不生成第二份维护文档                                         |
-| `pnpm test:frontend-browser`                                  | 临时数据与本地服务的前端验收                                                                                         |
-| `pnpm observe:projects --db DB --output NEW_DIRECTORY`        | 对现有业务库副本作一致性只读观测；输出分角色 Run、用量、失败和诊断完整性摘要，不含目标、命令正文或凭据             |
-| `pnpm test:m6`                                                | 本地靶场答案、证据判定与请求预算网关测试，不调用真实模型                                                             |
-| `pnpm m6` / `pnpm m6 --run --id UNIQUE_ID`                    | 默认仅冻结源码、任务、模型标识与预算；显式 `--run` 才执行真实模型小集对照，结果在 `test-results/m6/`                 |
-| `pnpm m6:resume --id EXISTING_ID [--run]`                     | 默认只检查缺失样本及冻结文件；显式 `--run` 只执行从未启动的样本，复用原预算、原代码包和原镜像 ID，不重复已有付费用量 |
-| `pnpm test:browser` / `test:completion-browser`               | 已准备服务的工作台与完成流程                                                                                         |
-| `pnpm test:deletion-config-browser` / `test:usage-browser`    | 临时服务中的删除、配置与用量交互                                                                                     |
-| `pnpm test:docker`                                            | 独立 Compose 项目和模拟模型；需先构建应用 / Worker 镜像                                                              |
-| `pnpm test:models-browser`                                    | Pi 模型目录与运行配置一致性、测试连接、本地主 / 审核配置、窄屏设置页；仅使用本地模拟 API                             |
-| `pnpm test:memory-real-model` / `test:decide-real-model`      | 真实模型读取合成历史与决策；不连接测试目标                                                                           |
-| `pnpm test:model-observation` / `test:result-format-probe`    | 当前真实端点的公开响应对齐与输出格式对照                                                                             |
+| 命令                                                       | 范围                                                                                                                 |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck` / `pnpm test`                             | 类型检查与递归发现全部 TS 测试                                                                                       |
+| `pnpm test:traffic`                                        | Python 录制钩子、代理变量与路由的本地测试                                                                            |
+| `pnpm build`                                               | Server、Dispatcher、Runner、恢复入口及 Web；不调用模型                                                               |
+| `pnpm export:work-prompts`                                 | 从当前源码与已安装 SDK 导出 `.tessera/work-prompts.md`，不生成第二份维护文档                                         |
+| `pnpm test:frontend-browser`                               | 临时数据与本地服务的前端验收                                                                                         |
+| `pnpm observe:projects --db DB --output NEW_DIRECTORY`     | 对现有业务库副本作一致性只读观测；输出分角色 Run、用量、失败和诊断完整性摘要，不含目标、命令正文或凭据               |
+| `pnpm test:m6`                                             | 本地靶场答案、证据判定与请求预算网关测试，不调用真实模型                                                             |
+| `pnpm m6` / `pnpm m6 --run --id UNIQUE_ID`                 | 默认仅冻结源码、任务、模型标识与预算；显式 `--run` 才执行真实模型小集对照，结果在 `test-results/m6/`                 |
+| `pnpm m6:resume --id EXISTING_ID [--run]`                  | 默认只检查缺失样本及冻结文件；显式 `--run` 只执行从未启动的样本，复用原预算、原代码包和原镜像 ID，不重复已有付费用量 |
+| `pnpm test:browser` / `test:completion-browser`            | 已准备服务的工作台与完成流程                                                                                         |
+| `pnpm test:deletion-config-browser` / `test:usage-browser` | 临时服务中的删除、配置与用量交互                                                                                     |
+| `pnpm test:docker`                                         | 独立 Compose 项目和模拟模型；需先构建应用 / Worker 镜像                                                              |
+| `pnpm test:models-browser`                                 | Pi 模型目录与运行配置一致性、测试连接、本地主 / 审核配置、窄屏设置页；仅使用本地模拟 API                             |
+| `pnpm test:memory-real-model` / `test:decide-real-model`   | 真实模型读取合成历史与决策；不连接测试目标                                                                           |
+| `pnpm test:model-observation` / `test:result-format-probe` | 当前真实端点的公开响应对齐与输出格式对照                                                                             |
 
 真实模型脚本产生 API 费用，结果在 `test-results/`；不能用模拟模型通过或一次正常响应宣称真实任务效果已验证。这些脚本不猜测宿主机数据路径（`/data` 是命名卷）：模型配置由 `TESSERA_ACCEPTANCE_CONFIG`（从卷导出的 `runtime.json` 副本）或 `TESSERA_ACCEPTANCE_MODEL_JSON`（单行 JSON）提供，`observe:projects` 需要显式 `--db` 指向导出的库副本，导出时用 `docker run --rm -v tessera-data:/data -v ${PWD}:/out alpine cp /data/tessera.db /out/`。Python 容器链路验收脚本为 `scripts/checks/traffic.py`，只允许在设置 `TESSERA_TEST_DISPOSABLE_CONTAINER=1` 的可销毁 Worker 内运行，`QA_UPSTREAM=direct|http|socks` 选择本地测试出口。
 
@@ -209,17 +213,18 @@ VPS 配置 TESSERA_CALLBACK_HOST 后，平台从端口池为每个项目保留�
 
 ### 最新证据与结论边界
 
-| 材料                            | 已核对结果                                                                                                                                                            | 可支持的结论                                                                                                                            |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-10-20 本次架构复核         | 当前工作区 `pnpm typecheck` 与 `pnpm test` 通过，376 项 TS 测试、0 失败；日志在 `test-results/architecture-review/20261020/`                                          | 当前协议、调度、版本、回执、来源、审核及完成等已有回归通过；不是完整安全审计、性能压测或本次部署验收                                    |
-| 2026-10-23 FGS 覆盖与关单修复   | 当前工作区 `pnpm typecheck` 与 `pnpm test` 通过，415 项 TS 测试、0 失败；新增 coverage、leads、negative-claims 与 Hint 人工关单回归                                   | 覆盖缺口、Hint 自动关单、负面结论参数溯源与 Lead 处置已有确定性回归；未重跑真实模型对照，不据此宣称效果提升                             |
-| 2026-10-23 分批结算与结算后收口 | `pnpm typecheck`、`pnpm lint` 与 446 项 TS 测试通过；新增 `more:true` 分批契约、Runner 自动分批、30 条 Finding 修订拆批、结算后无额外模型请求与无 409 回归            | 大结算可拆成同租约的有序部分并只推进一次决策轮次；结算后不再多发模型请求或证据提交；真实模型输出是否稳定低于 6k tokens 仍需日志复跑确认 |
-| 2026-10-29 控制回路改造          | `pnpm typecheck`、`pnpm lint`、`pnpm build` 与 613 项 TS 测试通过；Lead 改为顾问性、新增每轮/在途 Step 预算、`revise_fact` 记账修订、负向观测写入时溯源校验、`step_costs` 投影与信息类分列；新增 `workflow-guards`、`leads`、`negative-claims`、`prompt-policy` 与 Fact 修订 HTTP 回归 | 取消「记账 Step / lead 清单 / 免费信息类」三条漂移回路已有确定性回归；未重跑真实模型对照，不据此宣称效果提升 |
-| 一个已完成业务项目              | 北京时间 15:46 创建、18:04 自动完成；30 个 Run、7 条持久审核；当前 4 条漏洞与 1 条信息类均为当前版本 pass，待审和未关闭 Step 为 0                                     | 补充真实模型闭环、修订复审、信息保留及最后审核后自动完成的证据                                                                          |
-| 该项目的原件与来源复核          | 451 份原件大小 / SHA-256 一致；29 条非 origin Fact 都有有效 Step / Run；请求级已知 token 与角色 Run 汇总一致                                                          | 原件、生产来源和已知用量可对账；不代表漏洞影响已全部人工复核                                                                            |
-| 该项目的交付与用量边界          | 复核快照中的已有报告含 3 条漏洞且已过期；当前报告材料可收 4 条；528 条请求中 11 条用量不完整，费用未知                                                                | 正式交付应生成当前报告；不得把未知用量或费用补零，不能由单项目推导成本收益                                                              |
-| 既有部署与界面验收              | 早先应用 / Runner 同版部署、隔离 Docker QA、120 项布局与删除配置检查已有记录；详见下文 2026-10-20 发布边界及 `test-results/release-20261020/`、`test-results/docker/` | 保留当次版本结论；本次文档复核未重建镜像或切换部署                                                                                      |
-| M6 冻结对照                     | `20261020-m6` 的 9 次与 `20261020-m6-expanded` 的 3 次均未完成交付、未进入 Review；冻结文件哈希核对通过                                                               | 真实试跑和失败归因已归档，效果验收未通过；当前暂缓，不阻碍功能维护                                                                      |
+| 材料                            | 已核对结果                                                                                                                                                                                                                                                                             | 可支持的结论                                                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-20 本次架构复核         | 当前工作区 `pnpm typecheck` 与 `pnpm test` 通过，376 项 TS 测试、0 失败；日志在 `test-results/architecture-review/20261020/`                                                                                                                                                           | 当前协议、调度、版本、回执、来源、审核及完成等已有回归通过；不是完整安全审计、性能压测或本次部署验收                                    |
+| 2026-10-23 FGS 覆盖与关单修复   | 当前工作区 `pnpm typecheck` 与 `pnpm test` 通过，415 项 TS 测试、0 失败；新增 coverage、leads、negative-claims 与 Hint 人工关单回归                                                                                                                                                    | 覆盖缺口、Hint 自动关单、负面结论参数溯源与 Lead 处置已有确定性回归；未重跑真实模型对照，不据此宣称效果提升                             |
+| 2026-10-23 分批结算与结算后收口 | `pnpm typecheck`、`pnpm lint` 与 446 项 TS 测试通过；新增 `more:true` 分批契约、Runner 自动分批、30 条 Finding 修订拆批、结算后无额外模型请求与无 409 回归                                                                                                                             | 大结算可拆成同租约的有序部分并只推进一次决策轮次；结算后不再多发模型请求或证据提交；真实模型输出是否稳定低于 6k tokens 仍需日志复跑确认 |
+| 2026-10-29 控制回路改造         | `pnpm typecheck`、`pnpm lint`、`pnpm build` 与 613 项 TS 测试通过；Lead 改为顾问性、新增每轮/在途 Step 预算、`revise_fact` 记账修订、负向观测写入时溯源校验、`step_costs` 投影与信息类分列；新增 `workflow-guards`、`leads`、`negative-claims`、`prompt-policy` 与 Fact 修订 HTTP 回归 | 取消「记账 Step / lead 清单 / 免费信息类」三条漂移回路已有确定性回归；未重跑真实模型对照，不据此宣称效果提升                            |
+| 2026-10-30 swarm 完成门槛与去人工确认 | `pnpm typecheck` 与 653 项 TS 测试通过；swarm 完成新增审核问题与未读消息门槛、完成记录写入 `project.completion`（不再合成 Step）、人工重测改为运行时消息、peer 入口按 `seen_revision` 给出变化摘要、执行者停下/退出/停滞进入飞书待人工通知；审核问题（含 IDOR/未授权/PII）改由模型带理由 addressed/waived 处置，人工豁免只是可选捷径 | swarm 不再绕过 Review 问题、未读消息或留下无人调度的重测 Step；两种架构的新发现与待人工事项都走同一套飞书通知；未重跑真实模型对照，不据此宣称效果提升 |
+| 一个已完成业务项目              | 北京时间 15:46 创建、18:04 自动完成；30 个 Run、7 条持久审核；当前 4 条漏洞与 1 条信息类均为当前版本 pass，待审和未关闭 Step 为 0                                                                                                                                                      | 补充真实模型闭环、修订复审、信息保留及最后审核后自动完成的证据                                                                          |
+| 该项目的原件与来源复核          | 451 份原件大小 / SHA-256 一致；29 条非 origin Fact 都有有效 Step / Run；请求级已知 token 与角色 Run 汇总一致                                                                                                                                                                           | 原件、生产来源和已知用量可对账；不代表漏洞影响已全部人工复核                                                                            |
+| 该项目的交付与用量边界          | 复核快照中的已有报告含 3 条漏洞且已过期；当前报告材料可收 4 条；528 条请求中 11 条用量不完整，费用未知                                                                                                                                                                                 | 正式交付应生成当前报告；不得把未知用量或费用补零，不能由单项目推导成本收益                                                              |
+| 既有部署与界面验收              | 早先应用 / Runner 同版部署、隔离 Docker QA、120 项布局与删除配置检查已有记录；详见下文 2026-10-20 发布边界及 `test-results/release-20261020/`、`test-results/docker/`                                                                                                                  | 保留当次版本结论；本次文档复核未重建镜像或切换部署                                                                                      |
+| M6 冻结对照                     | `20261020-m6` 的 9 次与 `20261020-m6-expanded` 的 3 次均未完成交付、未进入 Review；冻结文件哈希核对通过                                                                                                                                                                                | 真实试跑和失败归因已归档，效果验收未通过；当前暂缓，不阻碍功能维护                                                                      |
 
 最新业务项目的只读复核脚本、摘要及校验在 `test-results/m6/20261020-latest-project-acceptance/`。其中 30 个 Run 有 21 次成功、6 次失败、1 次中断、1 次需关注及 1 次取消；最终完成不抹去历史失败。该任务跨三个 Runner 构建且有暂停 / 恢复，不能当作固定候选版本的对照样本。最初 24 个 Run 的旧诊断导出只是较早快照，不应再据此称该项目仍暂停或 v002 新版仍未通过。
 
@@ -259,9 +264,11 @@ VPS 配置 TESSERA_CALLBACK_HOST 后，平台从端口池为每个项目保留�
 
 运行凭据边界、无损归档参数、一致性备份、旧数据可见后果及本轮压力测试边界见 [运行维护说明](operations.md)。
 
-## swarm 模式（第二种架构：平等执行者）
+## 两种并行架构：决策者架构与蜂群架构
 
-除默认的 classic（Decide / Execute / Review）外，项目创建时可选择 `mode: "swarm"`：**没有决策者、没有 Step**，多个平等 peer 执行者各自决定方向与方法、通过消息互相协作、可裂变新执行者或退出；完成由全体 peer 一致同意（并叠加覆盖表、审核与 Hint 确认等质量门槛）判定。两套架构在同一个平台内互相隔离：`project.mode` 创建时选定、持久不可变，中途不可切换；classic 项目不含任何 swarm 记录。
+Tessera 同时提供两种并行架构，按项目隔离，不是新旧或升级关系：决策者架构（Decide / Execute / Review）与蜂群架构（平等执行者）。完整定位、开单方式和选择建议见 [两种并行架构](architectures.md)。
+
+swarm 项目创建时必须显式写入 `mode: "swarm"`：**没有决策者、没有 Step**，一个或多个平等 peer 执行者各自决定方向与方法、通过消息互相协作、可裂变新执行者或退出；完成由全体在岗 peer 一致同意（并叠加覆盖表与审核问题处置等质量门槛）判定。创建时放入一个初始 peer；**不裂变时就是单 peer 连续 Agent**，裂变后才进入多 peer 并行。`project.mode` 创建时选定、持久不可变，中途不可切换；决策者架构项目不含任何 swarm 记录。
 
 黑板（FGS 图）在 swarm 中仍是共享记忆与质量基座而非执行控制面：peer 把观测写成 Fact、结论写成 Finding、原件写成 Evidence，但没有任何组件读图来调度方向。Run 的类型扩展为 `peer` 回合：每个 peer 一条持久 Pi 会话，由 Dispatcher 按回合领取，回合开始时投递收件箱与共享变更摘要。
 

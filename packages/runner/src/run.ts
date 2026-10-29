@@ -64,6 +64,12 @@ async function runJobInternal(
   if (recoverySession && job.kind !== "execute")
     throw new Error("Read-only session recovery currently supports Execute only");
   const timeouts = client.timeouts;
+  // The same effective budget the server enforces, carried into the entry so the
+  // decider can plan against it instead of learning the cap from a 422.
+  const stepLimits = {
+    max_new_steps_per_round: config.max_new_steps_per_round ?? 2,
+    max_open_steps: config.max_open_steps ?? 8,
+  };
   const runStartedAt = Date.now();
   if (recoverySession)
     await client.request(client.projectPath(job, "/jobs/heartbeat"), job, "POST", timeouts.heartbeat_timeout_ms);
@@ -96,14 +102,18 @@ async function runJobInternal(
   /** 本回合实际投递给该 peer 的最大消息 seq，随 turn-end 回报（不回读则不推进）。 */
   let deliveredMessageSeq = 0;
   if (job.kind === "peer") {
-    const swarm = await client.request<any>(client.projectPath(job, "/swarm"));
+    // peer 入口必须带上该执行者的已读水位：服务端据此给出“自 seen_revision 以来”
+    // 的图变化摘要，而不是固定最近 N 条记录。
+    const swarm = await client.request<any>(
+      client.projectPath(job, `/swarm?peer=${encodeURIComponent(job.peer_id || "")}`),
+    );
     const inbox = await client.request<any[]>(
       client.projectPath(job, `/fgs/peers/${encodeURIComponent(job.peer_id || "")}/inbox`),
     );
     for (const message of inbox) deliveredMessageSeq = Math.max(deliveredMessageSeq, Number(message.seq) || 0);
     view = peerEntry(graph, swarm, inbox, job.peer_id || "");
   } else {
-    view = memoryEntry(graph, job, changes);
+    view = memoryEntry(graph, job, changes, stepLimits);
   }
   // Decide commits through one tool; `plan_id` lets a conflicting retry skip the plan.
   let decisionPlanId: string | undefined;
@@ -260,7 +270,7 @@ async function runJobInternal(
     decisionSnapshot = await client.request<Graph>(p("/fgs"));
     memorySnapshot = decisionSnapshot;
     observeGraph(decisionSnapshot);
-    return memoryEntry(decisionSnapshot, job);
+    return memoryEntry(decisionSnapshot, job, undefined, stepLimits);
   };
   const emptySettle = (): DecisionAttempt["settle"] => ({
     ok: false,
@@ -961,7 +971,7 @@ async function runJobInternal(
     // 共识轮次）。这里若按 job 再取一次 Decider 的记忆投影，会把它整个覆盖掉：
     // 模型看不到收件箱，而 turn-end 却按这份收件箱推进 seen_message_seq，
     // 等于静默丢弃消息。因此 peer 必须保留下面的视图。
-    if (job.kind !== "peer") view = memoryEntry(graph, job, changes);
+    if (job.kind !== "peer") view = memoryEntry(graph, job, changes, stepLimits);
     const prompt = promptFor(job, view, graph) + finalInstruction;
     // Usage and compaction are observable, but the application never gates a run on estimated tokens.
     const measurePrompt = (text: string) => {

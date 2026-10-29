@@ -287,7 +287,7 @@ function ReviewRecord({ review, finding }: { review: Review; finding?: Finding }
                           disabled={ws.busy || graph.project.status === "completed"}
                           title={
                             high
-                              ? "高风险问题不能由 Decide 驳回；由操作员在此确认豁免"
+                              ? "可选的人工捷径：不追究时直接关闭这个问题（模型也可以带理由 waived）"
                               : "豁免后 Decide 可用理由关闭此问题"
                           }
                           onClick={() => {
@@ -297,7 +297,7 @@ function ReviewRecord({ review, finding }: { review: Review; finding?: Finding }
                         >
                           人工豁免
                         </button>
-                        <small>未处置前 Decide 不能完成；高风险问题必须有此人工决定。</small>
+                        <small>未处置前不能完成；模型可用理由 waived，人工豁免只是可选的捷径。</small>
                       </div>
                     )}
                   </div>
@@ -462,7 +462,8 @@ function ReviewRecord({ review, finding }: { review: Review; finding?: Finding }
             />
           </label>
           <p className="quiet">
-            豁免只关闭这一条审核问题，不会替 Decide 建任务或关闭 Hint/Coverage；高风险问题没有此步骤时完成会被拒绝。
+            豁免只关闭这一条审核问题，不会替 Decide 建任务或关闭 Hint/Coverage；它只是可选的捷径，模型也可以带理由
+            waived。
           </p>
         </Modal>
       )}

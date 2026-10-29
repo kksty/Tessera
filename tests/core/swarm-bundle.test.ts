@@ -24,13 +24,13 @@ test("swarm 执行者、消息与回合水位随项目备份导出并在导入�
     ).project.id;
     const job = source.claim(id, "w1", 0)!;
     const child = source.swarmSpawn(id, "p001", { reason: "split auth", direction: "auth" }, job.run_id!);
-    source.swarmSendMessage(id, "p001", { to: child.id, kind: "handoff", body: "check login", refs: [] }, job.run_id!);
+    source.swarmSendMessage(id, "p001", { to: child.id, kind: "question", body: "check login", refs: [] }, job.run_id!);
     source.swarmTurnEnd(id, "p001", { worker: "w1", wake: "waiting", summary: "done" }, job.run_id!);
     source.release(id, job);
 
     const manifest = await exportProjectBundle(source, id, bundle);
     assert.equal(manifest.counts.peers, 2, "manifest counts peers");
-    // spawn 的系统消息 + handoff 各一条。
+    // spawn 的系统消息和一条提问消息。
     assert.equal(manifest.counts.messages, 2, "manifest counts messages");
     assert.ok(
       manifest.contents.some((entry) => entry.startsWith("messages-")),

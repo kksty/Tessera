@@ -1,6 +1,7 @@
 import { Bookmark, CoverageEntry, DeletedNodeRef, Fact, Goal, Step } from "./models-core.js";
 import {
   Asset,
+  CompletionRecord,
   Evidence,
   Finding,
   Lead,
@@ -69,6 +70,11 @@ export interface Project {
     worker: string;
     observation_revision: number;
   };
+  /**
+   * 完成的持久记录。classic 把同一份记录写在合成的“完成任务”Step 上；
+   * swarm 没有 Step，覆盖表与审核问题处置保存在项目本身。
+   */
+  completion?: CompletionRecord;
 }
 
 export interface Graph {

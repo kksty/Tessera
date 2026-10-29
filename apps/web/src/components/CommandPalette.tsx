@@ -27,6 +27,7 @@ import {
 import type { Graph, OverviewFinding, ProjectSummary } from "../../../../packages/protocol/src/index.js";
 import { severityLabels, statusLabels } from "../format.js";
 import { pageTitles, workspacePages, type Page, type ProjectPage } from "../workspace.js";
+import { modeLabels, normalizedMode } from "./ModeBadge.js";
 import { Kbd } from "./ui.js";
 import { useDialogFocus } from "./useDialogFocus.js";
 
@@ -117,7 +118,7 @@ export function CommandPalette({
       const swarm = graph.project.mode === "swarm";
       for (const [key, label] of Object.entries(pageTitles)) {
         if (!(key in projectIcons)) continue;
-        // swarm 没有 Step：隐藏以 Step 为中心的「人工重试」；经典模式不显示「执行者」。
+        // swarm 没有 Step：隐藏以 Step 为中心的「人工重试」；决策者架构不显示「执行者」。
         if (swarm ? key === "retry" : key === "peers" || key === "messages") continue;
         pages.push([key as ProjectPage, label]);
       }
@@ -138,7 +139,7 @@ export function CommandPalette({
         key: `project-${project.id}`,
         group: "项目",
         label: project.title,
-        hint: `${statusLabels[project.status] || project.status} · ${project.finding_count} 项发现`,
+        hint: `${statusLabels[project.status] || project.status} · ${modeLabels[normalizedMode(project.mode)].short} · ${project.finding_count} 项发现`,
         icon: <FolderKanban size={15} />,
         run: () => onOpenProject(project.id),
       });

@@ -337,7 +337,7 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
     tools.push(
       tool(
         "revise_fact",
-        "Revise an existing Fact in place instead of opening a bookkeeping Step: correct counts or wording, add the request/parameter_sources provenance a negative claim was missing, or attach evidence archived later. Cannot change status or the origin Fact; each changed field keeps the replaced value.",
+        "Revise an existing Fact in place instead of opening a bookkeeping Step: correct counts or wording, add the request/parameter_sources provenance or negative_scope a negative claim was missing, or attach evidence archived later. Cannot change status or the origin Fact; each changed field keeps the replaced value.",
         Type.Unsafe(z.toJSONSchema(factRevisionSchema.extend({ fact_id: z.string().trim().min(1) }), { io: "input" })),
         async (args) => {
           const parsed = factRevisionSchema.extend({ fact_id: z.string().trim().min(1) }).safeParse(args);
@@ -419,6 +419,7 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
             plan_id: response.plan_id,
             reused: response.plan?.reused ?? null,
             steps: response.plan?.steps ?? [],
+            warnings: response.plan?.warnings ?? [],
             settle_ok: response.settle?.ok ?? null,
             more: response.settle?.more ?? false,
             batches: settlementBatches(input).length,
@@ -475,7 +476,7 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
       ),
       tool(
         "submit_fact",
-        "Persist an observed fact immediately. conclusion (≤120 characters) is what the fact asserts and is always shown in full; status separates positive, negative and disputed results. A not_observed fact also records request {method,url} and parameter_sources [{parameter,source,evidence_ids}] so Review can distinguish a real absence from wrong parameters.",
+        "Persist an observed fact immediately. conclusion (≤120 characters) is what the fact asserts and is always shown in full; status separates positive, negative and disputed results. A not_observed fact also records request {method,url}, parameter_sources [{parameter,source,evidence_ids}] and negative_scope {attempted,not_tested,confidence} so Review can distinguish a bounded absence from a wrong-parameter or exhausted claim.",
         // The same schema the store enforces. Rejecting here names the offending
         // field before upload, instead of a 422 after the observation was written
         // in the model's context.
@@ -582,7 +583,7 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
     tools.push(
       tool(
         "send_message",
-        "给同伴发消息。省略 to 即广播给所有活跃执行者。用于共享进展、提问、交接或声明方向，避免重复劳动。",
+        "给同伴发消息。省略 to 即广播。handoff 必须在 refs 包含已有 Fact 或 Evidence ID；说明已知缺口。没有已有观测时使用 question 或 notice。",
         Type.Object({
           to: Type.Optional(Type.String()),
           kind: Type.Optional(Type.String()),
@@ -610,11 +611,12 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
       }),
       tool(
         "spawn_peer",
-        "裂变一个新的平等执行者去并行探索一个方向。parent 只是血缘，不产生指挥权；无数量或深度上限。",
+        "裂变一个新的平等执行者去并行探索一个方向。start_message 是交接时须提供 start_refs（已有 Fact 或 Evidence ID）；没有观测可省略交接并用 question 交流。parent 只是血缘，不产生指挥权。",
         Type.Object({
           reason: Type.String(),
           direction: Type.Optional(Type.String()),
           start_message: Type.Optional(Type.String()),
+          start_refs: Type.Optional(Type.Array(Type.String())),
         }),
         (a) => submit(`${peerBase}/spawn`, { worker: job.worker, ...a }),
       ),
@@ -626,16 +628,18 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
       ),
       tool(
         "propose_completion",
-        "发起完成共识：提交覆盖表（覆盖全部已观测 host+path，tested 带 evidence、waived 带理由、na 表示不适用）。全体活跃执行者同意且无在途活动后才进入审核收尾。",
+        "发起完成共识：提交覆盖表（覆盖全部已观测 host+path，tested 带 evidence、waived 带理由、na 表示不适用）；当前未处置的 Review 问题必须逐条处置——addressed 引用审核之后保存的新证据，waived 说明理由（高风险问题只能由操作员在审核页豁免）。全体活跃执行者同意、且没有人还有未读消息和未结束回合后，才进入审核收尾。",
         Type.Object({
           reason: Type.Optional(Type.String()),
           coverage: Type.Optional(Type.Array(Type.Any())),
+          review_issues: Type.Optional(Type.Array(Type.Any())),
         }),
         (a) =>
           submit(`${peerBase}/completion/propose`, {
             worker: job.worker,
             reason: a.reason,
             coverage: a.coverage ?? [],
+            review_issues: a.review_issues ?? [],
           }),
       ),
       tool(

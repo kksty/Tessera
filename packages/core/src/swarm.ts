@@ -174,11 +174,12 @@ export class SwarmRecords {
     if (!row) return;
     this.db
       .prepare(
-        `UPDATE project_peer_state SET wake=?, seen_revision=COALESCE(?, turn_start_revision),
+        `UPDATE project_peer_state SET wake=?, last_turn_at=?, seen_revision=COALESCE(?, turn_start_revision),
           seen_message_seq=MAX(COALESCE(?, seen_message_seq), seen_message_seq), summary=? WHERE project_id=? AND peer_id=?`,
       )
       .run(
         input.wake,
+        new Date().toISOString(),
         revision ?? null,
         input.seenMessageSeq && input.seenMessageSeq > 0 ? input.seenMessageSeq : null,
         input.summary ?? null,
