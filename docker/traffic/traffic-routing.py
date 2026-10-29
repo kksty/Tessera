@@ -28,11 +28,11 @@ def upstream_mode(value):
     return f'upstream:{parsed.scheme}://{host}:{parsed.port}@127.0.0.1:8081'
 
 
-def configure(env, items, run, step, bundle):
+def configure(env, items, run, step, bundle, proxy_host='127.0.0.1'):
     """Return whether automatic routing was installed. Existing proxy/preload settings win."""
     if any(env.get(name) for name in (*PROXIES, 'LD_PRELOAD', 'PROXYCHAINS_CONF_FILE')):
         return False
-    proxy = f'http://{quote(run, safe="")}:{quote(step, safe="")}@127.0.0.1:8081'
+    proxy = f'http://{quote(run, safe="")}:{quote(step, safe="")}@{proxy_host}:8081'
     env['TESSERA_CAPTURE_PROXY_URL'] = proxy
     for name in ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY'):
         env[name] = proxy

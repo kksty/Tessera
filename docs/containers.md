@@ -1,17 +1,20 @@
 # 容器镜像：本地构建、更新与回退
 
-本项目不发布预构建镜像，也没有 GitHub Packages / GHCR 包。`compose.yaml` 直接使用本机从当前源码构建的两个镜像，克隆代码后即可在本地构建。
+本项目不发布预构建镜像，也没有 GitHub Packages / GHCR 包。`compose.yaml` 直接使用本机从当前源码构建的三个镜像，克隆代码后即可在本地构建。
 
-## 两个镜像
+## 三个镜像
 
 | 镜像                    | 用途                                             | 构建 target                            |
 | ----------------------- | ------------------------------------------------ | -------------------------------------- |
 | `tessera-server:<tag>`  | Server 与 Dispatcher（同一镜像，不同命令）       | 根目录 `Dockerfile` 的 `server`        |
 | `tessera-runtime:<tag>` | Dispatcher 动态创建的项目 Worker，含 Kali 工具链 | 根目录 `Dockerfile` 的 `runtime`/`full` |
+| `tessera-gateway:<tag>` | 每项目独立出口、HTTP/HTTPS 采集与入站回连 | 根目录 `Dockerfile` 的 `gateway` |
 
-两个镜像共用 `Dockerfile` 里同一个 Node 构建 stage；`server` 是最后一个 stage，因此直接执行 `docker build .` 仍然构建服务端镜像。Worker 的 `runtime` / `full` 是显式 target，不会被默认构建。
+Server 与 Worker 共用 `Dockerfile` 的 Node 构建 stage；Gateway 使用独立 stage。`server` 是最后一个 stage，因此直接执行 `docker build .` 仍然构建服务端镜像。
 
 `worker-image` 是一次性服务：构建并校验 Worker 镜像后执行 `node --version` 退出。实际项目 Worker 由 Dispatcher 按 `TESSERA_WORKER_IMAGE` 创建，不是常驻服务。
+
+`gateway-image` 同样只负责构建校验，实际网关按项目创建。VPS 不需要切换到 host 网络；回连端口自动分配与部署配置见[项目出口与回连](network-gateway.md)。
 
 ## 构建
 

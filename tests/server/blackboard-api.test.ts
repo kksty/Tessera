@@ -193,8 +193,9 @@ test("HTTP observations and discovery bind provenance to the validated lease and
 test("Fact revisions are exposed as an in-place bookkeeping write", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tessera-fact-revision-api-"));
   const store = new Store(join(dir, "graph.db"));
-  const id = store.create(createProjectSchema.parse({ title: "Revision", origin: "https://example.test", goal: "Assess" }))
-    .project.id;
+  const id = store.create(
+    createProjectSchema.parse({ title: "Revision", origin: "https://example.test", goal: "Assess" }),
+  ).project.id;
   const step = store.manualStep(id, { from: ["origin"], description: "Collect counts", creator: "human", claim: true });
   const fact = store.fact(id, step.id, { worker: "human", description: "共 5 个身份证号", evidence_ids: [] });
   const app = buildApp(store, new RuntimeConfig(join(dir, "config.json")), join(dir, "no-web"));

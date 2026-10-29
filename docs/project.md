@@ -154,9 +154,9 @@ Pi 目录默认启用联网检查：首次使用目录时向 `pi.dev` 刷新，�
 
 平台数据卷（默认 `tessera-data`，可由 `TESSERA_DATA_VOLUME` 改名）与各项目工作区卷都由 Docker 管理，命名卷是唯一形态，不再支持宿主机目录挂载。日常启动为 `docker compose up -d`。卷不会随 `docker compose down` 删除；备份同时覆盖平台卷和各项目工作区，SQLite 使用一致性备份或先停止写入。
 
-删除项目需操作员确认：暂停并锁定 → 等任务和文件操作退出 → 校验资源归属并删除项目容器 / 辅助容器 / 工作区卷 → 删除证据及数据库记录。失败保留删除标记，可原操作重试；共享镜像、网络、平台数据卷和其他项目不在删除范围内。
+删除项目需操作员确认：暂停并锁定 → 等任务和文件操作退出 → 校验资源归属并删除项目 Worker / 网关 / 辅助容器 / 工作区卷 / 网关卷 / 隔离网络 → 删除证据及数据库记录。失败保留删除标记，可原操作重试；共享镜像、网络、平台数据卷和其他项目不在删除范围内。
 
-登录是单操作员共享项目，非多租户系统。Dispatcher 持全局内部凭据；Worker 只持项目派生 token，不能跨项目访问或执行人的审批 / 配置动作。Dispatcher 的 Docker Socket 与 Worker 的 root、NET_RAW / NET_ADMIN 是高权限运行条件，不能当作对提示注入或恶意程序的充分隔离。
+登录是单操作员共享项目，非多租户系统。Dispatcher 持全局内部凭据；Worker 只持项目派生 token，不能跨项目访问或执行人的审批 / 配置动作。Dispatcher 的 Docker Socket、网关的 NET_ADMIN 与 Worker 的 root、NET_RAW 是高权限运行条件，不能当作对提示注入或恶意程序的充分隔离。
 
 ### 结果恢复
 
@@ -173,11 +173,11 @@ node /opt/tessera/dist/recover-closeout.mjs --file /workspace/runs/WORKER_ID/rec
 
 ## 网络与证据
 
-当前只新建显式代理接入的 HTTP/HTTPS 流量记录。Execute 为支持的客户端尝试提供 `http_proxy` / `https_proxy` 和项目 CA；已有代理、LD_PRELOAD 或 proxychains 配置优先，不强制透明转发。浏览器或忽略环境变量的工具需自行接入 Worker 内 `127.0.0.1:8081`；非 HTTP 协议和原始探测不在该录制范围。
+默认 Compose 部署为每项目创建独立网关与隔离网络。隔离网络从 `TESSERA_GATEWAY_SUBNET_POOL`（默认 `10.250.0.0/16`）显式分配一个 `/29`，避开 Docker 默认的 `172.16.0.0/12` 与目标网段。Worker 无直连出口，网关透明接管 TCP 并只归档识别出的 HTTP/HTTPS；其他协议和入站回连不显示。项目 CA 自动安装，私钥只保存在网关。显式代理变量继续携带 Run/Step 标签；没有关联信息的透明流量仅归入项目。网关异常不回退直连，采集存储故障明确报告记录缺口。
 
-`TESSERA_CAPTURE_UPSTREAM` 支持 HTTP、HTTPS、SOCKS5；`TESSERA_CAPTURE_BYPASS` 允许保留原连接方式，均由 Dispatcher 全局环境传入。上游失败不直连回退、不重放请求。录制代理默认把上游 TLS 上限设为 1.2，避免只支持 TLS 1.2 的旧站点在 TLS 1.3 ClientHello 时直接断开；`TESSERA_CAPTURE_TLS_MAX=TLS1_3` 或 `UNBOUNDED` 可放开上限，此时上游 TLS 握手失败会作为错误记录保留，并自动把后续连接降为 TLS 1.2，首次失败请求仍不重放。若降为 TLS 1.2 后握手仍失败，采集状态会带 `tls_notice`，流量页显示黄色提示，Run 不会被单独标记为失败；提示会随该主机后续成功响应清除。设置页的“流量采集”开关控制是否注入录制代理；关闭后新执行的 Run 直连且不新增流量记录，已有记录保留。请求响应正文流式分块保存，页面分页预览并可下载完整内容；采集失败保留缺口，普通任务仍可能继续，活跃状态不代表全覆盖。
+VPS 配置 TESSERA_CALLBACK_HOST 后，平台从端口池为每个项目保留一段 TCP/UDP 端口，并按并发 Run 把该段切成互不重叠的子段，将公网地址和本 Run 的子段注入执行环境。模型只需在子段内选择空闲端口并监听 0.0.0.0，公网端口与 Worker 端口一致，不需要管理网关。没有配置公网地址时默认不发布端口。端口映射不替代工具进程保活；项目暂停时回连停止。部署步骤、协议边界及验证见[项目出口与回连](network-gateway.md)。
 
-工具、字典、变量与代理细节统一在运行时资源 `docker/tools/reference.md`，按需读取；`environment.md` 是简短环境提示。参考资料不是 skill，不默认注入工具教程。公共代理入口、动态端口发布、项目级出口和托管 REM / Chisel 均没有对应平台接口，不能把手工安装或 shell 后台进程当作已实现能力。
+设置页的流量采集开关在已有任务排空后应用，关闭采集仍保留出口转发和回连映射。上游 TLS 默认上限为 1.2，可通过 TESSERA_CAPTURE_TLS_MAX 调整；请求不自动重放。新拓扑不接受旧的 TESSERA_CAPTURE_UPSTREAM / TESSERA_CAPTURE_BYPASS；尚未配置托管 sing-box/VPN。工具与字典参考统一在 docker/tools/reference.md。
 
 证据、流量与会话可能含敏感数据；它们和导出文件应按实际数据权限管理，项目删除不覆盖外部备份或模型服务保存的数据。
 

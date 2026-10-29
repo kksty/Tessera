@@ -71,20 +71,10 @@ import { registerModelRelay, pinRunModel } from "./model-relay.js";
 import { workerConfig } from "../../dispatcher/src/worker-config.js";
 import { requestLogging } from "./request-logging.js";
 import { runMetrics } from "../../../packages/core/src/run-metrics.js";
-import { Notifier, type PendingItem } from "./notifications.js";
+import { Notifier } from "./notifications.js";
+import { collectPendingItems } from "./needs-human.js";
+import { jobSchema, text } from "./request-schemas.js";
 
-const text = z.string().trim().min(1).max(65536);
-const jobSchema = z.object({
-  kind: z.enum(["decide", "execute", "review", "peer"]),
-  project_id: text,
-  worker: text,
-  graph_id: text,
-  step_id: text.optional(),
-  finding_id: text.optional(),
-  finding_version: z.number().int().optional(),
-  run_id: text.optional(),
-  peer_id: text.optional(),
-});
 export function buildApp(
   store: Store,
   runtime = new RuntimeConfig(".tessera/runtime.json"),
@@ -131,46 +121,7 @@ export function buildApp(
   const refreshNeedsHuman = (prime = false) => {
     if (!prime && runtime.value.notifications?.notify_needs_human !== true) return;
     try {
-      const items: PendingItem[] = [];
-      for (const project of store.list()) {
-        const graph = store.get(project.id);
-        const blockedRuns = store
-          .runs(project.id, 200)
-          .filter(
-            (run) =>
-              run.status === "needs_attention" &&
-              !run.resolved_at &&
-              !!run.node_id &&
-              graph.steps.some((s) => s.id === run.node_id && !s.deleted && !s.concluded_at && !s.discarded),
-          );
-        if (blockedRuns.length)
-          items.push({
-            key: `${project.id}:retry`,
-            kind: "retry",
-            line: `${project.title}：${blockedRuns.length} 次运行待人工重试`,
-            at: blockedRuns
-              .map((run) => run.finished_at || run.heartbeat_at)
-              .sort()
-              .at(-1),
-          });
-        if (project.pending_asset_count > 0)
-          items.push({
-            key: `${project.id}:assets`,
-            kind: "assets",
-            line: `${project.title}：${project.pending_asset_count} 个资产等待人工批准`,
-            at: graph.assets
-              .filter((asset) => asset.approval === "pending")
-              .map((asset) => asset.created_at)
-              .sort()
-              .at(-1),
-          });
-        if (project.last_error)
-          items.push({
-            key: `${project.id}:error`,
-            kind: "error",
-            line: `${project.title}：项目错误 — ${String(project.last_error).replace(/\s+/g, " ").slice(0, 120)}`,
-          });
-      }
+      const items = collectPendingItems(store);
       if (prime) notifier.primeNeedsHuman(items);
       else notifier.notifyNeedsHuman(items);
     } catch {

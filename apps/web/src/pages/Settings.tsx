@@ -778,8 +778,8 @@ export function SettingsPage() {
           </label>
           <p className="settings-hint">
             {draft.capture_enabled !== false
-              ? "Execute 会注入 http_proxy / https_proxy 并采集 HTTP / HTTPS 流量；上游默认使用 TLS 1.2。"
-              : "已关闭：新执行的 Run 不再注入代理环境变量，工具直连目标，流量页不会新增记录。已有记录保留。"}
+              ? "项目出口采集 HTTP / HTTPS 流量；上游默认使用 TLS 1.2。设置变化会在现有任务排空后应用。"
+              : "已关闭：现有任务排空后停止 HTTP / HTTPS 采集，保留出口转发、回连端口和已有记录。"}
           </p>
         </Card>
 

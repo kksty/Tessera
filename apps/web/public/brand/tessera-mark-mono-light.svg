@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Tessera">
   <defs>
     <clipPath id="tessera-mark-clip">
-      <rect x="3.5" y="3.5" width="25" height="25" rx="5.5"/>
+      <path d="M2.6 2.6H25.4L29.4 6.6V29.4H2.6Z"/>
     </clipPath>
   </defs>
   <g clip-path="url(#tessera-mark-clip)" fill="#0B0C12">
-    <path d="M3.5 3.5H27.2L3.5 27.2Z"/>
-    <path d="M28.5 28.5H4.8L28.5 4.8Z"/>
+    <path d="M2.6 2.6H28.2L2.6 28.2Z"/>
+    <path d="M29.4 29.4H3.8L29.4 3.8Z"/>
   </g>
 </svg>

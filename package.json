@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "test:traffic": "python -m unittest discover -s tests/traffic -p test_*.py",
+    "test:gateway": "tsx scripts/checks/gateway.ts",
     "test:browser": "node scripts/checks/browser.cjs",
     "test:frontend-browser": "tsx scripts/checks/frontend-browser.ts",
     "test:completion-browser": "tsx scripts/checks/completion-browser.ts",

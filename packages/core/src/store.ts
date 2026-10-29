@@ -96,64 +96,21 @@ import type {
   completionProposeSchema,
   completionRespondSchema,
 } from "../../protocol/src/index.js";
-const now = () => new Date().toISOString();
-/** Bumped whenever a startup migration changes the persisted graph shape. */
-const DECIDE_MAX_BATCH_WAIT_MS = 30000;
-const expired = (timestamp: string | null | undefined, seconds: number) =>
-  !timestamp || Date.now() - Date.parse(timestamp) > seconds * 1000;
-const ready = (timestamp: string | undefined) => !timestamp || Date.parse(timestamp) <= Date.now();
-const executeCapacityFailure = (error?: string) =>
-  modelIssue(error)?.kind === "context" ||
-  /^(?:Closeout budget exhausted|Read-only recovery closeout timeout)/i.test(error || "");
-/**
- * Per-peer failure buckets keep one broken swarm member from consuming the
- * shared "peer" counter that pauses the whole project. Non-peer kinds keep
- * their historical single bucket.
- */
-const jobFailureKey = (kind: Job["kind"], peerId?: string | null) =>
-  kind === "peer" && peerId ? `peer:${peerId}` : kind;
-/**
- * Coldness bookkeeping is memory management, not material change: it must never
- * bump a revision, invalidate a pending completion or pollute the change index.
- */
-const metadataFields = new Set([
-  "last_referenced_round",
-  "last_read_round",
-  "cooldown_override",
-  // swarm 持久身份与共识轮次的变化通过显式事件与显式唤醒驱动，不参与图版本推进，
-  // 否则每次表态/开轮都会唤醒所有 peer。仍会正常持久化（GraphStorage.save 全量写）。
-  "peers",
-  "rounds",
-]);
-const material = (value: unknown) => JSON.stringify(value, (key, item) => (metadataFields.has(key) ? undefined : item));
-export function hostname(value: string): string {
-  const raw = value.trim().replace(/^\*\./, "");
-  let host: string;
-  try {
-    host = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname;
-  } catch {
-    return fail(422, "Invalid hostname");
-  }
-  host = domainToASCII(host.replace(/\.$/, "")).toLowerCase();
-  if (!host || host.includes("/") || host.length > 253) return fail(422, "Invalid hostname");
-  return host;
-}
-const collections = [
-  "facts",
-  "goals",
-  "steps",
-  "leads",
-  "hints",
-  "findings",
-  "assets",
-  "evidence",
-  "reviews",
-  "usage",
-  "bookmarks",
-  "peers",
-  "rounds",
-] as const;
-type StepInsert = StepDraft & { hint_ids?: string[]; lead_ids?: string[] };
+import {
+  now,
+  DECIDE_MAX_BATCH_WAIT_MS,
+  expired,
+  ready,
+  executeCapacityFailure,
+  jobFailureKey,
+  metadataFields,
+  material,
+  hostname,
+  collections,
+  type StepInsert,
+} from "./store-support.js";
+export { hostname } from "./store-support.js";
+
 export class Store {
   readonly db: DatabaseSync;
   readonly evidenceRoot: string;

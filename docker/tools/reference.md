@@ -197,14 +197,14 @@ core 只安装客户端，不启动数据库服务。先查本机帮助，使用
 
 ## 代理与录制
 
-Execute 尝试为支持的 HTTP 客户端提供录制代理和项目 CA。已有代理环境变量、LD_PRELOAD 或 PROXYCHAINS_CONF_FILE 时保留原设置；不保证所有工具流量被采集。
+默认部署由平台在项目出口透明识别 HTTP/HTTPS；Execute 同时为支持的客户端提供代理变量，以携带 Run/Step 关联信息。项目 CA 自动安装，不需要自行配置网络。
 
-- 录制入口为 Worker 内的 `http://127.0.0.1:8081`。浏览器或忽略代理环境变量的工具可显式配置；127.0.0.1 仅指当前 Worker。
-- `TESSERA_CAPTURE_PROXY_URL` 带 Run/Step 关联信息；CA 为 `/var/lib/tessera-proxy/mitmproxy-ca-cert.pem`。
-- HTTP/HTTPS 正文分块保存；当前不新建 TCP/UDP/ICMP 记录。采集故障不会重放请求，也不阻止普通执行。
+- 使用平台注入的 `http_proxy` / `https_proxy` 即可。忽略代理变量的 TCP 客户端仍经过出口；没有关联信息的流量仅归入项目。
+- 公共 CA 为 `/etc/tessera-ca/project-ca.crt`，系统与常用运行时已配置其信任；CA 私钥不在执行环境中。
+- HTTP/HTTPS 正文分块保存；不新建 TCP/UDP/ICMP 或入站回连记录。出口代理不可用时连接失败，不直连回退或重放请求。
 - 工具自带代理或 `proxychains4 -f /workspace/路径/proxychains.conf 工具 参数` 由任务自主选择。proxychains 包装器保留用户代理，去除自动注入的采集变量。
 - gogo 经代理时优先用 `--proxy=socks5://host:port`；SYN、UDP、ICMP 及原始套接字不能由 proxychains 转发。Go 静态程序优先使用原生代理参数。
-- 设置页的「流量采集」可关闭录制代理；关闭后新 Run 直连，不注入代理环境变量，已有记录保留。
-- Dispatcher 可配置 `TESSERA_CAPTURE_UPSTREAM`（http、https、socks5）及 `TESSERA_CAPTURE_BYPASS`。上游失败不回退直连，不重放目标请求。
+- 设置页的「流量采集」可关闭录制代理；现有任务排空后生效。关闭后仍使用平台出口和回连映射，已有记录保留。
+- 加密隧道内部流量、证书固定与双向 TLS 不保证采集成功。采集开启时 UDP 443 被拒绝，以允许 HTTP/3 客户端回退到 TCP；其他 UDP 不记录。
 - 上游 TLS 默认上限为 1.2，旧站点首次请求即可成功；`TESSERA_CAPTURE_TLS_MAX=TLS1_3` 或 `UNBOUNDED` 可放开。放开后若握手被目标直接断开，采集会记录该错误并把后续连接降为 TLS 1.2，首次失败请求仍不重放。降级后 TLS 握手仍失败时，流量页会显示黄色 `tls_notice` 提示（不会把 Run 标失败），该主机后续成功响应会清除提示。目标只接受 TLS 1.2 时，OpenSSL 客户端直连可显式加 `--tlsv1.2 --tls-max 1.2`；不要因为一次 TLS EOF 就判定站点不可达。
-- 不存在托管 REM、跨 Run 隧道、自动发布 Worker 公网端口或项目级出口切换接口。普通命令归 Run，结束时清理。
+- 平台提供 `TESSERA_CALLBACK_HOST`、`TESSERA_CALLBACK_PORT_START`、`TESSERA_CALLBACK_PORT_END` 时，可在此范围内选空闲 TCP/UDP 端口，监听 `0.0.0.0`。让已授权目标连接回连地址的相同端口，不需要自行创建转发或隧道。没有这些变量时，不假定端口已公开。普通命令归 Run，结束时清理；没有托管的跨 Run 监听进程。

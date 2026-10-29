@@ -12,25 +12,60 @@ import { firstSentence } from "../../packages/core/src/projection.js";
 test("every write path records a full conclusion and a three-state status", () => {
   const store = new Store(":memory:");
   try {
-    const id = store.create(createProjectSchema.parse({ title: "Conclusion", origin: "https://example.test", goal: "Assess" })).project.id;
+    const id = store.create(
+      createProjectSchema.parse({ title: "Conclusion", origin: "https://example.test", goal: "Assess" }),
+    ).project.id;
     const planner = store.claim(id, "planner", 0)!;
     let graph = store.get(id);
-    commitPlan(store, id, decideSchema.parse({ worker: planner.worker, revision: graph.revision,
-      observation_revision: graph.observation_revision, planning_revision: graph.planning_revision, steps: [{ from: ["origin"], description: "Probe the endpoint" }] }));
+    commitPlan(
+      store,
+      id,
+      decideSchema.parse({
+        worker: planner.worker,
+        revision: graph.revision,
+        observation_revision: graph.observation_revision,
+        planning_revision: graph.planning_revision,
+        steps: [{ from: ["origin"], description: "Probe the endpoint" }],
+      }),
+    );
     const executor = store.claim(id, "executor", 0)!;
-    store.execute(id, executor.step_id!, executeSchema.parse({
-      worker: executor.worker,
-      facts: [
-        { description: "GET /admin returned 200 with the login page. Body length 4211.", conclusion: "/admin 无需认证即可访问", status: "observed", objects: ["example.test:443/admin"], evidence_ids: [] },
-        { description: "POST /admin rejected anonymous writes.", conclusion: "匿名写入被拒绝", status: "not_observed", request: { method: "POST", url: "https://example.test/admin" }, evidence_ids: [] },
-        { description: "Two responses disagreed about the session cookie.", conclusion: "会话状态存在争议", status: "disputed", evidence_ids: [] },
-        "Legacy string observation without an explicit conclusion. More detail follows.",
-      ],
-      summary: "Probed",
-    }));
+    store.execute(
+      id,
+      executor.step_id!,
+      executeSchema.parse({
+        worker: executor.worker,
+        facts: [
+          {
+            description: "GET /admin returned 200 with the login page. Body length 4211.",
+            conclusion: "/admin 无需认证即可访问",
+            status: "observed",
+            objects: ["example.test:443/admin"],
+            evidence_ids: [],
+          },
+          {
+            description: "POST /admin rejected anonymous writes.",
+            conclusion: "匿名写入被拒绝",
+            status: "not_observed",
+            request: { method: "POST", url: "https://example.test/admin" },
+            evidence_ids: [],
+          },
+          {
+            description: "Two responses disagreed about the session cookie.",
+            conclusion: "会话状态存在争议",
+            status: "disputed",
+            evidence_ids: [],
+          },
+          "Legacy string observation without an explicit conclusion. More detail follows.",
+        ],
+        summary: "Probed",
+      }),
+    );
     graph = store.get(id);
-    const facts = graph.facts.filter(f => f.id !== "origin");
-    assert.deepEqual(facts.map(f => f.status), ["observed", "not_observed", "disputed", "observed"]);
+    const facts = graph.facts.filter((f) => f.id !== "origin");
+    assert.deepEqual(
+      facts.map((f) => f.status),
+      ["observed", "not_observed", "disputed", "observed"],
+    );
     assert.equal(facts[0].conclusion, "/admin 无需认证即可访问");
     assert.deepEqual(facts[0].objects, ["example.test:443/admin"]);
     assert.equal(facts[0].conclusion_inferred, undefined);
@@ -43,11 +78,16 @@ test("every write path records a full conclusion and a three-state status", () =
     const decideJob = store.claim(id, "planner", 0)!;
     assert.equal(decideJob.kind, "decide");
     const entry = memoryEntry(store.get(id), decideJob);
-    const line = entry.facts.find(l => l.startsWith(facts[0].id))!;
+    const line = entry.facts.find((l) => l.startsWith(facts[0].id))!;
     assert.match(line, /\/admin 无需认证即可访问/);
     assert.match(line, /observed/);
-    assert.match(entry.facts.find(l => l.startsWith(facts[3].id))!, /（推断）/);
-  } finally { store.close(); }
+    assert.match(
+      entry.facts.find((l) => l.startsWith(facts[3].id))!,
+      /（推断）/,
+    );
+  } finally {
+    store.close();
+  }
 });
 
 test("firstSentence prefers a sentence boundary and only then cuts", () => {

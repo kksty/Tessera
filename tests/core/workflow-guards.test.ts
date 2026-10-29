@@ -267,7 +267,10 @@ test("revise_fact refuses the origin Fact and provenance-erasing edits on a nega
       parameter_sources: [{ parameter: "a", source: "表单", evidence_ids: [] }],
       evidence_ids: [],
     });
-    assert.throws(() => f.store.reviseFact(f.id, negative.id, { worker: "w1", parameter_sources: [] }), /负向观测被拒绝/);
+    assert.throws(
+      () => f.store.reviseFact(f.id, negative.id, { worker: "w1", parameter_sources: [] }),
+      /负向观测被拒绝/,
+    );
   } finally {
     f.store.close();
   }

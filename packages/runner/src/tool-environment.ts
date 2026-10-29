@@ -28,6 +28,9 @@ export function toolEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS
     "REQUESTS_CA_BUNDLE",
     "CURL_CA_BUNDLE",
     "NODE_EXTRA_CA_CERTS",
+    "TESSERA_CALLBACK_HOST",
+    "TESSERA_CALLBACK_PORT_START",
+    "TESSERA_CALLBACK_PORT_END",
   ]);
   return Object.fromEntries(
     Object.entries(source).filter(

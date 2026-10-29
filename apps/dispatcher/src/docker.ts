@@ -3,6 +3,16 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { DispatchConfig, Job } from "../../../packages/protocol/src/index.js";
 import { projectToken } from "../../../packages/protocol/src/internal-auth.js";
 import { workerConfig } from "./worker-config.js";
+import {
+  CallbackSlotRegistry,
+  callbackRange,
+  callbackSlotCount,
+  gatewayEnabled,
+  gatewayIdleMilliseconds,
+  ProjectGateway,
+} from "./gateway.js";
+
+type Gateway = Awaited<ReturnType<ProjectGateway["ensure"]>>;
 
 export interface DemuxState {
   pending: Buffer;
@@ -43,8 +53,11 @@ export const workerCommand = ["python3", "/opt/tessera/traffic/traffic-launch.py
 export class DockerBackend implements JobBackend {
   private docker: Docker;
   private streams: Docker;
+  private gateway: ProjectGateway;
   constructor(options: Docker.DockerOptions = { socketPath: process.env.DOCKER_SOCKET || "/var/run/docker.sock" }) {
     this.docker = new Docker({ timeout: 30000, ...options });
+    this.gateway = new ProjectGateway(this.docker);
+    this.gatewayIdleMs = gatewayIdleMilliseconds();
     // Exec output can be silent throughout a model/tool call. Keep the control API
     // timeout, but never apply it as an idle timeout to the attached execution stream.
     // docker-modem supports a separate timeout until the response headers arrive.
@@ -52,7 +65,12 @@ export class DockerBackend implements JobBackend {
     this.streams = new Docker(streamOptions);
   }
   private creating = new Map<string, Promise<Docker.Container>>();
+  private provisioning = new Map<string, Promise<Gateway>>();
   private deleting = new Set<string>();
+  private activeRuns = new Map<string, number>();
+  private lastActivity = new Map<string, number>();
+  private callbackSlots = new CallbackSlotRegistry();
+  private gatewayIdleMs: number;
   private async volumeExists(name: string) {
     try {
       await this.docker.getVolume(name).inspect();
@@ -72,6 +90,17 @@ export class DockerBackend implements JobBackend {
     await Promise.allSettled(
       [...this.creating.entries()].filter(([name]) => name.endsWith(`-worker-${projectId}`)).map(([, task]) => task),
     );
+    await this.provisioning.get(projectId)?.catch(() => {});
+  }
+  private beginRun(project: string) {
+    this.activeRuns.set(project, (this.activeRuns.get(project) ?? 0) + 1);
+    this.lastActivity.set(project, Date.now());
+  }
+  private endRun(project: string) {
+    const remaining = (this.activeRuns.get(project) ?? 1) - 1;
+    if (remaining > 0) this.activeRuns.set(project, remaining);
+    else this.activeRuns.delete(project);
+    this.lastActivity.set(project, Date.now());
   }
   async prepare(projectId: string, config: DispatchConfig, busy: boolean): Promise<boolean> {
     if (this.isDeleting(projectId)) return false;
@@ -85,14 +114,15 @@ export class DockerBackend implements JobBackend {
       if ((e as any).statusCode === 404) return true;
       throw e;
     }
-    if (state.Image === desired.Id) return true;
+    const signature = gatewayEnabled() ? await this.gateway.signature(projectId, config) : undefined;
+    if (state.Image === desired.Id && state.Config?.Labels?.["tessera.gateway-signature"] === signature) return true;
     if (busy) return false;
     for (const id of state.ExecIDs || []) if ((await this.docker.getExec(id).inspect()).Running) return false;
     if (state.State.Running) await container.stop({ t: 5 });
     await container.remove({ v: false });
     return true;
   }
-  private async container(job: Job, config: DispatchConfig) {
+  private async container(job: Job, config: DispatchConfig, gateway?: Gateway) {
     if (this.isDeleting(job.project_id)) throw new Error("项目正在删除");
     const name = `${config.volume_prefix}-worker-${job.project_id}`;
     const existing = this.creating.get(name);
@@ -109,7 +139,7 @@ export class DockerBackend implements JobBackend {
       }
       if (state) {
         const desired = await this.docker.getImage(config.worker_image).inspect();
-        if (state.Image !== desired.Id)
+        if (state.Image !== desired.Id || state.Config?.Labels?.["tessera.gateway-signature"] !== gateway?.signature)
           throw new Error("Worker image changed; waiting for active runs to drain before refreshing the container");
         if (this.isDeleting(job.project_id)) throw new Error("项目正在删除");
         // A container whose workspace volume was deleted cannot start. Remove the
@@ -143,7 +173,7 @@ export class DockerBackend implements JobBackend {
         Labels: { "tessera.project": job.project_id },
       });
       if (this.isDeleting(job.project_id)) throw new Error("项目正在删除");
-      return await this.create(name, config, job.project_id);
+      return await this.create(name, config, job.project_id, gateway);
     })();
     this.creating.set(name, promise);
     try {
@@ -153,7 +183,12 @@ export class DockerBackend implements JobBackend {
     }
   }
   /** 在当前网络上创建 Worker 容器；名字被占用仍走 409 复用路径。 */
-  private async create(name: string, config: DispatchConfig, projectId: string): Promise<Docker.Container> {
+  private async create(
+    name: string,
+    config: DispatchConfig,
+    projectId: string,
+    gateway?: Gateway,
+  ): Promise<Docker.Container> {
     const volume = `${config.volume_prefix}-workspace-${projectId}`;
     try {
       const result = await this.docker.createContainer({
@@ -161,13 +196,39 @@ export class DockerBackend implements JobBackend {
         Image: config.worker_image,
         Cmd: ["sleep", "infinity"],
         WorkingDir: "/workspace",
-        Labels: { "tessera.project": projectId, "tessera.managed": "true" },
+        Labels: {
+          "tessera.project": projectId,
+          "tessera.managed": "true",
+          ...(gateway ? { "tessera.gateway-signature": gateway.signature } : {}),
+        },
+        ...(gateway
+          ? {
+              NetworkingConfig: {
+                EndpointsConfig: {
+                  [gateway.networkName]: { IPAMConfig: { IPv4Address: gateway.worker } },
+                },
+              },
+            }
+          : {}),
         HostConfig: {
-          NetworkMode: config.network,
-          Mounts: [{ Type: "volume", Source: volume, Target: "/workspace" }],
+          NetworkMode: gateway?.networkName || config.network,
+          Mounts: [
+            { Type: "volume", Source: volume, Target: "/workspace" },
+            ...(gateway
+              ? [{ Type: "volume" as const, Source: gateway.ca, Target: "/etc/tessera-ca", ReadOnly: true }]
+              : []),
+          ],
           // 渗透工具需要原始套接字与网络配置能力：tcpdump、arp-scan，
           // 以及其它需要原始套接字的工具。显式声明，不依赖守护进程默认权能集。
-          CapAdd: ["NET_RAW", "NET_ADMIN"],
+          CapAdd: gateway ? ["NET_RAW"] : ["NET_RAW", "NET_ADMIN"],
+          ...(gateway
+            ? {
+                CapDrop: ["NET_ADMIN"],
+                SecurityOpt: ["no-new-privileges:true"],
+                Dns: [gateway.gateway],
+                Sysctls: { "net.ipv6.conf.all.disable_ipv6": "1" },
+              }
+            : {}),
         },
         User: "root",
       });
@@ -177,7 +238,7 @@ export class DockerBackend implements JobBackend {
       if ((error as any).statusCode !== 409) throw error;
       // Docker Desktop 重启后恢复容器时，名字可能已被占用、而 inspect 短暂仍返回 404；
       // 另一个 Dispatcher 实例也可能刚刚创建成功。等容器可见后复用它，而不是让任务失败。
-      return this.reuseExisting(name, config, projectId, error);
+      return this.reuseExisting(name, config, projectId, error, gateway);
     }
   }
   /** 删掉网络已失效的残留容器。卷不删：工作区数据由同名卷继续承载。 */
@@ -194,6 +255,7 @@ export class DockerBackend implements JobBackend {
     config: DispatchConfig,
     projectId: string,
     conflict: unknown,
+    gateway?: Gateway,
   ): Promise<Docker.Container> {
     for (let attempt = 0; attempt < 8; attempt++) {
       await sleep(attempt === 0 ? 100 : 500);
@@ -201,7 +263,7 @@ export class DockerBackend implements JobBackend {
       try {
         const state = await container.inspect();
         const desired = await this.docker.getImage(config.worker_image).inspect();
-        if (state.Image !== desired.Id)
+        if (state.Image !== desired.Id || state.Config?.Labels?.["tessera.gateway-signature"] !== gateway?.signature)
           throw new Error(
             "Worker container name is held by a container built from a different image; refusing to reuse it",
           );
@@ -212,7 +274,7 @@ export class DockerBackend implements JobBackend {
         } catch (error) {
           if (!isStaleNetworkError(error)) throw error;
           await this.removeZombie(container);
-          return await this.create(name, config, projectId);
+          return await this.create(name, config, projectId, gateway);
         }
       } catch (error) {
         // 只重试「容器仍不可见」；镜像不符或启动失败是真实错误，直接上抛。
@@ -222,72 +284,109 @@ export class DockerBackend implements JobBackend {
     throw conflict;
   }
   async run(job: Job, config: DispatchConfig, signal: AbortSignal) {
-    const safeConfig = await workerConfig(job, config, process.env.TESSERA_WORKER_TOKEN || "");
-    const { worker_config: _profile, ...workerJob } = job;
-    const container = await this.container(job, config);
-    if (this.isDeleting(job.project_id)) throw new Error("项目正在删除");
-    const exec = await container.exec({
-      Cmd: workerCommand,
-      Env: [
-        `TESSERA_JOB=${Buffer.from(JSON.stringify(workerJob)).toString("base64")}`,
-        `TESSERA_RUN_CONFIG=${Buffer.from(JSON.stringify(safeConfig)).toString("base64")}`,
-        `TESSERA_PROJECT_TOKEN=${projectToken(process.env.TESSERA_WORKER_TOKEN || "", job.project_id)}`,
-        `TESSERA_CAPTURE_UPSTREAM=${process.env.TESSERA_CAPTURE_UPSTREAM || ""}`,
-        `TESSERA_CAPTURE_BYPASS=${process.env.TESSERA_CAPTURE_BYPASS || ""}`,
-        `TESSERA_CAPTURE_TLS_MAX=${process.env.TESSERA_CAPTURE_TLS_MAX || ""}`,
-        // 目录刷新是每个 Runner 进程一次的网络检查；部署显式离线时沿用同一开关，
-        // 否则队列会为每次 Run 多等最多 8 秒的目录超时。Pi 只判断变量是否定义，
-        // 因此 `PI_OFFLINE=`（空值）也必须原样透传。
-        ...(process.env.PI_OFFLINE === undefined ? [] : [`PI_OFFLINE=${process.env.PI_OFFLINE}`]),
-      ],
-      AttachStdout: true,
-      AttachStderr: true,
-    });
-    const stream = await this.streams.getExec(exec.id).start({ Detach: false, Tty: false });
-    let text = "";
-    let demux: DemuxState = { pending: Buffer.alloc(0) };
-    stream.on("data", (chunk: Buffer) => {
-      demux = demuxDockerChunk(chunk, demux, (part) => {
-        if (text.length < 10000) text += part;
-      });
-    });
-    const abort = () => {
-      void exec
-        .inspect()
-        .then(async (state) => {
-          if (!state.Pid) return;
-          const signal = async (name: string) => {
-            const result = await container.exec({ Cmd: ["kill", `-${name}`, String(state.Pid)] });
-            await result.start({ Detach: true });
-          };
-          await signal("TERM").catch(() => {});
-          // A process that ignores SIGTERM must not keep running after the Run was
-          // cancelled. Escalate once, then let the stream close.
-          const timer = setTimeout(() => {
-            void exec
-              .inspect()
-              .then(async (current) => {
-                if (current.Running) await signal("KILL");
-              })
-              .catch(() => {});
-          }, 5000);
-          timer.unref();
-        })
-        .catch(() => {});
-      stream.destroy(new Error("Job cancelled"));
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
+    this.beginRun(job.project_id);
+    let callbackSlot: number | null = null;
     try {
-      await new Promise<void>((resolve, reject) => {
-        stream.on("end", resolve);
-        stream.on("error", reject);
+      const safeConfig = await workerConfig(job, config, process.env.TESSERA_WORKER_TOKEN || "");
+      const { worker_config: _profile, ...workerJob } = job;
+      if (this.isDeleting(job.project_id)) throw new Error("项目正在删除");
+      let gateway: Gateway | undefined;
+      if (gatewayEnabled()) {
+        let task = this.provisioning.get(job.project_id);
+        if (!task) {
+          task = this.gateway.ensure(job.project_id, config);
+          this.provisioning.set(job.project_id, task);
+        }
+        try {
+          gateway = await task;
+        } finally {
+          if (this.provisioning.get(job.project_id) === task) this.provisioning.delete(job.project_id);
+        }
+      }
+      const container = await this.container(job, config, gateway);
+      if (gateway) await this.gateway.route(container, gateway.gateway, job.project_id);
+      if (this.isDeleting(job.project_id)) throw new Error("项目正在删除");
+      const block = gateway?.callback;
+      const slotCount = callbackSlotCount(block, config.max_project_workers || 1);
+      callbackSlot = slotCount ? this.callbackSlots.acquire(job.project_id, slotCount) : null;
+      if (block && slotCount && callbackSlot === null)
+        throw new Error("项目回调端口槽位不足，无法为并发 Run 分配独立端口段");
+      const range = block && callbackSlot !== null ? callbackRange(block, slotCount, callbackSlot) : null;
+      const callback = range ? { host: block!.host, ...range } : block;
+      const exec = await container.exec({
+        Cmd: gateway ? ["python3", "/opt/tessera/traffic/gateway-worker.py"] : workerCommand,
+        Env: [
+          `TESSERA_JOB=${Buffer.from(JSON.stringify(workerJob)).toString("base64")}`,
+          `TESSERA_RUN_CONFIG=${Buffer.from(JSON.stringify(safeConfig)).toString("base64")}`,
+          `TESSERA_PROJECT_TOKEN=${projectToken(process.env.TESSERA_WORKER_TOKEN || "", job.project_id)}`,
+          `TESSERA_CAPTURE_UPSTREAM=${process.env.TESSERA_CAPTURE_UPSTREAM || ""}`,
+          `TESSERA_CAPTURE_BYPASS=${process.env.TESSERA_CAPTURE_BYPASS || ""}`,
+          `TESSERA_CAPTURE_TLS_MAX=${process.env.TESSERA_CAPTURE_TLS_MAX || ""}`,
+          ...(gateway
+            ? [
+                `TESSERA_GATEWAY_IP=${gateway.gateway}`,
+                `TESSERA_CALLBACK_HOST=${callback?.host || ""}`,
+                `TESSERA_CALLBACK_PORT_START=${callback?.first || ""}`,
+                `TESSERA_CALLBACK_PORT_END=${callback?.last || ""}`,
+              ]
+            : []),
+          // 目录刷新是每个 Runner 进程一次的网络检查；部署显式离线时沿用同一开关，
+          // 否则队列会为每次 Run 多等最多 8 秒的目录超时。Pi 只判断变量是否定义，
+          // 因此 `PI_OFFLINE=`（空值）也必须原样透传。
+          ...(process.env.PI_OFFLINE === undefined ? [] : [`PI_OFFLINE=${process.env.PI_OFFLINE}`]),
+        ],
+        AttachStdout: true,
+        AttachStderr: true,
       });
-      const state = await exec.inspect();
-      if (state.ExitCode !== 0)
-        throw new Error(text.replace(/[\x00-\x08]/g, "").slice(-2000) || `Worker exited ${state.ExitCode}`);
+      const stream = await this.streams.getExec(exec.id).start({ Detach: false, Tty: false });
+      let text = "";
+      let demux: DemuxState = { pending: Buffer.alloc(0) };
+      stream.on("data", (chunk: Buffer) => {
+        demux = demuxDockerChunk(chunk, demux, (part) => {
+          if (text.length < 10000) text += part;
+        });
+      });
+      const abort = () => {
+        void exec
+          .inspect()
+          .then(async (state) => {
+            if (!state.Pid) return;
+            const signal = async (name: string) => {
+              const result = await container.exec({ Cmd: ["kill", `-${name}`, String(state.Pid)] });
+              await result.start({ Detach: true });
+            };
+            await signal("TERM").catch(() => {});
+            // A process that ignores SIGTERM must not keep running after the Run was
+            // cancelled. Escalate once, then let the stream close.
+            const timer = setTimeout(() => {
+              void exec
+                .inspect()
+                .then(async (current) => {
+                  if (current.Running) await signal("KILL");
+                })
+                .catch(() => {});
+            }, 5000);
+            timer.unref();
+          })
+          .catch(() => {});
+        stream.destroy(new Error("Job cancelled"));
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          stream.on("end", resolve);
+          stream.on("error", reject);
+        });
+        const state = await exec.inspect();
+        if (state.ExitCode !== 0)
+          throw new Error(text.replace(/[\x00-\x08]/g, "").slice(-2000) || `Worker exited ${state.ExitCode}`);
+      } finally {
+        signal.removeEventListener("abort", abort);
+      }
     } finally {
-      signal.removeEventListener("abort", abort);
+      if (callbackSlot !== null) this.callbackSlots.release(job.project_id, callbackSlot);
+      this.endRun(job.project_id);
     }
   }
   /** Reclaim execs left running by an earlier dispatcher process. */
@@ -329,6 +428,7 @@ export class DockerBackend implements JobBackend {
     } catch (e) {
       if ((e as any).statusCode !== 404) throw e;
     }
+    if (gatewayEnabled()) await this.gateway.stop(projectId, config);
   }
   async reconcile(activeIds: string[], config: DispatchConfig) {
     const active = new Set(activeIds);
@@ -337,8 +437,32 @@ export class DockerBackend implements JobBackend {
     });
     for (const c of containers) {
       const pid = c.Labels["tessera.project"];
-      if (pid && !active.has(pid) && c.Names.some((n) => n.startsWith(`/${config.volume_prefix}-worker-`)))
+      if (pid && !active.has(pid) && c.Names.some((n) => n.startsWith(`/${config.volume_prefix}-worker-`))) {
         await this.docker.getContainer(c.Id).stop({ t: 3 });
+        if (gatewayEnabled()) await this.gateway.stop(pid, config);
+      }
+    }
+    if (gatewayEnabled()) {
+      const now = Date.now();
+      const gateways = await this.docker.listContainers({
+        filters: JSON.stringify({ label: ["tessera.gateway-resource=true"] }),
+      });
+      for (const gateway of gateways) {
+        const project = gateway.Labels["tessera.project"];
+        if (!project || !gateway.Names.includes(`/${config.volume_prefix}-gateway-${project}`)) continue;
+        if (!active.has(project)) {
+          await this.gateway.stop(project, config);
+          continue;
+        }
+        // A project can stay "active" for a long time between Runs; do not keep a
+        // mitmproxy process resident while it has no traffic. The next Run restarts it.
+        if (
+          this.gatewayIdleMs > 0 &&
+          !this.activeRuns.get(project) &&
+          now - (this.lastActivity.get(project) ?? 0) >= this.gatewayIdleMs
+        )
+          await this.gateway.stop(project, config);
+      }
     }
   }
 }

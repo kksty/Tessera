@@ -5,6 +5,23 @@ import { outputLanguage } from "./prompts.js";
 export const fallbackEnvironment =
   "The environment provides Linux security tools and Python. /workspace is the durable project directory.";
 
+export function callbackEnvironment(env: NodeJS.ProcessEnv = process.env): string {
+  const host = env.TESSERA_CALLBACK_HOST,
+    first = Number(env.TESSERA_CALLBACK_PORT_START),
+    last = Number(env.TESSERA_CALLBACK_PORT_END);
+  if (
+    !host ||
+    !/^[a-zA-Z0-9.-]+$/.test(host) ||
+    !Number.isInteger(first) ||
+    !Number.isInteger(last) ||
+    first < 1 ||
+    last > 65535 ||
+    first > last
+  )
+    return "";
+  return `\n\n本项目回连地址：${host}；可用 TCP/UDP 端口：${first}–${last}。公网端口与本地监听端口一致。需要接收连接时，在此范围内选择未占用端口，绑定 0.0.0.0；让已授权目标连接 ${host}:所选端口。平台已经配置转发，无需修改网络、路由或容器。监听进程的生命周期由当前任务管理。`;
+}
+
 /** The only source of business system instructions, shared by runs and exports. */
 export function taskSystemPrompts(environment: string) {
   return {
@@ -19,7 +36,9 @@ export async function taskResources(
   settingsManager: SettingsManager,
   environmentPath = "/opt/tessera/environment.md",
 ) {
-  const prompts = taskSystemPrompts(await readFile(environmentPath, "utf8").catch(() => fallbackEnvironment));
+  const prompts = taskSystemPrompts(
+    (await readFile(environmentPath, "utf8").catch(() => fallbackEnvironment)) + callbackEnvironment(),
+  );
   // The project workspace is untrusted task data. Pi would otherwise auto-load
   // skills, extensions, prompt templates and themes from <cwd>/.pi (and ancestor
   // .agents/skills), which can inject instructions or execute code inside the Run.

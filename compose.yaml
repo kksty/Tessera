@@ -7,6 +7,7 @@ name: tessera
 x-images:
   app: &app-image ${TESSERA_APP_IMAGE:-tessera-server:${TESSERA_IMAGE_TAG:-latest}}
   worker: &worker-image ${TESSERA_WORKER_IMAGE:-tessera-runtime:${TESSERA_IMAGE_TAG:-latest}}
+  gateway: &gateway-image ${TESSERA_GATEWAY_IMAGE:-tessera-gateway:${TESSERA_IMAGE_TAG:-latest}}
 x-build-args: &build-args
   DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org}
   KALI_MIRROR: ${KALI_MIRROR:-http://http.kali.org/kali}
@@ -111,6 +112,19 @@ services:
       TESSERA_CAPTURE_UPSTREAM: ${TESSERA_CAPTURE_UPSTREAM:-}
       TESSERA_CAPTURE_BYPASS: ${TESSERA_CAPTURE_BYPASS:-}
       TESSERA_CAPTURE_TLS_MAX: ${TESSERA_CAPTURE_TLS_MAX:-}
+      TESSERA_GATEWAY_IMAGE: *gateway-image
+      TESSERA_CALLBACK_HOST: ${TESSERA_CALLBACK_HOST:-}
+      TESSERA_CALLBACK_BIND: ${TESSERA_CALLBACK_BIND:-0.0.0.0}
+      TESSERA_CALLBACK_PORTS: ${TESSERA_CALLBACK_PORTS:-20000-29999}
+      TESSERA_CALLBACK_BLOCK_SIZE: ${TESSERA_CALLBACK_BLOCK_SIZE:-100}
+      # Project isolated networks get one explicit /29 from this pool. Keep it away
+      # from engagement targets (default avoids 172.16.0.0/12 and 198.18.0.0/15).
+      TESSERA_GATEWAY_SUBNET_POOL: ${TESSERA_GATEWAY_SUBNET_POOL:-10.250.0.0/16}
+      # Stop an idle project gateway after this many seconds without a Run (0 = never).
+      TESSERA_GATEWAY_IDLE_SECONDS: ${TESSERA_GATEWAY_IDLE_SECONDS:-600}
+      # Gateway logs a warning below this host-wide conntrack table size.
+      TESSERA_CONNTRACK_MIN: ${TESSERA_CONNTRACK_MIN:-262144}
+      TESSERA_WORKER_INGRESS: ${TESSERA_WORKER_INGRESS:-}
       TESSERA_WORKER_TOKEN: ${TESSERA_WORKER_TOKEN:-}
       TESSERA_TOKEN_FILE: /data/internal-token
     volumes:
@@ -121,6 +135,8 @@ services:
       tessera-server:
         condition: service_healthy
       worker-image:
+        condition: service_completed_successfully
+      gateway-image:
         condition: service_completed_successfully
     healthcheck:
       # The image-level HEALTHCHECK targets the server's 8000; the dispatcher
@@ -145,6 +161,18 @@ services:
     command: ["node", "--version"]
     networks: [tessera]
     restart: "no"
+  gateway-image:
+    image: *gateway-image
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gateway
+      args: *build-args
+    command: ["python3", "--version"]
+    healthcheck:
+      disable: true
+    networks: [tessera]
+    restart: "no"
 volumes:
   # /data is always a Docker named volume; host-directory mounts are not supported.
   # The name is stable across Compose project renames; set TESSERA_DATA_VOLUME only
@@ -157,3 +185,7 @@ volumes:
 networks:
   tessera:
     name: ${TESSERA_NETWORK:-tessera-network}
+    # Fixed uplink subnet so it never consumes Docker's 172.16.0.0/12 default pool.
+    ipam:
+      config:
+        - subnet: ${TESSERA_UPLINK_SUBNET:-10.248.0.0/24}

@@ -117,6 +117,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 FROM worker-core AS runtime
 
+# ---------- trusted per-project router ----------
+# Kept separate from Kali tools and model processes. Only the public CA is mounted in Workers.
+FROM kalilinux/kali-rolling:latest AS gateway
+ARG KALI_MIRROR=http://http.kali.org/kali
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
+RUN sed -i "s|http://http.kali.org/kali/|${KALI_MIRROR}/|g" /etc/apt/sources.list.d/kali.sources && \
+    apt-get -o Acquire::Retries=3 update && apt-get install -y --no-install-recommends \
+    python3 mitmproxy ca-certificates iptables iproute2 dnsmasq-base && rm -rf /var/lib/apt/lists/*
+COPY docker/traffic /opt/tessera/traffic
+HEALTHCHECK --interval=2s --timeout=2s --start-period=15s --retries=3 CMD python3 -c "from pathlib import Path; import os,socket; assert Path('/var/lib/tessera-proxy/ready').exists(); s=socket.create_connection((os.environ['TESSERA_GATEWAY_IP'],8080 if os.environ.get('TESSERA_CAPTURE_ENABLED','1')=='1' else 53),1); s.close()"
+CMD ["python3", "/opt/tessera/traffic/gateway.py"]
+
 # ---------- server / dispatcher ----------
 # Keep this stage last so `docker build .` defaults to the app image.
 FROM node:${NODE_VERSION}-bookworm-slim AS server

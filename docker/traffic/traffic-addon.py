@@ -195,7 +195,7 @@ class Capture:
             from mitmproxy import ctx
         except ImportError:
             return False
-        return ctx.options.tls_version_server_max == 'TLS1_2'
+        return getattr(getattr(ctx, 'options', None), 'tls_version_server_max', None) == 'TLS1_2'
 
     def render_tls_notice(self):
         if not self.tls_notice_hosts:

@@ -147,7 +147,10 @@ test("Review names query parameters that have no provenance", () => {
       description: "Mailbox list returned totalCount 0",
       conclusion: "未发现公开信件数据",
       objects: ["https://example.test/IGI/nbhd/openGovmsgbox.do"],
-      request: { method: "GET", url: "https://example.test/IGI/nbhd/openGovmsgbox.do?siteId=267&appID=128&metadataId=9" },
+      request: {
+        method: "GET",
+        url: "https://example.test/IGI/nbhd/openGovmsgbox.do?siteId=267&appID=128&metadataId=9",
+      },
       parameter_sources: [{ parameter: "siteId", source: "页面 JS：var psiteId=267", evidence_ids: [evidence.id] }],
       evidence_ids: [evidence.id],
     };

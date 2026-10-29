@@ -1,29 +1,59 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320" role="img" aria-label="Tessera · 探索成图，证据成链">
-  <!-- 记号几何与 apps/web/src/brand-art.ts 同一组坐标：一片 25 见方的瓷砖被 45° 接缝斜切，右下那片为强调色。 -->
+  <!-- 左侧记号 + 字标，右侧 FGS 因果图（Fact → Step → Evidence → Finding）。
+       记号几何与 apps/web/src/brand-art.ts 同源；网格与 HUD 角标只作技术制图的节奏。 -->
   <defs>
-    <clipPath id="banner-mark-clip">
-      <rect x="3.5" y="3.5" width="25" height="25" rx="5.5"/>
-    </clipPath>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5a54f0" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#5a54f0" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" fill="none" stroke="#0b0c12" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+    <clipPath id="markClip"><path d="M2.6 2.6H25.4L29.4 6.6V29.4H2.6Z"/></clipPath>
   </defs>
+
   <rect width="1200" height="320" fill="#ffffff"/>
+  <rect width="1200" height="320" fill="url(#grid)"/>
+  <ellipse cx="955" cy="160" rx="255" ry="180" fill="url(#glow)"/>
 
-  <g transform="translate(80 104) scale(2.8)">
-    <g clip-path="url(#banner-mark-clip)">
-      <path d="M3.5 3.5H27.2L3.5 27.2Z" fill="#0b0c12"/>
-      <path d="M28.5 28.5H4.8L28.5 4.8Z" fill="#5a54f0"/>
-    </g>
+  <!-- 记号与字标 -->
+  <g transform="translate(88 118) scale(2.9)" clip-path="url(#markClip)">
+    <path d="M2.6 2.6H28.2L2.6 28.2Z" fill="#0b0c12"/>
+    <path d="M29.4 29.4H3.8L29.4 3.8Z" fill="#5a54f0"/>
   </g>
-
   <g font-family="Geist, 'Segoe UI', -apple-system, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-    <text x="186" y="158" fill="#0b0c12" font-size="54" font-weight="600" letter-spacing="-1.3">tessera</text>
-    <text x="187" y="194" fill="#5d6273" font-size="19" letter-spacing="1">探索成图，证据成链</text>
+    <text x="204" y="122" fill="#5a54f0" font-size="12" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="4.2" font-weight="600">OFFENSIVE SECURITY WORKBENCH</text>
+    <text x="200" y="178" fill="#0b0c12" font-size="60" font-weight="600" letter-spacing="-1.6">tessera</text>
+    <text x="203" y="212" fill="#5d6273" font-size="20" letter-spacing="2.4">探索成图，证据成链</text>
   </g>
 
-  <!-- 右侧是同一组记号放大后的发丝线水印，只作留白的节奏，不与字标争焦点。 -->
-  <g transform="translate(872 60) scale(7.2)" fill="#0b0c12" fill-opacity="0.05">
-    <g clip-path="url(#banner-mark-clip)">
-      <path d="M3.5 3.5H27.2L3.5 27.2Z"/>
-      <path d="M28.5 28.5H4.8L28.5 4.8Z"/>
+  <!-- FGS 因果图：灰色边是探索，强调色边是证据链 -->
+  <g stroke-linecap="round">
+    <g stroke="#a2a8ba" stroke-width="1.2" fill="none" stroke-opacity="0.8">
+      <path d="M821.5 235.5 L910 160"/>
+      <path d="M935.5 87.5 L910 160"/>
     </g>
+    <g stroke="#5a54f0" stroke-width="1.7" fill="none">
+      <path d="M910 160 L1005.5 197.5"/>
+      <path d="M1005.5 197.5 L1080 122"/>
+    </g>
+  </g>
+  <g font-family="'Geist Mono', ui-monospace, monospace" font-size="10.5" letter-spacing="2" fill="#6b7080">
+    <rect x="816" y="230" width="11" height="11" fill="#ffffff" stroke="#0b0c12" stroke-width="1.4"/>
+    <rect x="930" y="82" width="11" height="11" fill="#ffffff" stroke="#0b0c12" stroke-width="1.4"/>
+    <rect x="904" y="154" width="12" height="12" fill="#5a54f0"/>
+    <rect x="1000" y="192" width="11" height="11" fill="#ffffff" stroke="#5a54f0" stroke-width="1.4"/>
+    <path d="M1080 112 L1090 122 L1080 132 L1070 122 Z" fill="#5a54f0"/>
+    <text x="834" y="253">FACT</text>
+    <text x="948" y="92">GOAL</text>
+    <text x="896" y="150" text-anchor="end">STEP</text>
+    <text x="1018" y="214">EVIDENCE</text>
+    <text x="1098" y="128">FINDING</text>
+  </g>
+
+  <!-- 制图角标 -->
+  <g stroke="#0b0c12" stroke-opacity="0.16" stroke-width="1.1" fill="none">
+    <path d="M772 70V50H792"/><path d="M1138 50H1158V70"/>
+    <path d="M772 252V272H792"/><path d="M1138 272H1158V252"/>
   </g>
 </svg>

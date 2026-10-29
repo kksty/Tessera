@@ -3,12 +3,11 @@ import { AlertCircle, AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, Refre
 import type { TrafficRecord, TrafficStatus, TrafficSummary } from "../../../../packages/protocol/src/traffic.js";
 import { api, path } from "../api.js";
 import { TrafficInspector } from "../components/TrafficInspector.js";
-import { Drawer, EmptyState, PageHeader, Segmented, Skeleton } from "../components/ui.js";
+import { Drawer, EmptyState, PageHeader, Skeleton } from "../components/ui.js";
 import { fmt, fmtBytes, fmtTime } from "../format.js";
 import { useWorkspace } from "../workspace.js";
 
 type TrafficList = { records: TrafficSummary[]; capture: TrafficStatus };
-type Kind = "" | "http" | "connection" | "packet";
 
 const kindLabels: Record<string, string> = { http: "HTTP", connection: "连接", packet: "数据包" };
 
@@ -40,7 +39,7 @@ export function TrafficPage() {
   const id = ws.id!;
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
-  const [kind, setKind] = useState<Kind>("http");
+  const kind = "http";
   const [list, setList] = useState<TrafficList | null>(null);
   const [older, setOlder] = useState<TrafficSummary[]>([]);
   const [error, setError] = useState("");
@@ -58,7 +57,6 @@ export function TrafficPage() {
   // let the detail request render the inspector without waiting for the list.
   useEffect(() => {
     if (!trafficTarget?.flowId) return;
-    setKind("http");
     setSelected(trafficTarget.flowId);
   }, [trafficTarget]);
 
@@ -196,7 +194,7 @@ export function TrafficPage() {
           ? `最近心跳 ${fmt(capture.last_seen)}`
           : "尚未收到采集状态上报";
 
-  const filtering = debounced.trim() !== "" || (kind !== "" && kind !== "http");
+  const filtering = debounced.trim() !== "";
   const captureOff = captureDisabled || (!paused && (capture?.state === "stopped" || capture?.state === "unavailable"));
 
   const metadata: [string, string][] = record
@@ -226,7 +224,7 @@ export function TrafficPage() {
       <PageHeader
         eyebrow="EXPLORATION / TRAFFIC"
         title="流量"
-        description="集中录制经录制代理的 HTTP / HTTPS 请求与响应；其他协议和工具自主代理保持原有路径。"
+        description="查看项目出站 HTTP / HTTPS 请求与响应；其他协议和入站回连不在此展示。"
         actions={
           <>
             <span className="status-pill traffic-capture" data-tone={captureTone} title={captureTitle}>
@@ -273,26 +271,26 @@ export function TrafficPage() {
         <summary>
           <ChevronRight size={14} className="traffic-scope-chevron" aria-hidden="true" />
           <span>采集范围与已知缺口</span>
-          <small>仅录制经录制代理且识别为 HTTP / HTTPS 的流量 · 只记录，不阻断任务</small>
+          <small>仅保存 HTTP / HTTPS 请求与响应 · 其他协议和入站回连不展示</small>
         </summary>
         <div className="traffic-scope-body">
           <dl className="traffic-scope-list">
             <div>
               <dt>捕获方式</dt>
-              <dd>仅录制通过录制代理、且识别为 HTTP / HTTPS 的流量；支持任意目标端口，不根据 80 / 443 判断协议。</dd>
+              <dd>
+                默认部署在项目出口透明识别 HTTP / HTTPS，支持非标准 TCP 端口；忽略代理环境变量的工具也会经过出口采集。
+              </dd>
             </div>
             <div>
               <dt>未覆盖</dt>
               <dd>
-                工具使用 proxychains4、自主代理、忽略代理环境变量或主动绕过时，HTTP / HTTPS
-                可能未被录制。SSH、SMB、数据库和原始探测不采集。
+                SSH、SMB、数据库及入站回连不保存。加密隧道内部的 HTTP、非标准端口的 QUIC 和无法识别的协议不保证覆盖；
+                UDP 443 在采集开启时拒绝，以便客户端回退到 HTTP/2 或 HTTP/1。
               </dd>
             </div>
             <div>
               <dt>TLS</dt>
-              <dd>
-                HTTPS 使用受信任的项目 CA 解密；证书固定、双向 TLS 等不兼容连接请使用原连接方式，系统不自动重试请求。
-              </dd>
+              <dd>HTTPS 使用自动安装的项目 CA 解密；证书固定、双向 TLS 可能失败，不自动放行或重试请求。</dd>
             </div>
             <div>
               <dt>保存</dt>
@@ -300,11 +298,13 @@ export function TrafficPage() {
             </div>
             <div>
               <dt>故障</dt>
-              <dd>存储故障会明确报告保存失败；记录缺失会出现在下方的采集告警里。</dd>
+              <dd>存储故障会报告记录缺失；出口代理不可用时，受采集的连接会失败，不回退直连。</dd>
             </div>
             <div>
               <dt>不采集</dt>
-              <dd>模型 API、内部调度和心跳不纳入采集。录制代理可配置 HTTP / SOCKS5 上游。</dd>
+              <dd>
+                平台内部调度、模型中继和心跳不纳入采集。未携带关联信息的透明流量归入项目，不猜测对应的 Run 或 Step。
+              </dd>
             </div>
           </dl>
         </div>
@@ -353,19 +353,6 @@ export function TrafficPage() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-        <Segmented
-          ariaLabel="流量类型"
-          value={kind}
-          onChange={setKind}
-          options={
-            [
-              ["http", "HTTP"],
-              ["", "全部"],
-              ["connection", "历史连接"],
-              ["packet", "历史数据包"],
-            ] as const
-          }
-        />
         <span className="spacer" />
         <span className="toolbar-hint traffic-hint">
           <span className="pulse-dot" aria-hidden="true" />
@@ -383,7 +370,7 @@ export function TrafficPage() {
             <EmptyState
               icon={<Search size={20} aria-hidden="true" />}
               title="没有匹配流量"
-              desc="调整搜索词或类型筛选；自动刷新只影响新产生的记录。"
+              desc="调整搜索词；自动刷新只影响新产生的记录。"
             />
           ) : (
             <EmptyState
@@ -396,7 +383,7 @@ export function TrafficPage() {
                     ? "采集尚未开始：项目运行后，经录制代理的 HTTP / HTTPS 请求会出现在这里。"
                     : paused
                       ? "项目已暂停或结束，采集不会再新增记录。"
-                      : "兼容代理环境变量的工具会自动接入；浏览器需显式设置录制代理，未接入的请求不会出现在这里。"
+                      : "项目出口识别出的 HTTP / HTTPS 请求会自动出现在这里，包括非标准 TCP 端口。"
               }
             />
           )}
