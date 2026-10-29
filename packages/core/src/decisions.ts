@@ -373,12 +373,27 @@ export function submitDecisionBatch(
         `每轮最多新增 ${budget.maxNewStepsPerRound} 个 Step（本次 ${created.length} 个）；` +
           "相近问题用 updates 原位改写未开始的 Step，或把要追的线索并进已有 Step，先关闭/放弃在途工作",
       );
-    if (budget.maxOpenSteps > 0) {
-      const open = g.steps.filter((step) => !step.deleted && !step.concluded_at && !step.discarded).length;
-      if (open > budget.maxOpenSteps)
+    // The open-step cap gates *growth*, not settlement. Closes, discards and
+    // deletions apply in the later settle transaction, so at plan time the open
+    // count still includes every Step this same submission may be about to close.
+    // Comparing that un-settled count against the cap would reject even a
+    // closes-only batch and deadlock a project that is already above the cap (for
+    // example one inherited from an earlier phase): it could never drain, and the
+    // repeated rejection would burn Decide retries until the whole project pauses.
+    // So the check only fires when this plan actually queues new Steps, and it
+    // measures the open count without those new Steps — a near-duplicate merge
+    // reuses an existing id and adds nothing. An over-cap project stays free to
+    // close, discard or delete work down first.
+    if (budget.maxOpenSteps > 0 && created.length > 0) {
+      const createdSet = new Set(created);
+      const open = g.steps.filter(
+        (step) => !step.deleted && !step.concluded_at && !step.discarded && !createdSet.has(step.id),
+      ).length;
+      if (open + created.length > budget.maxOpenSteps)
         fail(
           422,
-          `在途 Step 已达上限 ${open}/${budget.maxOpenSteps}；先 closes 结论化或 discard 放弃，或等执行完再规划新工作`,
+          `在途 Step 将达上限（本次规划后 ${open + created.length}/${budget.maxOpenSteps}）；` +
+            "先 closes 结论化或 discard 放弃在途 Step 再规划新工作；只做结算、不新增 Step 的提交不受此限",
         );
     }
     const plan: DecisionPlanResult = {

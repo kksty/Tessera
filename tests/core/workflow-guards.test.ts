@@ -97,8 +97,46 @@ test("the open-Step cap forces closure before new work can be queued", () => {
     f.commitStep("A");
     f.commitStep("B");
     const worker = f.takeDecide();
-    assert.throws(() => f.submit(worker, { steps: [f.step({ description: "C" })] }), /在途 Step 已达上限 3\/2/);
+    assert.throws(
+      () => f.submit(worker, { steps: [f.step({ description: "C" })] }),
+      /在途 Step 将达上限（本次规划后 3\/2）/,
+    );
     assert.equal(f.store.get(f.id).steps.filter((s) => !s.concluded_at && !s.discarded).length, 2);
+  } finally {
+    f.store.close();
+  }
+});
+
+test("a project inherited above the open-Step cap can still settle and drain instead of deadlocking", () => {
+  const f = fixture();
+  try {
+    // Seed three open Steps while the cap is off, then tighten the cap below them
+    // to model a project that an earlier phase already pushed over the limit.
+    f.store.stepBudget = { maxNewStepsPerRound: 0, maxOpenSteps: 0 };
+    const a = f.commitStep("A");
+    const b = f.commitStep("B");
+    const c = f.commitStep("C");
+    f.store.stepBudget = { maxNewStepsPerRound: 0, maxOpenSteps: 2 };
+    const versionOf = (sid: string) => f.store.get(f.id).steps.find((s) => s.id === sid)!.version ?? 1;
+    const av = versionOf(a);
+    const bv = versionOf(b);
+    // A closes-only batch creates nothing, so the cap must not reject it. Before
+    // the fix this returned 422 on the un-settled 3/2 count and the project could
+    // never drain — the deadlock that paused the live project.
+    const worker = f.takeDecide();
+    const settle = f.submit(worker, {
+      closes: [
+        { id: a, reason: "重复线索，合并处理", expected_version: av },
+        { id: b, reason: "重复线索，合并处理", expected_version: bv },
+      ],
+    }).settle;
+    assert.equal(settle.ok, true, JSON.stringify(settle.conflicts));
+    const open = f.store.get(f.id).steps.filter((s) => !s.deleted && !s.concluded_at && !s.discarded);
+    assert.deepEqual(
+      open.map((s) => s.id),
+      [c],
+      "closes are applied and the queue drains to one open Step",
+    );
   } finally {
     f.store.close();
   }

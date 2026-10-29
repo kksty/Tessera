@@ -1919,8 +1919,26 @@ async function runJobInternal(
     if (job.kind === "decide") {
       // The final-JSON fallback uses the same plan/settle contract as the tool, so
       // versions, assets and idempotency are enforced and a plan survives conflicts.
-      const response = await decisionSubmit(decision!, true, decisionPlanId);
-      if (!response.settle?.ok) {
+      // A plan the server rejects outright (budget, stale version, invalid source)
+      // is a planning conflict the next Decide round can fix, not a project
+      // failure. Release it the same way a settle conflict is released, so one
+      // oversize or over-cap plan cannot count toward the three consecutive
+      // failures that pause the whole project.
+      let response: Awaited<ReturnType<typeof decisionSubmit>> | undefined;
+      try {
+        response = await decisionSubmit(decision!, true, decisionPlanId);
+      } catch (error) {
+        if (!(error instanceof ApiError && [400, 404, 409, 422].includes(error.status))) throw error;
+        await client.request(p("/jobs/release"), { job, conflict: true });
+        diagnose("decision_submission", {
+          plan_id: decisionPlanId ?? null,
+          rejected_status: error.status,
+          detail: excerpt(error.detail),
+          settle_ok: false,
+          completed: false,
+        });
+      }
+      if (response && !response.settle?.ok) {
         // Release without a failure/backoff so the scheduler can plan from fresh
         // observations on its next pass; planned Steps remain as evidence of intent.
         await client.request(p("/jobs/release"), { job, conflict: true });
