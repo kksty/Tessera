@@ -245,6 +245,42 @@ test("图展示复用记录的生产关系、兼容多来源并跨图追溯，�
   }
 });
 
+test("事实节点先显示结论，缺结论时回落正文，推断结论带前缀", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Fact labels", origin: "https://example.test", goal: "Assess" }),
+    ).project.id;
+    const step = store.manualStep(id, {
+      from: ["origin"],
+      description: "枚举药品列表",
+      creator: "human",
+      claim: true,
+    });
+    const withConclusion = store.fact(id, step.id, {
+      worker: "human",
+      description: "目的：把 v011 的药品侧覆盖口径与耗材侧对齐到当前列表，再逐个 companyID 实测。",
+      conclusion: "129 个 companyID 全部实测：70 命中 59 空、69 个附件直链",
+      evidence_ids: [],
+    });
+    const inferredOnly = store.fact(id, step.id, {
+      worker: "human",
+      description: "旧事实只有观测正文",
+      evidence_ids: [],
+    });
+    const elements = graphElements(store.get(id), "main");
+    // 标签按字宽换行，断言前先拼回一行。
+    const label = (nodeId: string) =>
+      String(elements.find((el) => el.data.id === nodeId)!.data.label).replace(/\n/g, "");
+    assert.ok(label(withConclusion.id).includes("129 个 companyID 全部实测"), "画布应显示结论");
+    assert.ok(!label(withConclusion.id).includes("目的："), "观测正文不占节点");
+    assert.ok(label(inferredOnly.id).includes("推断 · 旧事实只有观测正文"), "推断结论要标出来");
+    assert.ok(label("origin").startsWith("起点"), "起点仍显示原文");
+  } finally {
+    store.close();
+  }
+});
+
 test("范围种子只来自显式范围（主视图点选不改变画布）", () => {
   assert.deepEqual(scopeSeeds({ ids: ["f001"], label: "发现 f001" }), ["f001"]);
   assert.deepEqual(scopeSeeds({ ids: [] }), []);

@@ -54,7 +54,7 @@ services:
       TESSERA_CLOSEOUT_SECONDS: ${TESSERA_CLOSEOUT_SECONDS:-}
       TESSERA_TOOL_TIMEOUT_SECONDS: ${TESSERA_TOOL_TIMEOUT_SECONDS:-}
       TESSERA_RESULT_REPAIRS: ${TESSERA_RESULT_REPAIRS:-}
-      # 部署侧强制关闭信息类免审（true/false）；设置后该项在 UI 只读。
+      # 部署侧强制信息类免审取值（true/false）；设置后该项在 UI 只读。
       TESSERA_SKIP_INFORMATIONAL_REVIEW: ${TESSERA_SKIP_INFORMATIONAL_REVIEW:-}
       # 规划预算：每轮新增 Step 上限与在途 Step 上限；0 表示不限制。
       TESSERA_MAX_NEW_STEPS_PER_ROUND: ${TESSERA_MAX_NEW_STEPS_PER_ROUND:-}

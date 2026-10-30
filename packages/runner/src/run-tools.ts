@@ -476,7 +476,7 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
       ),
       tool(
         "submit_fact",
-        "Persist an observed fact immediately. conclusion (≤120 characters) is what the fact asserts and is always shown in full; status separates positive, negative and disputed results. A not_observed fact also records request {method,url}, parameter_sources [{parameter,source,evidence_ids}] and negative_scope {attempted,not_tested,confidence} so Review can distinguish a bounded absence from a wrong-parameter or exhausted claim.",
+        "Persist an observed fact immediately. conclusion (≤120 characters) is what the fact asserts and is always shown in full; status separates positive, negative and disputed results. A not_observed fact also records request {method,url}, parameter_sources [{parameter,source,evidence_ids}] and negative_scope {attempted,not_tested,confidence} so Review can distinguish a bounded absence from a wrong-parameter or exhausted claim; observed facts omit request and parameter_sources.",
         // The same schema the store enforces. Rejecting here names the offending
         // field before upload, instead of a 422 after the observation was written
         // in the model's context.

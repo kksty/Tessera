@@ -77,13 +77,14 @@ def main():
                             '--server=127.0.0.11', f'--listen-address={gateway}', '--bind-interfaces', '--user=root'])
     children.append(dns)
     if capture:
-        tls_max = os.environ.get('TESSERA_CAPTURE_TLS_MAX') or 'TLS1_2'
+        tls_max = os.environ.get('TESSERA_CAPTURE_TLS_MAX') or 'UNBOUNDED'
         if tls_max not in ('TLS1_2', 'TLS1_3', 'UNBOUNDED'):
             raise ValueError('Invalid TLS ceiling')
         proxy = subprocess.Popen(['mitmdump', '--mode', f'transparent@{gateway}:8080',
             '--mode', f'regular@{gateway}:8081', '--set', f'confdir={ROOT}', '--set', 'block_global=false',
             '--set', 'connection_strategy=eager', '--set', 'rawtcp=true', '--set', 'flow_detail=0',
-            '--set', 'termlog_verbosity=error', '--set', f'tls_version_server_max={tls_max}',
+            '--set', 'termlog_verbosity=error', '--set', 'tls_version_server_min=TLS1_2',
+            '--set', f'tls_version_server_max={tls_max}',
             '-s', '/opt/tessera/traffic/traffic-addon.py', '-s', '/opt/tessera/traffic/gateway-protocols.py'])
         children.append(proxy)
         for _ in range(100):

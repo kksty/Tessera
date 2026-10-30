@@ -37,11 +37,11 @@ class RoutingTests(unittest.TestCase):
         routing.configure(env, [], 'run', 'step', '/ca.pem')
         self.assertEqual(env['no_proxy'], 'pinned.test,mtls.test')
 
-    def test_upstream_tls_ceiling_defaults_to_tls12(self):
-        self.assertEqual(routing.tls_max_version(''), 'TLS1_2')
-        self.assertEqual(routing.tls_max_version(None), 'TLS1_2')
+    def test_upstream_tls_ceiling_defaults_to_automatic_negotiation(self):
+        self.assertEqual(routing.tls_max_version(''), 'UNBOUNDED')
+        self.assertEqual(routing.tls_max_version(None), 'UNBOUNDED')
+        self.assertEqual(routing.tls_max_version('tls1_2'), 'TLS1_2')
         self.assertEqual(routing.tls_max_version('tls1_3'), 'TLS1_3')
-        self.assertEqual(routing.tls_max_version('UNBOUNDED'), 'UNBOUNDED')
         with self.assertRaises(ValueError): routing.tls_max_version('TLS1_1')
 
     def test_upstreams_use_explicit_http_listener(self):

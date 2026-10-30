@@ -26,8 +26,11 @@ class Capture:
         self.capture_error = None
         self.upload_error = None
         self.tls_notice = None
-        self.tls_notice_hosts = set()
-        self.tls_downgraded = False
+        # Hosts with a reported TLS problem, and hosts whose TLS 1.3-capable
+        # ClientHello failed so later connections are rebuilt with a TLS 1.2 ceiling.
+        # Targets differ: some reject TLS 1.3 while others require it.
+        self.tls_issue_hosts = {}
+        self.tls12_hosts = set()
         self.connections = {}
         self.stop = threading.Event()
         self.thread = None
@@ -129,7 +132,10 @@ class Capture:
         item = flow.metadata.get(side)
         if not item:
             stream = self.stream(flow, side)
-            stream(message.raw_content or b''); stream(b'')
+            # A missing body must not close the file twice; the final empty chunk does it.
+            if message.raw_content:
+                stream(message.raw_content)
+            stream(b'')
             item = flow.metadata[side]
         # Error hooks can arrive before the stream's final empty chunk.
         if item and item['file'] and not item['file'].closed:
@@ -165,7 +171,7 @@ class Capture:
         if flow.error:
             record['error'] = str(flow.error)[:4000]
         host = getattr(request, 'host', '')
-        if host in self.tls_notice_hosts and self.tls_notice:
+        if host in self.tls_issue_hosts and self.tls_notice:
             record['error'] = ((record.get('error', '') + '；') if record.get('error') else '') + self.tls_notice
             record['error'] = record['error'][:4000]
         if any(message and message['truncated'] for message in (record['request'], record['response'])):
@@ -190,58 +196,116 @@ class Capture:
         """TCP connected but TLS did not, so a retry with TLS 1.2 is meaningful."""
         return self.needs_tls12(flow) and getattr(flow.server_conn, 'timestamp_tcp_setup', None) is not None
 
-    def tls12_mode(self):
+    def tls_server_host(self, data):
+        """Host key of an upstream TLS connection, matching the flow error hook."""
+        conn = getattr(data, 'conn', None)
+        name = getattr(conn, 'sni', None)
+        if not name:
+            address = getattr(conn, 'address', None)
+            name = address[0] if address else None
+        return str(name).lower() if name else ''
+
+    def pin_tls12(self, data):
+        """Rebuild one connection with a TLS 1.2 ceiling instead of changing every target.
+
+        mitmproxy exposes a single global upstream ceiling, but targets differ: some
+        reject the TLS 1.3 ClientHello and others require TLS 1.3. Rebuilding through
+        the stock TLS addon keeps SNI, verification, ALPN and client certificates.
+        """
         try:
             from mitmproxy import ctx
-        except ImportError:
+            original = ctx.options.tls_version_server_max
+        except Exception:
+            # Outside a running mitmproxy there is no option to rebuild with.
             return False
-        return getattr(getattr(ctx, 'options', None), 'tls_version_server_max', None) == 'TLS1_2'
+        if original == 'TLS1_2':
+            return True
+        addons = getattr(getattr(ctx, 'master', None), 'addons', None)
+        config = addons.get('tlsconfig') if hasattr(addons, 'get') else None
+        if not callable(getattr(config, 'tls_start_server', None)):
+            return False
+        previous = getattr(data, 'ssl_conn', None)
+        data.ssl_conn = None
+        ctx.options.tls_version_server_max = 'TLS1_2'
+        try:
+            config.tls_start_server(data)
+        except Exception:
+            data.ssl_conn = previous
+            return False
+        finally:
+            ctx.options.tls_version_server_max = original
+        return getattr(data, 'ssl_conn', None) is not None
+
+    def tls_start_server(self, data):
+        # Fires for every upstream TLS connection; only a target that rejected the
+        # automatic negotiation gets a TLS 1.2-only context.
+        if self.tls_server_host(data) in self.tls12_hosts:
+            self.pin_tls12(data)
+
+    def tls_auto(self):
+        """Whether upstream connections currently offer both TLS 1.2 and 1.3."""
+        try:
+            from mitmproxy import ctx
+            return ctx.options.tls_version_server_max != 'TLS1_2'
+        except Exception:
+            return True
+
+    def tls_version_failure(self, flow):
+        """Whether a handshake failure is plausibly fixed by another TLS version."""
+        error = str(getattr(getattr(flow, 'server_conn', None), 'error', None)
+                    or getattr(flow, 'error', None) or '').lower()
+        return not any(text in error for text in (
+            'certificate', 'unknown ca', 'bad certificate', 'does not speak tls', 'wrong version number'))
 
     def render_tls_notice(self):
-        if not self.tls_notice_hosts:
+        hosts = sorted(self.tls_issue_hosts)
+        if not hosts:
             self.tls_notice = None
             return
-        hosts = sorted(self.tls_notice_hosts)
         shown = '、'.join(hosts[:3])
         if len(hosts) > 3:
             shown += f' 等 {len(hosts)} 个目标'
-        state = '已降级到 TLS 1.2' if self.tls_downgraded else '上游 TLS 上限为 1.2'
+        states = set(self.tls_issue_hosts.values())
+        if states == {'pinned'}:
+            state = '已对上述目标改用只协商 TLS 1.2 的连接，后续请求会自动使用'
+        elif states == {'both'}:
+            state = '自动协商和只协商 TLS 1.2 都握手失败，目标可能要求 TLS 1.3、需要客户端证书或链路被中断'
+        elif states == {'fixed'}:
+            state = '录制代理的上限被固定为 TLS 1.2（TESSERA_CAPTURE_TLS_MAX），目标可能要求 TLS 1.3'
+        else:
+            state = '部分目标已改用 TLS 1.2，部分在 TLS 1.2 下仍失败'
+        opening = '录制代理被固定为 TLS 1.2' if states == {'fixed'} else '录制代理会自动协商 TLS 1.2/1.3'
         self.tls_notice = (
-            f'录制代理{state}；{shown} 的 TLS 握手失败，'
-            '可能是目标要求 TLS 1.3 或降级导致。可在设置中调整录制代理，或关闭代理后直连复核。'
+            f'{opening}；{shown} 的 TLS 握手失败，{state}，失败请求不会重放。'
+            '可在设置中关闭录制代理后直连复核。'
         )
 
-    def note_tls_failure(self, flow):
-        host = getattr(flow.request, 'host', '') or '未知目标'
-        self.tls_notice_hosts.add(host)
+    def learn_tls_failure(self, flow):
+        host = (getattr(flow.request, 'host', '') or '').lower()
+        if not host or not self.tls_version_failure(flow):
+            return
+        if host in self.tls12_hosts:
+            # TLS 1.2 did not help either: restore automatic negotiation so one
+            # transient failure cannot keep a TLS 1.3-only target locked out.
+            self.tls12_hosts.discard(host)
+            self.tls_issue_hosts[host] = 'both'
+        elif self.tls_auto():
+            self.tls12_hosts.add(host)
+            self.tls_issue_hosts[host] = 'pinned'
+        else:
+            self.tls_issue_hosts[host] = 'fixed'
         self.render_tls_notice()
 
     def clear_tls_notice(self, flow):
-        host = getattr(getattr(flow, 'request', None), 'host', '')
-        if host in self.tls_notice_hosts:
-            self.tls_notice_hosts.discard(host)
+        host = (getattr(getattr(flow, 'request', None), 'host', '') or '').lower()
+        if self.tls_issue_hosts.pop(host, None) is not None:
             self.render_tls_notice()
 
-    def fallback_tls(self, flow):
-        if not self.needs_tls12(flow):
-            return
-        try:
-            from mitmproxy import ctx
-        except ImportError:
-            return
-        # Only lower an upper bound that still allows TLS 1.3. Never raise a user setting.
-        if ctx.options.tls_version_server_max in ('UNBOUNDED', 'TLS1_3'):
-            ctx.options.tls_version_server_max = 'TLS1_2'
-            self.tls_downgraded = True
-
     def error(self, flow):
-        # No HTTP request is sent when the upstream TLS handshake fails, so this only
-        # changes the version for future connections; it never replays the failed flow.
-        failed_tls = self.tls_handshake_failed(flow)
-        was_tls12 = self.tls12_mode()
-        self.fallback_tls(flow)
-        if failed_tls and was_tls12:
-            self.note_tls_failure(flow)
+        # No HTTP request is sent when the upstream TLS handshake fails, so learning
+        # from it only changes later connections; the failed request is never replayed.
+        if self.tls_handshake_failed(flow):
+            self.learn_tls_failure(flow)
         elif getattr(flow, 'server_conn', None) is not None and getattr(flow.server_conn, 'tls_established', False):
             # TLS worked; an HTTP-level error is not evidence of a downgrade problem.
             self.clear_tls_notice(flow)
@@ -281,18 +345,28 @@ class Capture:
             try:
                 files = sorted(root.glob('*.json'), key=lambda p:p.stat().st_mtime)
                 if time.time()-last>5:
-                    guard_file = Path(os.environ['TESSERA_PROXY_DIR'])/'guard-status.json'
-                    guard = json.loads(guard_file.read_text()) if guard_file.exists() else {}
-                    loss_file = Path(os.environ['TESSERA_PROXY_DIR'])/'capture-loss.json'
-                    stored = json.loads(loss_file.read_text()).get('error') if loss_file.exists() else guard.get('error')
-                    error = self.capture_error or self.upload_error or stored
-                    if self.capture_error:
-                        try:loss_file.write_text(json.dumps({'error':self.capture_error,'dropped':self.dropped}))
-                        except OSError:pass
-                    blocked = guard.get('blocked',0)
-                    data = {'state':'degraded' if error or self.tls_notice else 'active','dropped':self.dropped,'blocked':blocked,'guard':guard.get('guard',False),
-                            **({'error':error} if error else {}), **({'tls_notice':self.tls_notice} if self.tls_notice else {})}
-                    post(server+'/status', data); last=time.time()
+                    # The status post is a heartbeat, not an archive attempt. A slow or
+                    # failing heartbeat must not claim that bodies are waiting to be
+                    # archived, and it must not leave that claim up until new traffic
+                    # happens to arrive.
+                    try:
+                        guard_file = Path(os.environ['TESSERA_PROXY_DIR'])/'guard-status.json'
+                        guard = json.loads(guard_file.read_text()) if guard_file.exists() else {}
+                        loss_file = Path(os.environ['TESSERA_PROXY_DIR'])/'capture-loss.json'
+                        stored = json.loads(loss_file.read_text()).get('error') if loss_file.exists() else guard.get('error')
+                        error = self.capture_error or self.upload_error or stored
+                        if self.capture_error:
+                            try:loss_file.write_text(json.dumps({'error':self.capture_error,'dropped':self.dropped}))
+                            except OSError:pass
+                        blocked = guard.get('blocked',0)
+                        data = {'state':'degraded' if error or self.tls_notice else 'active','dropped':self.dropped,'blocked':blocked,'guard':guard.get('guard',False),
+                                **({'error':error} if error else {}), **({'tls_notice':self.tls_notice} if self.tls_notice else {})}
+                        post(server+'/status', data)
+                    except (OSError, ValueError):
+                        pass
+                    # Keep the heartbeat at its normal cadence even when the server is
+                    # busy; retrying immediately would add load to an already slow API.
+                    last = time.time()
                 # The API accepts at most 8 records per request; drain several batches per pass and
                 # only unlink a spool file after its own batch has been accepted.
                 sent = 0

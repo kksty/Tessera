@@ -58,7 +58,8 @@ export const discoveryScopePolicy =
  */
 export const executeResultShape =
   "最终 JSON 形状（键名严格；多出的键或图节点原样字段会被拒绝）：" +
-  '{"summary":"...","facts":[{"description":"...","conclusion":"...","status":"observed|not_observed|disputed","objects":["https://..."],"request":{"method":"GET","url":"..."},"parameter_sources":[{"parameter":"...","source":"...","evidence_ids":["e001"]}],"evidence_ids":["e001"]}],"findings":[{"kind":"vulnerability|informational","title":"...","description":"...","impact":"...","reproduction":{"conditions":["..."],"steps":["..."],"expected":"...","observed":"..."},"remediation":"...","evidence_ids":["e001"],"from":["f001"]}],"leads":[{"surface":"...","parameter":"...","why":"...","suggested_property":"...","evidence_ids":["e001"]}]}。' +
+  '{"summary":"...","facts":[{"description":"...","conclusion":"...","status":"observed|not_observed|disputed","objects":["https://..."],"evidence_ids":["e001"]}],"findings":[{"kind":"vulnerability|informational","title":"...","description":"...","impact":"...","reproduction":{"conditions":["..."],"steps":["..."],"expected":"...","observed":"..."},"remediation":"...","evidence_ids":["e001"],"from":["f001"]}],"leads":[{"surface":"...","parameter":"...","why":"...","suggested_property":"...","evidence_ids":["e001"]}]}。' +
+  "只有 status=not_observed 的事实才加 request{method,url} 与 parameter_sources[{parameter,source,evidence_ids}]（每个 URL 参数一条）；observed/disputed 不要写这两个键，省下的上下文留给后续判断。" +
   "facts 的元素可以是字符串，但对象只能含 description/conclusion/status/objects/request/parameter_sources/evidence_ids，不能带 id、version、source、review_status、created_at 等图节点字段；findings 用 title/description，不是 summary/change/version；leads 用 suggested_property，不是 property/title/constraint。" +
   "submit_fact 同样不接受 from（来源写 evidence_ids）；submit_finding 不填 cvss（由 Review 定级）。" +
   "提交前先 process list：仍在运行的命令要么 poll 到结束，要么 stop；提交时仍有运行中的进程，本次 Step 不记为完成。";
@@ -91,12 +92,12 @@ ${JSON.stringify(view)}`;
 - 一个 Step 只回答一个问题：description 用一两句话说清问题和它的决策价值（成立会怎样、被证伪会怎样），不写请求脚本、次数预算、逐条命令或哈希清单——方法是执行者的事；method_hint 只给一句可选建议。每个新 Step 写一句可证伪的 property（例如「未授权用户不能读取其他 metadataId 的信件」）。${testDomainGuidance}
 - 服务端会把与未关闭 Step 高度相似的新 Step 合并到已有 Step；未开始的 Step 用 updates 原位改写 description/property/method_hint/from。执行结束仍需 closes 结论化或 discard 放弃。
 - 修正已有 Fact 的措辞、统计或 request/parameter_sources 用 revise_fact 原地修订，不为「只读核对 / 生成 successor 事实」开 Step；只有需要向目标发起新请求、或需要重新作出的判断才开 Step。
-- 负向 Fact 的 negative_scope 是判断边界：not_observed 只证明尝试范围内未观测，不等于方向已穷尽。不要仅凭一条单请求负向 Fact close/discard 一个方向；需要扩大覆盖时先规划新的 Step，或用 revise_fact 补范围。
+- 负向 Fact 的 negative_scope 是判断边界：not_observed 只证明尝试范围内未观测，不等于方向已穷尽。只有要声称「已穷尽」时才必须先扩大覆盖（新 Step 或 revise_fact 补范围）；若该方向不在本轮交付范围，可以在 closes/discard 的 reason 写「未扩面，维持现有边界」后直接关闭，报告按 not_tested 表述。
 - leads 是执行者留下的候选问题，不阻塞完成：值得追的用新 Step 的 lead_ids 落实（受预算约束），不值得的在 lead_dispositions 写 waiver_reason，其余可以留着。
 - 同根因只保留一条 Finding：入口/参数不同但根因与修复相同（如同一控制器一批参数名反射端点）合并成一条，端点清单写进正文；informational 是背景记录，不计入交付进度，目标是否达成按漏洞结论与已回答的问题判断。
 人工 Hint 必须由 Step 的 hint_ids 落实，或用 hint_notes 写明如何落实；不能把 Hint 当证据。带说明的 hint_notes 会关闭该 Hint。review_issues 必须逐条处置：addressed 指向审核之后执行并关闭的 Step，waived 写理由；风险标签只是给审核和界面看的提示，不需要人工审批。复审 needs_evidence 的阻断项要在同一次 finding_updates 里处理；已 pass 的 Finding 只有结论、影响、定级或复现变化才修订。
 human_feedback 的 return/retest 按工具契约处理；旧证据不能直接恢复入库；删除的漏洞不要换 ID 重建。
-用 submit_decisions 提交。Step 改动带 expected_version；结算冲突读 current_view 只重交剩余字段（运行时复用 plan_id）。大结算按工具提示分 more 批，运行时会自动拆超大载荷。complete 前结论化/放弃所有未关闭 Step，coverage 覆盖 coverage_surfaces，open leads 用 lead_ids 落实或 waiver，Hint 用 hint_ids/hint_notes，review_issues 逐条 addressed/waived。可以带审核结束搜索；新观测、负面审核或 planning_issues 要重判。返回 {} 表示等待。`;
+用 submit_decisions 提交。Step 改动带 expected_version；结算冲突读 current_view 只重交剩余字段（运行时复用 plan_id）。大结算按工具提示分 more 批，运行时会自动拆超大载荷。complete 前结论化/放弃所有未关闭 Step，coverage 覆盖 coverage_surfaces，open leads 用 lead_ids 落实或 waiver，Hint 用 hint_ids/hint_notes，review_issues 逐条 addressed/waived。coverage 的 na 用于仅被 Fact 提及、从未实际请求或不适用的 surface，reason 写明依据；仅被提及的 URL 不必为确认命名等价性单开 Step，按未请求记 na 并在报告说明边界，只有实际请求并取得证据的 surface 才标 tested。可以带审核结束搜索；新观测、负面审核或 planning_issues 要重判。返回 {} 表示等待。`;
   if (job.kind === "review")
     return `${common}
 

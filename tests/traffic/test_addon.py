@@ -67,38 +67,64 @@ class CaptureTests(unittest.TestCase):
   f.server_conn.tls_established=True;self.assertFalse(capture.needs_tls12(f))
   f.server_conn.tls_established=False;f.request.scheme='http';self.assertFalse(capture.needs_tls12(f))
   f.request.scheme='https';f.server_conn=None;self.assertFalse(capture.needs_tls12(f))
- def test_tls_fallback_lowers_only_an_unbounded_upstream_setting(self):
-  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False)
+ def tls_failure_flow(self, host='example.test'):
+  f=flow();f.request.scheme='https';f.request.host=host;f.request.pretty_url=f'https://{host}/api'
+  f.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=time.time(),error='connection closed');f.error='connection closed'
+  return f
+ def test_tls_failure_pins_only_that_target_and_keeps_automatic_negotiation(self):
+  capture=module.Capture();f=self.tls_failure_flow()
   fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='UNBOUNDED'))
-  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.fallback_tls(f)
-  self.assertEqual(fake.ctx.options.tls_version_server_max,'TLS1_2')
-  fake.ctx.options.tls_version_server_max='TLS1_2'
-  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.fallback_tls(f)
-  self.assertEqual(fake.ctx.options.tls_version_server_max,'TLS1_2')
- def test_tls12_handshake_failure_sets_notice_and_response_clears_it(self):
-  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=time.time())
-  capture.requestheaders(f);f.request.stream(b'');capture.request(f);capture.queue.get_nowait()
-  fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='TLS1_2'))
-  f.error='connection closed'
   with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(f)
-  self.assertIn('example.test',capture.tls_notice);self.assertIn('TLS 上限为 1.2',capture.tls_notice)
-  self.assertIn('TLS 上限为 1.2',capture.queue.get_nowait()['error'])
-  f.response=SimpleNamespace(headers=Headers({'content-type':'text/plain'}),http_version='HTTP/1.1',status_code=200,reason='OK',timestamp_end=time.time(),raw_content=None)
+  self.assertIn('example.test',capture.tls12_hosts)
+  self.assertIn('example.test',capture.tls_notice);self.assertIn('TLS 1.2',capture.tls_notice)
+  self.assertIn('不会重放',capture.queue.get_nowait()['error'])
+  # One broken target must not force every later target down to TLS 1.2.
+  self.assertEqual(fake.ctx.options.tls_version_server_max,'UNBOUNDED')
+ def test_second_tls_failure_drops_the_pin_and_reports_both_versions(self):
+  capture=module.Capture();capture.error(self.tls_failure_flow());capture.queue.get_nowait()
+  capture.error(self.tls_failure_flow())
+  self.assertNotIn('example.test',capture.tls12_hosts)
+  self.assertIn('都握手失败',capture.tls_notice)
+  self.assertIn('都握手失败',capture.queue.get_nowait()['error'])
+ def test_successful_response_clears_notice_but_keeps_the_learned_pin(self):
+  capture=module.Capture();capture.error(self.tls_failure_flow());capture.queue.get_nowait()
+  f=flow();f.response=SimpleNamespace(headers=Headers({'content-type':'text/plain'}),http_version='HTTP/1.1',status_code=200,reason='OK',timestamp_end=time.time(),raw_content=None)
   capture.response(f)
-  self.assertIsNone(capture.tls_notice);self.assertEqual(capture.tls_notice_hosts,set())
- def test_tls13_failure_downgrades_without_notice_but_next_tls12_failure_notices(self):
-  capture=module.Capture();fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='UNBOUNDED'))
-  first=flow();first.request.scheme='https';first.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=time.time());first.error='connection closed'
-  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(first)
-  self.assertEqual(fake.ctx.options.tls_version_server_max,'TLS1_2');self.assertIsNone(capture.tls_notice)
-  second=flow();second.request.scheme='https';second.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=time.time());second.error='connection closed'
-  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(second)
-  self.assertIn('example.test',capture.tls_notice)
+  self.assertIsNone(capture.tls_notice);self.assertEqual(capture.tls_issue_hosts,{})
+  self.assertIn('example.test',capture.tls12_hosts)
+ def test_explicit_tls12_ceiling_reports_without_pinning(self):
+  capture=module.Capture();fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='TLS1_2'))
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(self.tls_failure_flow())
+  self.assertNotIn('example.test',capture.tls12_hosts)
+  self.assertIn('固定为 TLS 1.2',capture.tls_notice);self.assertIn('TLS 1.3',capture.tls_notice)
+ def test_certificate_failure_is_not_treated_as_a_version_mismatch(self):
+  capture=module.Capture();f=self.tls_failure_flow();f.server_conn.error='Certificate verify failed: self-signed certificate'
+  capture.error(f)
+  self.assertFalse(capture.tls12_hosts);self.assertIsNone(capture.tls_notice)
+ def test_tls_helpers_tolerate_an_unavailable_mitmproxy_context(self):
+  capture=module.Capture();fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(master=None)
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(self.tls_failure_flow())
+  self.assertIn('example.test',capture.tls12_hosts)
+  data=SimpleNamespace(conn=None,context=None,ssl_conn='original')
+  with patch.dict('sys.modules',{'mitmproxy':fake}):self.assertFalse(capture.pin_tls12(data))
+  self.assertEqual(data.ssl_conn,'original')
+ def test_tls_start_server_rebuilds_only_pinned_targets_with_tls12_ceiling(self):
+  capture=module.Capture();capture.tls12_hosts.add('example.test');calls=[]
+  class Config:
+   def tls_start_server(self,data):
+    calls.append(fake.ctx.options.tls_version_server_max);data.ssl_conn='rebuilt'
+  fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='UNBOUNDED'),master=SimpleNamespace(addons=SimpleNamespace(get=lambda name:Config() if name=='tlsconfig' else None)))
+  data=SimpleNamespace(conn=SimpleNamespace(sni='example.test',address=('203.0.113.9',443)),context=None,ssl_conn='original')
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.tls_start_server(data)
+  self.assertEqual(calls,['TLS1_2']);self.assertEqual(fake.ctx.options.tls_version_server_max,'UNBOUNDED');self.assertEqual(data.ssl_conn,'rebuilt')
+  other=SimpleNamespace(conn=SimpleNamespace(sni='other.test',address=('203.0.113.10',443)),context=None,ssl_conn='original')
+  with patch.dict('sys.modules',{'mitmproxy':fake}):capture.tls_start_server(other)
+  self.assertEqual(calls,['TLS1_2']);self.assertEqual(other.ssl_conn,'original')
  def test_tcp_failure_does_not_trigger_tls_notice(self):
-  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=None);f.error='connection refused'
+  capture=module.Capture();f=flow();f.request.scheme='https';f.server_conn=SimpleNamespace(tls_established=False,timestamp_tcp_setup=None,error='connection refused');f.error='connection refused'
   fake=types.ModuleType('mitmproxy');fake.ctx=SimpleNamespace(options=SimpleNamespace(tls_version_server_max='TLS1_2'))
   with patch.dict('sys.modules',{'mitmproxy':fake}):capture.error(f)
-  self.assertIsNone(capture.tls_notice)
+  self.assertIsNone(capture.tls_notice);self.assertFalse(capture.tls12_hosts)
  def test_disk_failure_reports_incomplete_without_changing_forwarded_bytes(self):
   capture=module.Capture();f=flow();capture.requestheaders(f)
   item=f.metadata['tessera_request'];item['file'].close()
@@ -143,6 +169,29 @@ class CaptureTests(unittest.TestCase):
    deadline=time.time()+5
    while len(received)<2 and time.time()<deadline:time.sleep(.02)
    capture.done();self.assertIn(b'original',[bytes(value) for value in bodies.values()]);self.assertEqual(len(received),2);self.assertEqual(received[-1]['records'][0]['id'],'flow1');self.assertEqual(list((Path(root)/'spool').glob('*.json')),[])
+  server.shutdown();server.server_close()
+ def test_heartbeat_failure_is_not_reported_as_a_pending_archive(self):
+  received=[]
+  class Handler(BaseHTTPRequestHandler):
+   def do_POST(self):
+    data=json.loads(self.rfile.read(int(self.headers['content-length'])))
+    if self.path.endswith('/status'):self.send_response(503)
+    else:received.append(data);self.send_response(200)
+    self.end_headers();self.wfile.write(b'{}')
+   def log_message(self,*args):pass
+  server=ThreadingHTTPServer(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+  with tempfile.TemporaryDirectory(prefix='tessera-proxy-heartbeat-') as root:
+   os.environ.update(TESSERA_PROXY_DIR=root,TESSERA_CAPTURE_SERVER=f'http://127.0.0.1:{server.server_port}',TESSERA_CAPTURE_PROJECT='project',TESSERA_WORKER_TOKEN='fixture')
+   spool=Path(root)/'spool';spool.mkdir(parents=True,exist_ok=True)
+   (spool/'0001.json').write_text(json.dumps({'id':'flow-heartbeat'}),encoding='utf-8')
+   capture=module.Capture();capture.running()
+   deadline=time.time()+5
+   while (not received or list(spool.glob('*.json'))) and time.time()<deadline:time.sleep(.02)
+   capture.done()
+   # 心跳失败只影响状态可见性；它不能让界面声称正文仍在等待归档。
+   self.assertEqual(received[0]['records'][0]['id'],'flow-heartbeat')
+   self.assertIsNone(capture.upload_error)
+   self.assertEqual(list(spool.glob('*.json')),[])
   server.shutdown();server.server_close()
  def test_uploader_sends_up_to_eight_records_per_request_and_drains_more_batches(self):
   batches=[]

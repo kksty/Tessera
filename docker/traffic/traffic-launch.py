@@ -114,7 +114,7 @@ try:
                 with (control/'upstream.log').open('ab') as log:
                     bridge=subprocess.Popen(['setpriv','--reuid',str(account.pw_uid),'--regid',str(account.pw_gid),'--clear-groups','python3','/opt/tessera/traffic/traffic-socks.py'],stdout=log,stderr=log,start_new_session=True)
                 (control/'upstream-pid').write_text(str(bridge.pid))
-            args=['setpriv','--reuid',str(account.pw_uid),'--regid',str(account.pw_gid),'--clear-groups','mitmdump','--mode',mode,'--set','rawtcp=false','--set',f'confdir={root}','--set','block_global=false','--set','flow_detail=0','--set','termlog_verbosity=error','--set',f'tls_version_server_max={tls_max}','--ignore-hosts','^('+'|'.join(patterns)+')$', '-s','/opt/tessera/traffic/traffic-addon.py']
+            args=['setpriv','--reuid',str(account.pw_uid),'--regid',str(account.pw_gid),'--clear-groups','mitmdump','--mode',mode,'--set','rawtcp=false','--set',f'confdir={root}','--set','block_global=false','--set','flow_detail=0','--set','termlog_verbosity=error','--set','tls_version_server_min=TLS1_2','--set',f'tls_version_server_max={tls_max}','--ignore-hosts','^('+'|'.join(patterns)+')$', '-s','/opt/tessera/traffic/traffic-addon.py']
             parsed=urllib.parse.urlsplit(upstream)
             if parsed.scheme in ('http','https') and parsed.username is not None:
                 args.extend(['--set','upstream_auth='+urllib.parse.unquote(parsed.username)+':'+urllib.parse.unquote(parsed.password or '')])

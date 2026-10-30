@@ -278,6 +278,21 @@ function applyPalette(c: Core) {
     .update();
 }
 
+/**
+ * 事实节点先回答「它断言了什么」：有结论就画结论，没有才回退观测正文。
+ *
+ * conclusion 是 ≤120 字、投影里从不截断的断言字段；description 是观测正文（常常从
+ * 「目的：…」这类执行意图写起）。画布上用正文会让同一任务产出的多条事实第一行雷同，
+ * 扫图读不出差别。结论由正文推断而来时加前缀，避免把程序补的摘要当成实测断言；
+ * 起点保留原文，它本来就只有一个地址。
+ */
+function factLabel(fact: Graph["facts"][number]): string {
+  if (fact.id === "origin") return `起点\n${fact.description}`;
+  const conclusion = fact.conclusion?.trim();
+  if (!conclusion) return fact.description;
+  return fact.conclusion_inferred ? `推断 · ${conclusion}` : conclusion;
+}
+
 export function graphElements(g: Graph, graphId: string, expandSteps = false): ElementDefinition[] {
   g = activeGraph(g);
   const relations = resolveGraphRelations(g);
@@ -308,7 +323,7 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
     ...facts.map((f) => ({
       data: {
         id: f.id,
-        label: f.id === "origin" ? `起点\n${f.description}` : f.description,
+        label: factLabel(f),
         type: f.id === "origin" ? "origin" : scopeFact(f) ? "scope" : "fact",
         state: f.status || "observation",
         cold: isColdNode(g, f) ? "yes" : "no",

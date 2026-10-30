@@ -133,7 +133,7 @@ Server 默认输出结构化错误日志、鉴权失败和超过 500 ms 的慢�
 
 ## 审核范围与信息类免审
 
-`skip_informational_review` 默认 `false`（`configSchema` 与新建部署一致）。2026-10-29 起本部署改为 `false`（`.env` 的 `TESSERA_SKIP_INFORMATIONAL_REVIEW=false` 强制只读）：免审会让廉价的加固笔记即时归档、而真正的漏洞还在排队复审，形成错误的进度梯度；信息类现在同样经过 Review（按 `kind=informational` 快速审核，不打分）。部署可用 `TESSERA_SKIP_INFORMATIONAL_REVIEW=true|false` 强制该值，设置页随后显示该项只读。
+`skip_informational_review` 默认 `false`（`configSchema` 与新建部署一致）。免审会让廉价的加固笔记即时归档、而真正的漏洞还在排队复审，形成错误的进度梯度；因此信息类同样可经过 Review（按 `kind=informational` 快速审核，不打分）。2026-10-29 本部署曾用 `.env` 的 `TESSERA_SKIP_INFORMATIONAL_REVIEW=false` 强制关闭并只读，2026-10-30 取消该覆盖，改回设置页控制（当前值取自 `runtime.json`，默认 `false`，可随时勾选）。部署仍可用 `TESSERA_SKIP_INFORMATIONAL_REVIEW=true|false` 强制该值：设置页随后把该项显示为只读，改回需删除该变量并重建服务。
 
 同时新增规划预算 `TESSERA_MAX_NEW_STEPS_PER_ROUND`（默认 2）与 `TESSERA_MAX_OPEN_STEPS`（默认 8），0 表示不限制。超限的 Decide 计划会被整体拒绝且不写入任何节点；近似重复合并与 `updates` 原位改写不计入。人工建单不受该预算限制。
 
@@ -157,6 +157,7 @@ Server 默认输出结构化错误日志、鉴权失败和超过 500 ms 的慢�
 入口只列热 Facts/Findings，冷池不设上限（`query_graph status=cold` 浏览、`read_graph` 回热）。两个预算同时生效：节点数 `hot_limit` 与字符数 `hot_char_limit`（默认 64,000，0 关闭字符预算）。新项目默认 80 个节点；从未设置过 `hot_limit` 的旧项目继续按 200 读取，与修复前一致。
 
 - 必显集合收敛为：当前焦点 Step 的 `from`/`fact_ids`、待审 Review 的来源 Fact、focused Finding 的来源、`pinned` 节点。**其他 open Step 的输入不再强制热**，其 ID 仍在 `open_step_index` 中，按需 `read_graph`。这是把 Decide 入口从 12 万字符降下来的关键。
+- 事实行只带「请求 + 负向范围摘要 + 证据条数」：`parameter_sources` 的逐参数来源与证据 ID 属于审核材料，Review 由程序校验、详情页与 `read_graph` 给全文，不在每轮 Decide 重复；缺溯源仍在该行标「⚠ 缺参数溯源」。执行结果模板也只在 `status=not_observed` 时要求 `request`/`parameter_sources`，避免 observed 事实白带一份。
 - 必显集合自身超预算时不隐藏（不能藏起 open work），但 `cold.hot.over_budget=true` 并在 hint 中建议关闭或合并 Step。
 - 观测：`capacity_plan` 新增 `projection_sections`（facts/steps/findings/finding_groups/leads/review_issues/hints/coverage_surfaces/cold/instructions/other 各段字符）与 `projection_sections.hot`；`cold.hint` 带 `hot {nodes, chars, limit, char_limit, mandatory, over_budget}`。先按实测分段调整默认值，不要一次性把预算降到 40。
 - `hot_limit=0` 的语义仍是“关闭冷却”（全部热），不是“0 个热节点”。

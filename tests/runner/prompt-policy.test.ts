@@ -35,6 +35,16 @@ test("任务提示词不规定何时删除或使用工具，只保留数据契�
   assert.match(decide, /limits/, "the decider plans against the effective budget in the view");
   assert.match(decide, /negative_scope/, "the decider must respect the boundary of a negative fact");
   assert.match(decide, /本次未观测/, "a failed attempt is not a disproof");
+  assert.match(
+    decide,
+    /未扩面，维持现有边界/,
+    "a direction outside delivery scope can be closed with an explicit untested boundary",
+  );
+  assert.match(
+    decide,
+    /na 用于仅被 Fact 提及/,
+    "coverage na is the cheap, auditable exit for a mentioned-only surface",
+  );
   assert.match(execute, /negative_scope/, "executors write the negative scope with the fact");
   assert.match(decide, /成本是约束，不是目标/, "cost is a guardrail, not the planning objective");
   assert.equal(decide.includes("唯一标准是这一步值不值得它接下来要花的钱"), false);

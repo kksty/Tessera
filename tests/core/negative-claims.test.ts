@@ -104,11 +104,35 @@ test("the fact contract carries the request and parameter provenance of a negati
       url: "https://example.test/IGI/nbhd/openGovmsgbox.do?siteId=6400000100",
     });
     assert.equal(stored.parameter_sources?.length, 1);
-    assert.match(factLine(stored), /范围：尝试1项.*置信low/);
+    const line = factLine(stored);
+    assert.match(line, /范围：尝试1项.*置信low/);
+    assert.match(
+      line,
+      /请求：GET https:\/\/example\.test\/IGI\/nbhd\/openGovmsgbox\.do\?siteId=/,
+      "请求仍留在 Decide 入口",
+    );
+    assert.ok(!line.includes("参数来源："), "参数溯源不再逐条重复进 Decide 入口");
+    assert.ok(!line.includes(evidence.id), "证据 ID 不再重复进 Decide 入口");
+    assert.match(line, new RegExp(`证据：${stored.evidence_ids.length}`), "只保留证据数量");
     assert.ok(fact);
   } finally {
     store.close();
   }
+});
+
+test("缺少溯源的负向事实仍在 Decide 行里被标记", () => {
+  const line = factLine({
+    id: "f009",
+    description: "列表返回空",
+    conclusion: "未发现数据",
+    status: "not_observed",
+    graph_id: "main",
+    evidence_ids: [],
+  });
+  assert.match(line, /⚠ 缺参数溯源/);
+  assert.match(line, /⚠ 缺负向范围/);
+  assert.match(line, /证据：未引用/);
+  assert.ok(!line.includes("参数来源："));
 });
 
 test("a negative claim without provenance is rejected at write time and by Review", () => {
