@@ -304,6 +304,28 @@ test("黑板把等待前置的步标成 blocked，前置执行后解除", () => 
   }
 });
 
+test("提示不再为每个关联任务画边，关联集中显示在节点详情", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Hint edges", origin: "https://example.test", goal: "Assess" }),
+    ).project.id;
+    const hint = store.hint(id, "把 a、b、c 都测一遍");
+    const step = store.manualStep(id, { from: ["origin"], description: "测 a", creator: "human" });
+    store.mutate(id, "test.hint", true, (g) => {
+      g.steps.find((item) => item.id === step.id)!.hint_ids = [hint.id];
+    });
+    const elements = graphElements(store.get(id), "main");
+    assert.ok(
+      elements.some((element) => element.data.type === "hint"),
+      "hint 节点仍保留",
+    );
+    assert.ok(!elements.some((element) => element.data.status === "hint"), "不再画 hint→step 边");
+  } finally {
+    store.close();
+  }
+});
+
 test("范围种子只来自显式范围（主视图点选不改变画布）", () => {
   assert.deepEqual(scopeSeeds({ ids: ["f001"], label: "发现 f001" }), ["f001"]);
   assert.deepEqual(scopeSeeds({ ids: [] }), []);

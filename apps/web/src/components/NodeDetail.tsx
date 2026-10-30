@@ -70,6 +70,12 @@ export function NodeDetail() {
         ? node.state
         : null;
   const blockedBy = displayStep ? unmetDependencies(graph, displayStep) : [];
+  const hintRecord =
+    !displayStep && !displayFact && !displayFinding ? graph.hints.find((hint) => hint.id === node.id) : undefined;
+  // 提示与任务的关联不画进黑板，集中在这里展开，避免一条范围提示把图连成蛛网。
+  const hintSteps = hintRecord
+    ? graph.steps.filter((step) => !step.deleted && (step.hint_ids ?? []).includes(hintRecord.id))
+    : [];
 
   return (
     <div className="detail-content">
@@ -106,6 +112,26 @@ export function NodeDetail() {
           </div>
         )}
       </header>
+
+      {hintRecord && (
+        <Section title="关联任务">
+          {hintSteps.length ? (
+            <p className="detail-text">
+              {hintSteps.map((step, index) => (
+                <span key={step.id}>
+                  {index > 0 && "、"}
+                  <button className="node-id" onClick={() => ws.setSelected(step.id)}>
+                    {step.id}
+                  </button>
+                </span>
+              ))}
+              <span className="detail-muted"> · 共 {hintSteps.length} 项</span>
+            </p>
+          ) : (
+            <p className="detail-muted">暂无任务引用这条提示。</p>
+          )}
+        </Section>
+      )}
 
       {displayStep && (
         <>

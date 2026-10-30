@@ -409,10 +409,8 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
   for (const s of steps) {
     const factIds = outputs(s.id);
     const status = s.discarded ? "discarded" : s.concluded_at ? "concluded" : s.worker ? "running" : "open";
-    for (const hintId of s.hint_ids || []) {
-      const targets = present.has(s.id) ? [s.id] : s.to === "goal" ? ["goal"] : factIds;
-      for (const target of targets) connect(hintId, target, "hint", s.id, "提示关联", `hint-${hintId}`);
-    }
+    // Hint 是人的指令，不是因果关系：不再为每个被覆盖的 Step 画一条边，
+    // 否则一条范围提示会把半个图画成蛛网。关联任务集中显示在节点详情里。
     if (!expandSteps && s.concluded_at && !s.discarded && (factIds.length || s.to === "goal")) {
       for (const source of s.from)
         for (const target of s.to === "goal" ? ["goal"] : factIds) connect(source, target, "concluded", s.id, s.id);
