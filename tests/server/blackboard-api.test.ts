@@ -163,8 +163,8 @@ test("HTTP observations and discovery bind provenance to the validated lease and
     assert.ok(external, "an observed dependency leaves a visible fact");
     assert.equal(
       after.assets.find((a) => a.id === external.asset_id)!.approval,
-      "pending",
-      "a discovered dependency is only a pending asset and never inherits the tested host's approval",
+      "approved",
+      "a discovered dependency is registered as usable; the model decides whether to test it",
     );
     const final = await submit(`/fgs/steps/${step.id}/execute`, {
       submission_id: "final",

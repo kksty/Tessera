@@ -315,15 +315,15 @@ test("FGS emits multiple facts, retains empty/failed paths, and findings do not 
     f.close();
   }
 });
-test("asset discovery never approves; explicit approval is an observation for the decider", () => {
+test("asset discovery registers a usable asset and the decider plans it", () => {
   const f = fixture();
   try {
     decide(f.store, f.id);
     const before = f.store.get(f.id).observation_revision;
     const [asset] = f.store.discover(f.id, [{ hostname: "API.EXAMPLE.TEST.", source: "discovery", evidence_ids: [] }]);
     assert.equal(asset.hostname, "api.example.test");
-    assert.equal(asset.approval, "pending");
-    assert.equal(f.store.get(f.id).steps.length, 0);
+    assert.equal(asset.approval, "approved");
+    assert.equal(f.store.get(f.id).steps.length, 0, "discovery is not a plan");
     assert.ok(
       f.store.get(f.id).observation_revision > before,
       "discovery is an observation and must reach the next Decide",
@@ -331,52 +331,15 @@ test("asset discovery never approves; explicit approval is an observation for th
     f.store.hint(f.id, "New direction");
     const job = f.store.claim(f.id, "planner", 0)!;
     const graph = f.store.get(f.id);
-    assert.throws(
-      () =>
-        commitPlan(
-          f.store,
-          f.id,
-          decideSchema.parse({
-            worker: job.worker,
-            revision: graph.revision,
-            observation_revision: graph.observation_revision,
-            planning_revision: graph.planning_revision,
-            steps: [
-              {
-                from: ["origin"],
-                description: "Test domain",
-                asset_id: asset.id,
-              },
-            ],
-          }),
-        ),
-      /approved/,
-    );
-    assert.equal(f.store.get(f.id).steps.length, 0);
-    f.store.release(f.id, job);
-    f.store.approve(f.id, [asset.id]);
-    f.store.approve(f.id, [asset.id]);
-    f.store.discover(f.id, [{ hostname: "api.example.test", source: "again", evidence_ids: [] }]);
-    let board = f.store.get(f.id);
-    assert.equal(board.steps.length, 0, "approval is an observation, not a plan");
-    assert.equal(board.assets.find((a) => a.id === asset.id)?.approval, "approved");
-    assert.ok(
-      board.facts.some((fact) => fact.description.includes("已批准测试资产")),
-      "the decider sees the approval fact",
-    );
-    // The scheduler now has Decide work; the decider explicitly plans the test.
-    const planning = f.store.claim(f.id, "planner-2", 0)!;
-    assert.equal(planning.kind, "decide");
-    board = f.store.get(f.id);
     commitPlan(
       f.store,
       f.id,
       decideSchema.parse({
-        worker: planning.worker,
-        revision: board.revision,
-        observation_revision: board.observation_revision,
-        planning_revision: board.planning_revision,
-        steps: [{ from: ["origin"], description: "Test approved asset", asset_id: asset.id }],
+        worker: job.worker,
+        revision: graph.revision,
+        observation_revision: graph.observation_revision,
+        planning_revision: graph.planning_revision,
+        steps: [{ from: ["origin"], description: "Test domain", asset_id: asset.id }],
       }),
     );
     assert.equal(f.store.get(f.id).steps.length, 1);

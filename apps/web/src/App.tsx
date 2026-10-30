@@ -130,6 +130,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
   const [projectFilter, setProjectFilter] = useState("all");
   const [newHints, setNewHints] = useState([""]);
   const [newMode, setNewMode] = useState<ProjectMode>("classic");
+
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1100);
   const [message, setMessage] = useState("");
@@ -830,6 +831,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
           origin: values.get("origin"),
           goal: values.get("goal"),
           mode: newMode,
+
           hints: [...values.entries()]
             .filter(([key, value]) => key.startsWith("hint_") && String(value).trim())
             .map(([, value]) => ({
@@ -843,6 +845,7 @@ export function App({ session, setSession }: { session: Session; setSession: (se
         setModal(null);
         setNewHints([""]);
         setNewMode("classic");
+
       }
     }
     if (modal === "rename") {

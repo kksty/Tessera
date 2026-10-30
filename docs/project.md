@@ -57,7 +57,7 @@ Server / Store 是业务状态的统一写入入口；Dispatcher 负责领取、
 - **Hint** 是人的指令，不能当证据。每条有效指令需由当前措辞版本的 Step 落实，或由 Decide 在 `hint_notes` 说明落实方式并关闭 Hint。操作员也可在提示面板（`POST/DELETE /api/projects/:id/hints/:hid/resolve`）确认关闭、重开或撤回。改写或撤回会停止关联的未关闭旧任务，历史事实与旧 note 保留。
 - **Run** 记录一次 Decide / Execute / Review 的租约、用量和执行情况。Review 读取已有证据，缺口交给 Decide 规划，不自行扫描。
 
-Worker 发现资产时，由模型判断哪些主机与目标相关并提交为待批准资产；候选一律 `pending`，不按共同域名后缀自动推断归属，也不自动批准。证书域名、外部链接、第三方登录/API 依赖是否登记由模型判断并写明来源与证据，人工批准前不规划、不发起请求；归属与授权始终由人确认。已有低价值或无依据的 Finding 可由 Decide 用 `finding_updates` 的 `withdraw:true` 撤回交付，保留 Fact、证据、原文和审核历史。操作员已批准当前版本的 Finding 不能被 Decide 撤回、合并为来源或删除；需操作员先撤销批准，模型仍可修订为待复审新版本。有独立价值的信息类不能仅因不是漏洞就撤回或争议底层 Fact。获得新支持后，Decide 用同一 ID 的 `restore:true`、理由和实质 `changes` 恢复为新版本复审；同身份补交不会被静默吞掉，也不能通过省略 ID 绕过撤回。所有 Finding 继续使用稳定 `v###` 编号。
+Worker 发现资产时，由模型判断哪些主机与目标相关并登记；登记即 `approved`，不经过人工逐资产批准，程序也不做范围校验。证书域名、外部链接、第三方登录/API 依赖是否登记、是否测试由模型判断并写明来源与证据；测不测、先测哪个由模型决定。操作员保留「撤销资产」和「暂停项目」作为紧急停止，撤销后的资产不得再请求。已有低价值或无依据的 Finding 可由 Decide 用 `finding_updates` 的 `withdraw:true` 撤回交付，保留 Fact、证据、原文和审核历史。操作员已批准当前版本的 Finding 不能被 Decide 撤回、合并为来源或删除；需操作员先撤销批准，模型仍可修订为待复审新版本。有独立价值的信息类不能仅因不是漏洞就撤回或争议底层 Fact。获得新支持后，Decide 用同一 ID 的 `restore:true`、理由和实质 `changes` 恢复为新版本复审；同身份补交不会被静默吞掉，也不能通过省略 ID 绕过撤回。所有 Finding 继续使用稳定 `v###` 编号。
 
 审核页将固定发现编号、内容版本和审核编号分别标为“发现 v002”“第 1 版”“审核 r002”，并提供编号及状态说明。历史审核只在节点仍保留上一版快照时展示当时版本的标题与入口，不借用新版本内容；更早版本的正文不再保留，只留审核结论与版本号。“历史审核 · 当前第 2 版”不表示新版已审核通过。数量、去重口径、字段和脱敏状态须回读完整原件核对，重叠分页不相加。
 
@@ -95,7 +95,7 @@ Decide 可在已有 Finding 待审核时提出 complete，项目保持 active �
 
 ## 上下文、检索与提交
 
-决策者架构项目在最近一次成功 Decide 结束五分钟后，若没有到期规划、执行或审核，也没有人工闸门、退避或收尾，项目概览会提示空闲；操作员可点「继续规划」唤醒一次 Decide。运行中、待审核、待批准资产、未处置 Hint 和未执行或阻塞的 Step 均不视为空闲。系统不会自动循环重试。
+决策者架构项目在最近一次成功 Decide 结束五分钟后，若没有到期规划、执行或审核，也没有人工闸门、退避或收尾，项目概览会提示空闲；操作员可点「继续规划」唤醒一次 Decide。运行中、待审核、未处置 Hint 和未执行或阻塞的 Step 均不视为空闲。系统不会自动循环重试。
 
 Decide 看到全部未关闭 Step 的精确索引、执行/产出引用、Step 的 `property`、open leads（前 20 条与 `open_leads_total`）、未确认 Hints、`coverage_surfaces`（已观测 host+path 及来源 Fact）、消耗最高的几轮 `step_costs`（已花 token 与产出的事实/发现数，用于识别异常而非预算目标）、`limits`（本轮真实规划预算、当前在途数与是否到顶）以及热 Fact/Finding；`control` 分列 `confirmed_vulnerabilities` 与 `confirmed_informational`，信息类不计入交付进度。超过 200 条未关闭工作时，`steps` 仅预览前 200 条，`open_step_index` 保留全部 ID/版本/状态及关联，`steps_preview` 给出 `query_graph kind=steps,status=open` 分页入口；完整问题继续按 ID 和哈希分页读取。Execute 直接获得完整问题、根目标、关联子目标、当前 Hint、直接 Fact 全文、关联 Finding 的声明字段（impact/reproduction/remediation，标注 `claim:true`，超出预算标 `claims_omitted` 或 `truncated_fields`）、当前 Step 上一次执行/中断摘要、生产 Step 的摘要/关闭理由及当前资产；更深历史按需查询。Review 从 Finding、来源 Fact 与原始证据清单出发。Execute/Review 的直接 Fact 带 `provenance`，生产 Step 的完整问题与输入 ID 另列于 `source_steps`，不会把 Step 的当前 Run 冒充为旧 Fact 的生产 Run。
 

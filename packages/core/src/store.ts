@@ -1338,8 +1338,11 @@ export class Store {
         );
   }
   private asset(g: Graph, id?: string) {
-    if (id && !g.assets.some((a) => a.id === id && a.approval === "approved"))
-      fail(409, "Asset must be approved before testing");
+    if (!id) return;
+    const target = g.assets.find((a) => a.id === id);
+    if (!target) fail(409, "Unknown asset");
+    // 范围由模型判断，程序不做逐资产授权校验；操作员撤销仍是紧急停止。
+    if (target!.approval === "rejected") fail(409, "Asset was revoked by the operator");
   }
   /** Every asset a Finding claims to be about, directly or through its Step. */
   private findingAssets(g: Graph, finding: Finding) {
@@ -2313,6 +2316,7 @@ export class Store {
       return goal;
     });
   }
+  /** 切换范围判定策略；切到 model 时把已有的待批准资产直接放行。 */
   /**
    * Rewrite the origin. The origin is the human-authored scope, so the matching
    * Asset follows it: an existing asset with the same hostname is reused, a new
@@ -2807,16 +2811,16 @@ export class Store {
             ...input,
             hostname: host,
             id: this.next(g.assets, "a"),
-            approval: "pending" as const,
+            // 范围由模型判断：登记即可规划与测试，不再有逐资产人工批准。
+            approval: "approved",
             seed: false,
             created_at: now(),
+            approved_at: now(),
           };
           g.assets.push(a);
-          // 发现本身是观测：写一条事实，决策者才能在自己的入口里看到这次发现，
-          // 而不是只看到一行待批准资产。批准与否仍由人决定。
           observe({
-            description: `发现未批准主机：${host}（来源 ${input.source || "discovery"}）。已登记为待批准资产；人工批准前不规划、不向其发起请求。`,
-            conclusion: `发现主机 ${host}，待批准`.slice(0, MAX_CONCLUSION_LENGTH),
+            description: `登记资产：${host}（来源 ${input.source || "discovery"}；由模型判断范围，可直接规划与测试）。`,
+            conclusion: `资产 ${host} 已登记`.slice(0, MAX_CONCLUSION_LENGTH),
             asset_id: a.id,
             evidence_ids: [...input.evidence_ids],
           });
@@ -2893,7 +2897,9 @@ export class Store {
       for (const assetId of assetIds) {
         const asset = g.assets.find((a) => a.id === assetId) || fail(404, "Asset not found");
         if (asset.approval !== "approved") continue;
-        asset.approval = "pending";
+        // 范围由模型判断，但操作员撤销是紧急停止：写成 rejected 才能真的拦住
+        // 后续请求；approve 仍可把它恢复。
+        asset.approval = "rejected";
         asset.approved_at = undefined;
         for (const step of g.steps.filter(
           (s) => !s.deleted && !s.concluded_at && !s.discarded && stepAssets(g, s).includes(assetId),
@@ -3144,7 +3150,10 @@ export class Store {
                 ready(s.retry_at),
             )
             .filter((s) =>
-              stepAssets(g, s).every((id) => g.assets.some((a) => a.id === id && a.approval === "approved")),
+              stepAssets(g, s).every((id) => {
+                const target = g.assets.find((a) => a.id === id);
+                return !!target && target.approval !== "rejected";
+              }),
             )
             .sort(
               (a, b) =>

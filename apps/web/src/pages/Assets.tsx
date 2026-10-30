@@ -10,11 +10,11 @@ import { useWorkspace } from "../workspace.js";
 type AssetView = "list" | "map";
 const AssetMap = lazy(() => import("../AssetMap.js").then(({ AssetMap }) => ({ default: AssetMap })));
 
-/** 批准状态文案：pending 在通用标签里是「待审核」，这里必须写清是待批准。 */
+/** 范围状态文案：pending 在通用标签里是「待审核」，这里必须写清是待批准。 */
 const approvalLabels: Record<Asset["approval"], string> = {
-  approved: "已批准",
-  pending: "待批准",
-  rejected: "已拒绝",
+  approved: "可测",
+  pending: "历史待处理",
+  rejected: "已撤销",
 };
 
 export function AssetsPage() {
@@ -42,7 +42,7 @@ export function AssetsPage() {
   const pending = assets.filter((asset) => asset.approval === "pending");
   const selectedPending = pending.filter((asset) => ws.checked.includes(asset.id));
   const approved = graph.assets.filter((asset) => asset.approval === "approved").length;
-  const pendingTotal = graph.assets.filter((asset) => asset.approval === "pending").length;
+  const revokedTotal = graph.assets.filter((asset) => asset.approval === "rejected").length;
   const seedTotal = graph.assets.filter((asset) => asset.seed).length;
   const testing = new Set(
     graph.steps
@@ -75,7 +75,7 @@ export function AssetsPage() {
       <PageHeader
         eyebrow="SCOPE / ASSETS"
         title="资产与范围"
-        description="种子与发现资产先进入范围、再接受测试：只有已批准的资产会被规划。撤销批准会把资产退回待批准，并取消它未完成的任务。"
+        description="资产登记后即可规划与测试，范围由模型判断。撤销是紧急停止：会取消该资产未完成的任务，之后不得再请求。"
         meta={
           <>
             <span className="tag">种子 {seedTotal}</span>
@@ -96,7 +96,7 @@ export function AssetsPage() {
                   })
                 }
               >
-                批准所选 {selectedPending.length}
+                恢复所选 {selectedPending.length}
               </button>
             )}
             <button
@@ -120,17 +120,17 @@ export function AssetsPage() {
           note={`种子 ${seedTotal} · 发现 ${graph.assets.length - seedTotal}`}
         />
         <Kpi
-          label="已批准"
+          label="可测资产"
           value={approved}
           icon={<ShieldCheck size={15} aria-hidden="true" />}
-          note="可进入探索范围"
+          note="登记后即可规划"
         />
         <Kpi
-          label="待批准"
-          value={pendingTotal}
-          tone={pendingTotal ? "warn" : "neutral"}
+          label="已撤销"
+          value={revokedTotal}
+          tone={revokedTotal ? "warn" : "neutral"}
           icon={<Clock3 size={15} aria-hidden="true" />}
-          note={pendingTotal ? "批准后才会被规划" : "没有等待批准的范围变更"}
+          note={revokedTotal ? "撤销的资产不会再被请求" : "没有撤销的资产"}
         />
         <Kpi
           label="正在测试"
@@ -173,14 +173,14 @@ export function AssetsPage() {
                   ws.setChecked(event.target.checked ? pending.map((asset) => asset.id) : [])
                 }
               />
-              选择全部待批准
+              选择历史待处理
             </label>
             <span className="toolbar-hint">
               已选 {selectedPending.length} 个 · 显示 {assets.length} / {graph.assets.length} 个
             </span>
           </>
         ) : (
-          <span className="toolbar-hint">星图与搜索联动 · 颜色表示批准状态</span>
+          <span className="toolbar-hint">星图与搜索联动 · 颜色表示范围状态</span>
         )}
       </div>
 
@@ -195,7 +195,7 @@ export function AssetsPage() {
           <EmptyState
             icon={<Globe2 size={20} aria-hidden="true" />}
             title="还没有资产"
-            desc="创建项目时填写的指定站点会成为种子资产；探索中发现的主机先进入待批准列表，不会被自动测试。"
+            desc="创建项目时填写的指定站点会成为种子资产；探索中发现的主机登记后即可由模型判断是否测试。"
           />
         </div>
       ) : assets.length === 0 ? (
@@ -221,7 +221,7 @@ export function AssetsPage() {
                 </th>
                 <th>主机名</th>
                 <th>来源</th>
-                <th>批准状态</th>
+                <th>范围状态</th>
                 <th>冷处理</th>
                 <th>创建时间</th>
                 <th className="assets-col-actions">操作</th>
@@ -280,14 +280,14 @@ export function AssetsPage() {
                     <td className="assets-created mono">{fmt(asset.created_at)}</td>
                     <td className="assets-col-actions">
                       <div className="assets-actions">
-                        {asset.approval === "pending" && (
+                        {asset.approval !== "approved" && (
                           <button
                             type="button"
                             className="button small"
                             disabled={ws.busy}
                             onClick={() => void approve([asset.id])}
                           >
-                            批准测试
+                            恢复
                           </button>
                         )}
                         {asset.approval === "approved" && (
@@ -301,7 +301,7 @@ export function AssetsPage() {
                               disabled={ws.busy}
                               onClick={() => setRevoking(asset)}
                             >
-                              撤销批准
+                              撤销资产
                             </button>
                             {asset.cooldown_override === "cooled" ? (
                               <button
@@ -342,8 +342,8 @@ export function AssetsPage() {
 
       {revoking && (
         <Modal
-          label="撤销批准"
-          title="撤销批准"
+          label="撤销资产"
+          title="撤销资产"
           busy={ws.busy}
           onClose={() => setRevoking(null)}
           footer={
@@ -362,7 +362,7 @@ export function AssetsPage() {
                 disabled={ws.busy}
                 onClick={() => void revoke(revoking)}
               >
-                撤销批准
+                撤销资产
               </button>
             </>
           }
@@ -410,7 +410,7 @@ export function AssetsPage() {
           <p className="assets-modal-lead">
             暂时不让规划触碰 <span className="mono">{cooling.hostname}</span>。
           </p>
-          <p className="quiet">冷处理不改批准状态：范围仍是已批准，只是把它从规划入口移开，随时可以恢复关注。</p>
+          <p className="quiet">冷处理不改范围状态：范围仍是已批准，只是把它从规划入口移开，随时可以恢复关注。</p>
           <label className="field">
             <span className="field-label">理由（可选）</span>
             <textarea

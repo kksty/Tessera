@@ -191,7 +191,7 @@ export function ProjectOverviewPage() {
     let ok = true;
     // Save the origin first: it changes the authorized scope, and the goal
     // rewrite then notices the project is already running again.
-    if (nextOrigin !== origin)
+    if (ok && nextOrigin !== origin)
       ok = await ws.action(() =>
         api(path(project.id, "/origin"), { description: nextOrigin, resume: wantsResume }, "PUT"),
       );
@@ -264,6 +264,9 @@ export function ProjectOverviewPage() {
           运行 {duration(runtime)}
         </span>
         <ModeBadge mode={project.mode} />
+        <span className="meta-pill" title="范围由模型判断：登记即可规划与测试，程序不做逐资产批准；操作员撤销资产与暂停项目仍是紧急停止">
+          模型判定范围
+        </span>
         {swarm && (
           <span className="meta-pill" title="平等执行者编排：无决策者、无 Step，执行者互相通信">
             <Users size={13} aria-hidden="true" />

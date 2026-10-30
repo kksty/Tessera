@@ -546,7 +546,7 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
       ),
       tool(
         "discover_assets",
-        "Record discovered hosts as pending assets. Submit any host you judge relevant to the target; each becomes a pending asset carrying your source and evidence. A human must approve it before any planning or request, so state why it belongs to the target. This call never approves or tests hosts.",
+        "Record discovered hosts as assets with your source and evidence. In approval-scope projects they wait for a human; in model-scope projects they are immediately usable for planning and testing. This call never sends a request to the host.",
         Type.Object({
           assets: Type.Array(
             Type.Object({

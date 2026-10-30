@@ -13,7 +13,7 @@
 没有固定的攻击流程，也没有预设的专家角色。Tessera 提供两种**并行**的任务架构：决策者架构（Decide / Execute / Review，单一规划入口）与蜂群架构（Swarm，平等执行者，无决策者/无 Step）。两者按项目隔离、创建时选定，不是新旧版本；详见 [两种并行架构](docs/architectures.md)。
 
 > [!WARNING]
-> 本项目是实验性安全测试工具，仅用于合法合规、事先获准的环境。Worker 会执行真实命令，模型结论需要人工核实；证据与上下文可能发送给配置的模型服务。Dispatcher 持有 Docker Socket，Worker 与网关以高权限运行，本平台不是对抗恶意提示或恶意代码的隔离边界。使用者对自身的使用行为、数据保护和实际操作负责。
+> 本项目是实验性安全测试工具，仅用于合法合规、事先获准的环境。Worker 会执行真实命令，模型结论需要人工核实；证据与上下文可能发送给配置的模型服务。Dispatcher 持有 Docker Socket，Worker 与网关以高权限运行，本平台不是对抗恶意提示或恶意代码的隔离边界。资产范围由模型判断，程序不做逐资产授权校验，仅保留操作员撤销资产与暂停项目作为紧急停止；使用者必须自行保证目标始终在授权范围内。使用者对自身的使用行为、数据保护和实际操作负责。
 
 ## 快速开始
 
@@ -53,7 +53,7 @@ docker compose up -d --build
 
 ![Tessera 安全总览](docs/assets/screenshots/security-overview.png)
 
-**安全总览**：跨项目汇总已确认漏洞、待审核发现和待批准资产。
+**安全总览**：跨项目汇总已确认漏洞、待审核发现和已登记资产。
 
 ![Tessera 探索黑板](docs/assets/screenshots/exploration-graph.png)
 

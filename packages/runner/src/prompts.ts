@@ -47,8 +47,8 @@ export const findingEvidencePolicy =
   "数量、字段和脱敏状态必须回到完整原始证据核对。区分记录数、出现次数和去重后的值数量，重叠分页不能相加；只读过片段时不能声称全量统计，按 next_offset 或 More evidence 继续读取。可执行任务用针对性解析脚本统计并保存统计方法与结果；Decide/Review 仅回读已有材料，不执行脚本。完整号码、部分掩码和空字段分别说明；description、impact、reproduction.observed 和定级理由中的数量保持一致。发现数量冲突或字段遗漏时用原 ID 修订，不能只把修正在审核理由里。负向观测（status=not_observed）必须写 request 与 parameter_sources：每个请求参数名单独一条，parameter 与 URL 解码后的参数名逐字一致（参数名可以包含 = 和引号），source 写页面 JS/AJAX/meta/表单/构造并附证据 ID；status=observed 的事实即使正文含否定对照，字段缺口写 planning_issues，不阻断 pass。";
 export const reviewImpactPolicy =
   "仅审核已有原始证据，不复测目标。通过时明确 kind：informational 不填写危险度或 CVSS；vulnerability 给 CVSS v4.0 Base vector 与 rationale，程序计算正分。漏洞 pass 前确认 Finding 的 impact、reproduction.steps、remediation 均完整，影响、复现与修复建议足以让读者独立复核；缺项或内容不足时返回 needs_evidence，在理由中逐项说明缺口，交 Decide 用 finding_updates 补写后复审，不在审核理由中代填正文。每个非 N 的 VC/VI/VA/SC/SI/SA 必须有 impact_evidence，说明受损对象、应有安全边界、已证明的后果及所引用证据；推测的影响不能计分。证据闭合则 pass，核心缺口 needs_evidence，声明被反驳 rejected；只有明确被反证的源观测才 disputed，不能争议 origin。需要后续行动的问题交给 Decide，pass 中的新问题明确写 planning_issues。复审只核对本版本新增或变化的证据与字段，不重复要求上一轮已核对且未变化的内容；所有阻断项一次列全，同一事实的同一字段缺口只算一项。";
-export const discoveryScopePolicy =
-  "只测试当前 approval=approved 的资产；业务相关、证书或外链不等于目标所有权。判断相关的主机可提交为待批准资产（pending），由人工确认归属并批准；批准前不规划、不向它请求。";
+export const modelScopePolicy =
+  "范围判定由你负责：本项目登记的主机/资产可立即规划与测试，不需要人工逐资产批准。登记前写明它与目标的归属依据；测不测、先测哪个由你判断，但必须服从项目目标与 Hint，不要为数量无依据地扩散。操作员撤销的资产不得再请求。";
 
 /**
  * The model sees full graph nodes (Fact/Finding/Review records) in the
@@ -78,7 +78,7 @@ export const testDomainGuidance =
 export function promptFor(job: Job, view: unknown, _graph: Graph): string {
   const common = `${findingQualityPolicy}
 ${findingEvidencePolicy}
-${discoveryScopePolicy}
+${modelScopePolicy}
 共享状态来自当前图和工作区；新 Run 不依赖上一会话的隐藏记忆。Fact 写完整 conclusion（≤120字）和 observed/not_observed/disputed；失败或未观测不是目标安全的证明。负面结论必须写 request（method/url）、parameter_sources（每个参数值来自页面 JS、AJAX、meta、表单还是猜测，并附证据 ID）和 negative_scope（attempted 试过什么、not_tested 没覆盖什么、confidence=low/medium/high）；单次请求只能支持“本次未观测”，不能写成“已证伪/已穷尽”。缺范围或溯源时服务端直接拒绝这次提交，不等审核再退回。objects 记录实际观察或测试到的 host/path（写成绝对 URL 或 /path），完成覆盖表按这些 surface 核对。from 只放 Fact ID，原始 Evidence ID 放 evidence_ids。引用证据前读取原文；参考资料和 Hint 不是观测或执行许可。query_graph 与 read_graph 可查当前记录或历史，sources/outputs 是记录之间的因果边。被删来源只返回标记，显式历史不会恢复节点或变成新证据。
 当前视图：
 ${JSON.stringify(view)}`;

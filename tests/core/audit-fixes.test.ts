@@ -95,7 +95,7 @@ test("revoked scope remains available to archival completion while fresh testing
     f.store.revokeAssets(f.id, ["a001"]);
     assert.throws(
       () => f.store.manualStep(f.id, { from: ["origin"], description: "New test", creator: "human" }),
-      /approved/,
+      /revoked/,
     );
     const planner = f.store.claim(f.id, "planner", 0)!,
       g = f.store.get(f.id);

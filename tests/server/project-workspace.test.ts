@@ -69,7 +69,7 @@ test("revoking approved assets retires queued and running tasks, retains history
   store.manualHeartbeat(id,task.id,"Human");
   const before=store.get(id).facts.length;
   store.revokeAssets(id,[asset.id]); let graph=store.get(id);
-  assert.equal(graph.assets.find(a=>a.id===asset.id)!.approval,"pending");
+  assert.equal(graph.assets.find(a=>a.id===asset.id)!.approval,"rejected");
   assert.equal(graph.steps.find(s=>s.id===task.id)!.discarded,true);
   assert.equal(graph.steps.find(s=>s.id===task.id)!.worker,null);
   assert.equal(graph.facts.length,before);
@@ -208,6 +208,6 @@ test("revocation also retires legacy tasks inheriting scope from the origin and 
  commitPlan(store, id,decideSchema.parse({worker:plan.worker,revision:g.revision,observation_revision:g.observation_revision, planning_revision: g.planning_revision,steps:[{from:["origin"],description:"Original implicit target"}]}));
  const job=store.claim(id,"executor",0)!;store.revokeAssets(id,[g.assets[0].id]);
  assert.equal(store.get(id).steps.find(s=>s.id===job.step_id)!.discarded,true);
- assert.throws(()=>store.manualStep(id,{from:["origin"],description:"Old approval fact is insufficient",creator:"Human"}),/approved/);
+ assert.throws(()=>store.manualStep(id,{from:["origin"],description:"Old approval fact is insufficient",creator:"Human"}),/revoked/);
  }finally{store.close();}
 });

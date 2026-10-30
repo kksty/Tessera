@@ -51,7 +51,7 @@ test("hints have selectable nodes and completed task labels retain their IDs", (
     store.manualConclude(id, step.id, "human", "Observation");
     const elements = graphElements(store.get(id), "main");
     assert.ok(elements.some(e => e.data.id === hint.id && e.data.type === "hint"));
-    assert.ok(elements.some(e => e.data.status === "hint" && e.data.source === hint.id));
+    assert.ok(!elements.some(e => e.data.status === "hint"), "提示不再为每个关联任务画边");
     assert.ok(elements.some(e => e.data.step_id === step.id && String(e.data.label).startsWith(step.id)));
     store.updateHint(id, hint.id, {}, true);
     assert.equal(graphElements(store.get(id), "main").some(e => e.data.id === hint.id), false);

@@ -243,7 +243,7 @@ test("已完成项目可由重测重新打开，暂停项目保留暂停，资�
   try {
     f.store.revokeAssets(f.id, ["a001"]);
     const before = f.store.get(f.id);
-    assert.throws(() => f.action("retest"), /approv|批准/);
+    assert.throws(() => f.action("retest"), /revok|撤|批准/);
     assert.deepEqual(f.store.get(f.id), before);
   } finally {
     f.store.close();
