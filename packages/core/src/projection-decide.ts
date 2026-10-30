@@ -1,5 +1,6 @@
 import type { Fact, Graph, Step } from "../../protocol/src/index.js";
 import { effectiveStepPriority, stepCoversHint } from "./hint-coverage.js";
+import { unmetDependencies } from "./step-chain.js";
 import { coverageSurfaces } from "../../protocol/src/coverage.js";
 import { duplicateFindingGroups, relatedFindingGroups } from "./finding-merges.js";
 import { resolveGraphRelations } from "../../protocol/src/graph-relations.js";
@@ -214,7 +215,9 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
     facts: facts
       .filter((fact) => fact.id === "origin" || fact.kind === "navigation" || !coldIds.has(fact.id))
       .map(factLine),
-    steps: orderedOpen.slice(0, OPEN_STEP_PREVIEW_LIMIT).map((s) => stepLine(s, effectiveStepPriority(graph, s))),
+    steps: orderedOpen
+      .slice(0, OPEN_STEP_PREVIEW_LIMIT)
+      .map((s) => stepLine(s, effectiveStepPriority(graph, s), unmetDependencies(graph, s))),
     // A lead is a concrete next question, not a confirmed observation. Open
     // leads are the mandatory bridge between execution findings and planning.
     // A lead is a candidate next question, never a checklist item: it does not
@@ -236,6 +239,7 @@ export function projectEntry(graph: Graph, focusId: string, changes?: EntryChang
             asset_id: s.asset_id ?? null,
             goal_id: s.goal_id ?? null,
             hint_ids: s.hint_ids ?? [],
+            ...(s.depends_on?.length ? { depends_on: s.depends_on, blocked_by: unmetDependencies(graph, s) } : {}),
           })),
           steps_preview: {
             total: orderedOpen.length,

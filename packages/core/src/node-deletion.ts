@@ -38,6 +38,9 @@ export function planNodeDeletions(graph: Graph, inputs: DeleteInput[], options: 
     if (["step_input", "fact_production", "finding_source", "finding_production"].includes(edge.kind))
       link(edge.source, edge.target);
   for (const step of graph.steps) if (step.goal_id) link(step.goal_id, step.id);
+  // A dependency is a production precondition: deleting the prerequisite makes
+  // the successor unclaimable, so downstream expansion must include it too.
+  for (const step of graph.steps) for (const dependency of step.depends_on ?? []) link(dependency, step.id);
   const selected = new Map<
     string,
     {
@@ -93,12 +96,25 @@ export function planNodeDeletions(graph: Graph, inputs: DeleteInput[], options: 
     }
   }
   const ids = new Set(selected.keys());
+  for (const step of graph.steps)
+    if (
+      isActiveNode(step) &&
+      !step.discarded &&
+      !ids.has(step.id) &&
+      (step.depends_on ?? []).some((dependency) => ids.has(dependency))
+    )
+      conflicts.push({
+        kind: "delete",
+        id: step.id,
+        reason: `Step ${step.id} depends on a Step selected for deletion; include it or remove the dependency first`,
+      });
   const affected = [...nodes.values()]
     .filter(
       ({ node }) =>
         isActiveNode(node) &&
         !ids.has(node.id) &&
         (("from" in node && node.from.some((id) => ids.has(id))) ||
+          ("depends_on" in node && (node.depends_on ?? []).some((id) => ids.has(id))) ||
           ("fact_ids" in node && node.fact_ids.some((id) => ids.has(id))) ||
           ("step_id" in node && !!node.step_id && ids.has(node.step_id)) ||
           ("revision_step_id" in node && !!node.revision_step_id && ids.has(node.revision_step_id)) ||

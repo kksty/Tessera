@@ -11,6 +11,7 @@ export type StepInput = Pick<Step, "from" | "description"> &
       | "goal_id"
       | "hint_ids"
       | "lead_ids"
+      | "depends_on"
       | "property"
       | "method_hint"
       | "test_domain"

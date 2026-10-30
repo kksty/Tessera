@@ -35,6 +35,8 @@ test("任务提示词不规定何时删除或使用工具，只保留数据契�
   assert.match(decide, /limits/, "the decider plans against the effective budget in the view");
   assert.match(decide, /negative_scope/, "the decider must respect the boundary of a negative fact");
   assert.match(decide, /本次未观测/, "a failed attempt is not a disproof");
+  assert.match(decide, /depends_on/, "a plan may describe an ordered exploitation chain");
+  assert.match(execute, /search_worker_traces/, "executors can search earlier Run traces before repeating work");
   assert.match(
     decide,
     /未扩面，维持现有边界/,

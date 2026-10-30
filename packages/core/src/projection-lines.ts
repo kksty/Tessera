@@ -88,18 +88,22 @@ export { stepState, unclosedStep, findingState, factLine } from "./entry-lines.j
 
 export type { StepState } from "./entry-lines.js";
 
-export function stepLine(step: Step, priority = step.priority): string {
+export function stepLine(step: Step, priority = step.priority, blockedBy: string[] = []): string {
   const objects = step.asset_id ? ` [${step.asset_id}]` : "";
   // 分类是可选短码：已填的 Step 带 [recon]，未填不带，模型由此看出哪些旧任务还没分类。
   const domain = step.test_domain ? ` [${step.test_domain}]` : "";
   const from = step.from.length ? ` ← ${step.from.join(",")}` : "";
+  // 显式依赖是链式问题，不是普通先后顺序：未满足时写明还等哪一步。
+  const chain = step.depends_on?.length
+    ? ` ⟸ ${step.depends_on.join(",")}${blockedBy.length ? `（未就绪：${blockedBy.join(",")}）` : ""}`
+    : "";
   const outputs = step.fact_ids.length ? ` → ${step.fact_ids.join(",")}` : "";
   const summary = step.summary ? ` 执行摘要：${firstSentence(step.summary)}` : "";
   const reason = step.close_reason ? ` 关闭理由：${firstSentence(step.close_reason, 120)}` : "";
   const reopen = step.reopen_reason ? ` 重开理由：${firstSentence(step.reopen_reason, 120)}` : "";
   const property = step.property ? ` 属性：${firstSentence(step.property, 200)}` : "";
   const method = step.method_hint ? ` 方法建议：${firstSentence(step.method_hint, 160)}` : "";
-  return `${step.id}${objects} ${stepState(step)} p${priority} v${step.version ?? 1}${domain}${from}${outputs} — ${firstSentence(step.description)}${property}${method}${summary}${reason}${reopen}`;
+  return `${step.id}${objects} ${stepState(step)} p${priority} v${step.version ?? 1}${domain}${from}${chain}${outputs} — ${firstSentence(step.description)}${property}${method}${summary}${reason}${reopen}`;
 }
 
 export { findingLine } from "./entry-lines.js";

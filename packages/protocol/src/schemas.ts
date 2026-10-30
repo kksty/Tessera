@@ -311,6 +311,14 @@ const decisionFields = {
   steps: z
     .array(
       z.object({
+        /** Submission-local key so later Steps in the same plan can depend on this one. */
+        key: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z][A-Za-z0-9_-]{0,23}$/, "key must start with a letter and use 1-24 letters, digits, _ or -")
+          .optional(),
+        /** Existing Step IDs or keys defined earlier in this same submission. */
+        depends_on: z.array(text).max(8).optional(),
         from: z.array(text).min(1),
         description: text,
         /** One falsifiable security property, not merely an activity list. */

@@ -107,6 +107,13 @@ export interface Step {
   deleted_output_ids?: string[];
   id: string;
   from: string[];
+  /**
+   * Steps that must produce their result before this one is claimable. Used for
+   * genuinely ordered exploitation chains; parallel enumeration must stay
+   * unordered. A missing, deleted or discarded prerequisite keeps the Step
+   * blocked until the Decider rewrites or discards it.
+   */
+  depends_on?: string[];
   to: string | null;
   description: string;
   /** A falsifiable property the executor must answer; the description is the activity. */

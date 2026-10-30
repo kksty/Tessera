@@ -22,6 +22,7 @@ import type { ApiClient } from "./client.js";
 import { settlementBatches } from "./decision-batches.js";
 import { saveEvidenceFile } from "./evidence-file.js";
 import { queryReferences, readReference } from "./references.js";
+import { readWorkerTrace, searchWorkerTraces } from "./trace-search.js";
 
 type DecisionAttempt = Pick<DecisionResponse, "settle"> & Partial<Pick<DecisionResponse, "plan" | "plan_id">>;
 
@@ -473,6 +474,33 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
             await handle.close();
           }
         },
+      ),
+      tool(
+        "search_worker_traces",
+        "Search the tool calls (command, arguments, result excerpt) of earlier Execute Runs in this project. Hits are process leads, not Evidence: re-run or read the archived original before turning one into a Fact. Cookies, authorization headers and obvious secrets are redacted; large bodies are truncated.",
+        Type.Object({
+          query: Type.String({ minLength: 1, maxLength: 200 }),
+          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+        }),
+        async ({ query, limit }) =>
+          searchWorkerTraces(workspace, query, {
+            excludeRunId: job.run_id,
+            excludeWorker: job.worker,
+            limit,
+          }),
+      ),
+      tool(
+        "get_worker_trace",
+        "Read one earlier tool call in full (bounded, redacted) by run_id and optional tool_call_id. Use after search_worker_traces when an excerpt is not enough; it is still a lead, not Evidence.",
+        Type.Object({
+          run_id: Type.String({ minLength: 1 }),
+          tool_call_id: Type.Optional(Type.String()),
+          max_chars: Type.Optional(Type.Integer({ minimum: 500, maximum: 12000 })),
+        }),
+        async ({ run_id, tool_call_id, max_chars }) =>
+          (await readWorkerTrace(workspace, run_id, tool_call_id, max_chars)) ?? {
+            error: "trace not found; the Run may belong to another project or have no tool calls",
+          },
       ),
       tool(
         "submit_fact",

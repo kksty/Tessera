@@ -22,6 +22,7 @@ import {
   negativeClaimProblem,
 } from "../../protocol/src/review-validation.js";
 import { effectiveStepPriority, stepCoversHint } from "./hint-coverage.js";
+import { dependenciesReady } from "./step-chain.js";
 import { isNearDuplicateStep, stepTextContainment, type StepDraft } from "./step-similarity.js";
 import { reopenLeadsForStep } from "./leads.js";
 import { normalizeSurface, originHost, validateCoverage } from "../../protocol/src/coverage.js";
@@ -1394,6 +1395,16 @@ export class Store {
   ): Step {
     this.sources(g, input.from);
     this.markReferenced(g, input.from);
+    // A chain is an explicit premise, not a hint: every referenced Step must
+    // still exist and be on the board, otherwise the successor could run on a
+    // finding that was never produced.
+    const dependsOn = [...new Set(input.depends_on ?? [])];
+    for (const dependencyId of dependsOn) {
+      const dependency = g.steps.find((candidate) => candidate.id === dependencyId && !candidate.deleted);
+      if (!dependency) fail(422, `Unknown Step dependency: ${dependencyId}`);
+      if (dependency!.discarded)
+        fail(422, `Step ${dependencyId} was discarded; plan a new prerequisite or drop this successor`);
+    }
     const hintVersions: Record<string, number> = {};
     for (const hid of input.hint_ids || []) {
       const hint =
@@ -1420,6 +1431,7 @@ export class Store {
         s.graph_id === graphId &&
         s.description === input.description &&
         JSON.stringify(s.from) === JSON.stringify(input.from) &&
+        JSON.stringify(s.depends_on ?? []) === JSON.stringify(input.depends_on ?? []) &&
         s.asset_id === input.asset_id &&
         s.goal_id === input.goal_id &&
         // A running/executed worker never received newly attached instructions.
@@ -1464,11 +1476,16 @@ export class Store {
       // richer wording into it instead of creating a second Step that will race
       // the first one for the same executor slot. Only Decide asks for this; an
       // operator retest or a manual Step must keep its own identity.
-      const similar = g.steps.find((s) => isNearDuplicateStep(s, input, graphId));
+      const similar = g.steps.find(
+        (s) =>
+          JSON.stringify(s.depends_on ?? []) === JSON.stringify(input.depends_on ?? []) &&
+          isNearDuplicateStep(s, input, graphId),
+      );
       if (similar) return this.mergeNearDuplicateStep(similar, input, creator, hintVersions);
     }
     const step: Step = {
       ...input,
+      ...(dependsOn.length ? { depends_on: dependsOn } : {}),
       ...(input.hint_ids?.length ? { hint_versions: hintVersions } : {}),
       id: this.next(g.steps, "s"),
       priority: input.priority ?? 0,
@@ -3153,6 +3170,7 @@ export class Store {
                 !s.executed_at &&
                 !s.worker &&
                 !s.blocked_run_id &&
+                dependenciesReady(g, s) &&
                 ready(s.retry_at),
             )
             .filter((s) =>

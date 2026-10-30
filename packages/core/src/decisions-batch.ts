@@ -112,18 +112,43 @@ export function submitDecisionBatch(
     const requestedIds = new Set(body.delete_nodes.map((node) => node.id));
     const budget = ctx.stepBudget;
     const beforeStepIds = new Set(g.steps.map((step) => step.id));
-    const steps = [
-      ...new Set(
-        body.steps.map((s) => {
-          // Near-duplicates of an already-open Step are merged into that Step
-          // instead of creating a second queue entry for the same investigation.
-          const step = ctx.insertStep(g, s, body.worker, targetGraph, false, { mergeNearDuplicates: true });
-          if (deletion.ids.has(step.id) || requestedIds.has(step.id))
-            fail(422, "New plan conflicts with a node selected for deletion");
-          return step.id;
-        }),
-      ),
-    ];
+    const stepIds: string[] = [];
+    const stepKeys = new Map<string, string>();
+    for (const planned of body.steps) {
+      const { key, depends_on, ...stepInput } = planned;
+      if (key !== undefined) {
+        if (stepKeys.has(key)) fail(422, `Duplicate Step key: ${key}`);
+        if (g.steps.some((step) => step.id === key)) fail(422, `Step key conflicts with existing Step ID: ${key}`);
+      }
+      // Keys let one Decide round describe an ordered chain: later Steps may
+      // reference an earlier key, and existing IDs remain valid. A forward or
+      // unknown reference is rejected instead of silently producing a dangling
+      // dependency that would block the chain forever.
+      const dependencies = (depends_on ?? []).map((reference) => {
+        const fromKey = stepKeys.get(reference);
+        if (fromKey) return fromKey;
+        if (g.steps.some((step) => step.id === reference && !step.deleted)) return reference;
+        return fail(
+          422,
+          `Unknown Step dependency: ${reference}; use an existing Step ID or a key defined earlier in this submission`,
+        );
+      });
+      // Near-duplicates of an already-open Step are merged into that Step
+      // instead of creating a second queue entry for the same investigation.
+      const step = ctx.insertStep(
+        g,
+        { ...stepInput, ...(dependencies.length ? { depends_on: dependencies } : {}) },
+        body.worker,
+        targetGraph,
+        false,
+        { mergeNearDuplicates: true },
+      );
+      if (deletion.ids.has(step.id) || requestedIds.has(step.id))
+        fail(422, "New plan conflicts with a node selected for deletion");
+      if (key !== undefined) stepKeys.set(key, step.id);
+      stepIds.push(step.id);
+    }
+    const steps = [...new Set(stepIds)];
     // Budget is enforced on the plan, not the settle: a round that would queue
     // more work than the executor can answer is refused before anything is
     // created. Merged near-duplicates keep their existing id and do not count.

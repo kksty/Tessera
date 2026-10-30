@@ -62,4 +62,4 @@ export const collections = [
   "rounds",
 ] as const;
 
-export type StepInsert = StepDraft & { hint_ids?: string[]; lead_ids?: string[] };
+export type StepInsert = StepDraft & { hint_ids?: string[]; lead_ids?: string[]; depends_on?: string[] };

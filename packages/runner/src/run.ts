@@ -950,7 +950,16 @@ async function runJobInternal(
         );
       // Keep the exact command/file arguments with the output, so a reviewer
       // can reproduce a download or transformation rather than guess its source.
-      const content = JSON.stringify({ ...event, args: toolInputs.get(event.toolCallId) });
+      // Run/Step identity lets a later executor search this process without
+      // confusing it with the current Run's own trace.
+      const content = JSON.stringify({
+        run_id: job.run_id,
+        step_id: job.step_id,
+        kind: job.kind,
+        at: new Date().toISOString(),
+        ...event,
+        args: toolInputs.get(event.toolCallId),
+      });
       toolInputs.delete(event.toolCallId);
       // The per-Run tools.ndjson is the durable trace for every tool call. It stays
       // in the project workspace; only save_evidence creates graph Evidence, so tool
