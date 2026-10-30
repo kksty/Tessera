@@ -281,6 +281,29 @@ test("事实节点先显示结论，缺结论时回落正文，推断结论带�
   }
 });
 
+test("黑板把等待前置的步标成 blocked，前置执行后解除", () => {
+  const store = new Store(":memory:");
+  try {
+    const id = store.create(
+      createProjectSchema.parse({ title: "Chain board", origin: "https://example.test", goal: "Assess" }),
+    ).project.id;
+    const first = store.manualStep(id, { from: ["origin"], description: "找入口", creator: "human" });
+    const second = store.manualStep(id, { from: ["origin"], description: "利用入口", creator: "human" });
+    store.mutate(id, "test.chain", true, (g) => {
+      g.steps.find((step) => step.id === second.id)!.depends_on = [first.id];
+    });
+    const blocked = graphElements(store.get(id), "main").find((element) => element.data.id === second.id)!;
+    assert.equal(blocked.data.blocked, "yes");
+    store.mutate(id, "test.executed", true, (g) => {
+      g.steps.find((step) => step.id === first.id)!.executed_at = new Date().toISOString();
+    });
+    const ready = graphElements(store.get(id), "main").find((element) => element.data.id === second.id)!;
+    assert.equal(ready.data.blocked, "no");
+  } finally {
+    store.close();
+  }
+});
+
 test("范围种子只来自显式范围（主视图点选不改变画布）", () => {
   assert.deepEqual(scopeSeeds({ ids: ["f001"], label: "发现 f001" }), ["f001"]);
   assert.deepEqual(scopeSeeds({ ids: [] }), []);

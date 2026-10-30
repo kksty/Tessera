@@ -485,7 +485,6 @@ export function createRunTools(ctx: RunToolsContext): ToolDefinition[] {
         async ({ query, limit }) =>
           searchWorkerTraces(workspace, query, {
             excludeRunId: job.run_id,
-            excludeWorker: job.worker,
             limit,
           }),
       ),

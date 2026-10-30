@@ -8,6 +8,7 @@ import { scopeForNode } from "../graph-scope.js";
 import { prettyText } from "../text.js";
 import { fmt, stepState, useWorkspace } from "../workspace.js";
 import { resolveGraphRelations } from "../../../../packages/protocol/src/graph-relations.js";
+import { unmetDependencies } from "../../../../packages/protocol/src/step-chain.js";
 import { GraphReference } from "./NodeHistory.js";
 import { DOMAIN_LABEL, DOMAIN_ORDER } from "../graph-summary.js";
 
@@ -68,6 +69,7 @@ export function NodeDetail() {
       : !displayFact && "state" in node
         ? node.state
         : null;
+  const blockedBy = displayStep ? unmetDependencies(graph, displayStep) : [];
 
   return (
     <div className="detail-content">
@@ -118,6 +120,24 @@ export function NodeDetail() {
                 <p className="detail-text detail-muted">{prettyText(displayStep.method_hint)}</p>
               </Field>
             )}
+            {displayStep.depends_on?.length ? (
+              <Field
+                label="前置任务"
+                hint={blockedBy.length ? `等待前置执行（${blockedBy.join("、")}）` : "前置已就绪"}
+              >
+                <p className="detail-text">
+                  {displayStep.depends_on.map((dependencyId, index) => (
+                    <span key={dependencyId}>
+                      {index > 0 && "、"}
+                      <button className="node-id" onClick={() => ws.setSelected(dependencyId)}>
+                        {dependencyId}
+                      </button>
+                    </span>
+                  ))}
+                  {blockedBy.length ? <span className="detail-muted"> · 等待前置</span> : null}
+                </p>
+              </Field>
+            ) : null}
             <Field label="测试域" hint="仅用于分组与统计">
               <div className="step-domain">
                 <select

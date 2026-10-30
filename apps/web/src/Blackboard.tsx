@@ -6,6 +6,7 @@ import { graphMotionEnabled, installGraphMotion } from "./graph-motion.js";
 import { writePreference } from "./preferences.js";
 import type { Graph } from "../../../packages/protocol/src/index.js";
 import { resolveGraphRelations, walkRelations } from "../../../packages/protocol/src/graph-relations.js";
+import { unmetDependencies } from "../../../packages/protocol/src/step-chain.js";
 import { activeGraph } from "../../../packages/protocol/src/node-lifecycle.js";
 import { applyLayout, layoutOptions, localPrefs, raiseToReadableZoom } from "./layouts.js";
 import { boardViewports, type BoardViewport } from "./view-state.js";
@@ -102,6 +103,11 @@ function readPalette(): Palette {
       "border-color": c("--info"),
       color: c("--info"),
     },
+    stepBlocked: {
+      "background-color": c("--surface-2"),
+      "border-color": c("--warn"),
+      color: c("--warn"),
+    },
     frame: {
       "background-color": c("--surface-4"),
       "border-color": c("--line-strong"),
@@ -170,6 +176,9 @@ function applyPalette(c: Core) {
     .style({ ...p.stepRunning, "underlay-padding": 8, "border-style": "solid" })
     .selector('node[type="step"][state="done"]')
     .style({ ...p.stepDone, "border-style": "solid" })
+    // 等待前置的任务用虚线警示边框：节点本身还没有可执行的结果。
+    .selector('node[type="step"][blocked="yes"]')
+    .style({ ...p.stepBlocked, "border-style": "dashed", "border-width": 1.5 })
     .selector('node[type="step"][expanded=1]')
     .style({ color: p.node.color })
     // 汇总节点：虚线框表示「这是一类节点的合并」，边框色沿用该类节点，数量写在标签里。
@@ -349,6 +358,7 @@ export function graphElements(g: Graph, graphId: string, expandSteps = false): E
           type: "step",
           expanded: 0,
           description: s.description,
+          blocked: unmetDependencies(g, s).length ? "yes" : "no",
           state: s.discarded
             ? "discarded"
             : s.concluded_at

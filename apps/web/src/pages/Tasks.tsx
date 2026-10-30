@@ -12,6 +12,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { Evidence, Run, Step } from "../../../../packages/protocol/src/index.js";
+import { unmetDependencies } from "../../../../packages/protocol/src/step-chain.js";
 import { Badge, EmptyState, Kpi, PageHeader, Segmented, Tabs } from "../components/ui.js";
 import { RunHistory } from "../components/RunHistory.js";
 import { StepDecision } from "../components/StepDecision.js";
@@ -415,6 +416,7 @@ function TaskRow({
   const ws = useWorkspace();
   const graph = ws.graph!;
   const state = stepState(step);
+  const blockedBy = unmetDependencies(graph, step);
   const hints = step.hint_ids ?? [];
   const effective = hints.reduce((value, hintId) => {
     const hint = graph.hints.find((item) => item.id === hintId && !item.withdrawn_at);
@@ -442,6 +444,17 @@ function TaskRow({
           <ArrowUpRight size={12} aria-hidden="true" />
         </button>
         <Badge value={state} />
+        {step.depends_on?.length ? (
+          <span
+            className="tasks-chain"
+            data-blocked={blockedBy.length ? "yes" : undefined}
+            title={
+              blockedBy.length ? `等待前置执行：${blockedBy.join("、")}` : `前置已就绪：${step.depends_on.join("、")}`
+            }
+          >
+            {blockedBy.length ? `等待前置 ${blockedBy.join("、")}` : `前置 ${step.depends_on.join("、")}`}
+          </span>
+        ) : null}
         <span className="tasks-priority" title={`任务优先级 ${step.priority}；结合提示后的生效优先级 ${effective}`}>
           P{step.priority}
           {effective !== step.priority && <em>→{effective}</em>}

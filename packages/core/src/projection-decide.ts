@@ -1,6 +1,6 @@
 import type { Fact, Graph, Step } from "../../protocol/src/index.js";
 import { effectiveStepPriority, stepCoversHint } from "./hint-coverage.js";
-import { unmetDependencies } from "./step-chain.js";
+import { unmetDependencies } from "../../protocol/src/step-chain.js";
 import { coverageSurfaces } from "../../protocol/src/coverage.js";
 import { duplicateFindingGroups, relatedFindingGroups } from "./finding-merges.js";
 import { resolveGraphRelations } from "../../protocol/src/graph-relations.js";

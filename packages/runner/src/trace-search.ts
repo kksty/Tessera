@@ -32,7 +32,6 @@ export interface TraceHit {
 
 export interface TraceSearchOptions {
   excludeRunId?: string;
-  excludeWorker?: string;
   limit?: number;
   maxFiles?: number;
   maxBytesPerFile?: number;
@@ -146,7 +145,6 @@ export async function searchWorkerTraces(
   const hits: TraceHit[] = [];
   let scanned = 0;
   for (const { worker, file } of files) {
-    if (options.excludeWorker && worker === options.excludeWorker) continue;
     let bytes = 0;
     const stream = createReadStream(file, { encoding: "utf8" });
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -155,7 +153,7 @@ export async function searchWorkerTraces(
         bytes += Buffer.byteLength(line);
         if (bytes > (options.maxBytesPerFile ?? 8 * 1024 * 1024)) break;
         const record = parse(line);
-        if (!record) continue;
+        if (!record?.run_id) continue;
         // Only execution processes are reusable observations; a Decide/Review
         // Run's tool calls are bookkeeping and would only add noise.
         if (record.kind && record.kind !== "execute" && record.kind !== "peer") continue;

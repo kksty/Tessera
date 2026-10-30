@@ -78,6 +78,51 @@ test("a chain key links a later Step to the Step created earlier in the same pla
   }
 });
 
+test("a positive chain premise continues without another Decide round", () => {
+  const { store, id, planner } = project();
+  try {
+    commitPlan(
+      store,
+      id,
+      decisions(store, id, planner.worker, [
+        { key: "reach", from: ["origin"], description: "找到入口" },
+        { key: "exploit", depends_on: ["reach"], from: ["origin"], description: "利用入口" },
+      ]),
+    );
+    const [, exploit] = store.get(id).steps;
+    const first = store.claim(id, "exec-1", 0)!;
+    const evidence = store.addEvidence(id, {
+      title: "injection response",
+      content: "HTTP/1.1 200 OK",
+      encoding: "utf8",
+      mime_type: "text/plain",
+    });
+    store.execute(
+      id,
+      first.step_id!,
+      executeSchema.parse({
+        worker: first.worker,
+        summary: "参数可达",
+        facts: [
+          {
+            description: "参数 a 回显到页面",
+            conclusion: "参数 a 存在回显",
+            objects: ["https://example.test/search?a=1"],
+            evidence_ids: [evidence.id],
+          },
+        ],
+      }),
+    );
+    // A positive premise lets the pre-planned successor run immediately; no
+    // extra Decide round is needed to re-approve the chain.
+    const second = store.claim(id, "exec-2", 0)!;
+    assert.equal(second.kind, "execute");
+    assert.equal(second.step_id, exploit.id);
+  } finally {
+    store.close();
+  }
+});
+
 test("a chain rejects an unknown dependency and a duplicate key", () => {
   const { store, id, planner } = project();
   try {

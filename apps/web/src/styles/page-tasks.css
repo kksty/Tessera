@@ -94,7 +94,9 @@
   border-left: 3px solid var(--line-strong);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-1);
-  transition: border-color var(--fast), box-shadow var(--fast);
+  transition:
+    border-color var(--fast),
+    box-shadow var(--fast);
 }
 
 .tasks-row:hover {
@@ -153,7 +155,9 @@
   font-size: var(--f-sm);
   font-weight: 500;
   color: var(--ink);
-  transition: background var(--fast), color var(--fast);
+  transition:
+    background var(--fast),
+    color var(--fast);
 }
 
 .tasks-id:hover {
@@ -183,6 +187,27 @@
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* 链式任务：前置未产出时用警示色，普通依赖只作轻标记。 */
+.tasks-chain {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--f-2xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tasks-chain[data-blocked="yes"] {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .tasks-priority em {

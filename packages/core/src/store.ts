@@ -22,7 +22,7 @@ import {
   negativeClaimProblem,
 } from "../../protocol/src/review-validation.js";
 import { effectiveStepPriority, stepCoversHint } from "./hint-coverage.js";
-import { dependenciesReady } from "./step-chain.js";
+import { dependenciesReady, chainPremiseObserved } from "../../protocol/src/step-chain.js";
 import { isNearDuplicateStep, stepTextContainment, type StepDraft } from "./step-similarity.js";
 import { reopenLeadsForStep } from "./leads.js";
 import { normalizeSurface, originHost, validateCoverage } from "../../protocol/src/coverage.js";
@@ -3129,38 +3129,8 @@ export class Store {
       // A re-audit window only hands out Review jobs. Its status change is not a
       // planning input, and any pending completion was cleared when it started.
       const reaudit = !!g.project.reaudit;
-      const planningAt = g.last_planning_at || g.last_observation_at;
-      const pendingSince = g.project.decide_pending_since || planningAt;
-      const batchReady =
-        (g.project.decide_trigger_revision ?? 0) > decidedPlanningRevision(g) &&
-        elapsed(g.project.decide_trigger_at || planningAt) >= debounceMs;
-      const changed =
-        !reaudit &&
-        planningRevision(g) > decidedPlanningRevision(g) &&
-        ((!busy && elapsed(planningAt) >= debounceMs) ||
-          batchReady ||
-          elapsed(pendingSince) >= Math.max(DECIDE_MAX_BATCH_WAIT_MS, debounceMs));
-      if (changed && !g.project.reason && ready(g.project.decide_retry_at)) {
-        // Later observations start a fresh batch even while Decide is running.
-        g.project.decide_pending_since = undefined;
-        g.project.reason = {
-          worker,
-          started_at: now(),
-          last_heartbeat_at: now(),
-        };
-        return this.claimRun(
-          g,
-          {
-            kind: "decide",
-            project_id: id,
-            worker,
-            graph_id: "main",
-          },
-          claimId,
-        );
-      }
-      const s = reaudit
-        ? undefined
+      const readySteps = reaudit
+        ? []
         : g.steps
             .filter(
               (s) =>
@@ -3181,7 +3151,43 @@ export class Store {
                 effectiveStepPriority(g, b) - effectiveStepPriority(g, a) ||
                 a.created_at.localeCompare(b.created_at) ||
                 a.id.localeCompare(b.id),
-            )[0];
+            );
+      // A pre-planned chain link may continue before the next Decide round, but
+      // only when every premise produced a positive observation. A negative or
+      // empty result means the premise did not materialise: Decide must judge
+      // whether to rewrite or discard the successor instead of running it on a gap.
+      const chainContinuation = !!readySteps[0] && chainPremiseObserved(g, readySteps[0]);
+      const planningAt = g.last_planning_at || g.last_observation_at;
+      const pendingSince = g.project.decide_pending_since || planningAt;
+      const batchReady =
+        (g.project.decide_trigger_revision ?? 0) > decidedPlanningRevision(g) &&
+        elapsed(g.project.decide_trigger_at || planningAt) >= debounceMs;
+      const changed =
+        !reaudit &&
+        planningRevision(g) > decidedPlanningRevision(g) &&
+        ((!busy && elapsed(planningAt) >= debounceMs) ||
+          batchReady ||
+          elapsed(pendingSince) >= Math.max(DECIDE_MAX_BATCH_WAIT_MS, debounceMs));
+      if (changed && !chainContinuation && !g.project.reason && ready(g.project.decide_retry_at)) {
+        // Later observations start a fresh batch even while Decide is running.
+        g.project.decide_pending_since = undefined;
+        g.project.reason = {
+          worker,
+          started_at: now(),
+          last_heartbeat_at: now(),
+        };
+        return this.claimRun(
+          g,
+          {
+            kind: "decide",
+            project_id: id,
+            worker,
+            graph_id: "main",
+          },
+          claimId,
+        );
+      }
+      const s = readySteps[0];
       const reviewing = pendingReviews(g, reviewLimit).find((row) => row.gate === "ready")?.finding;
       if (reviewing && (!s || g.project.last_work_kind === "execute")) {
         reviewing.review_worker = worker;

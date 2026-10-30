@@ -27,6 +27,12 @@ async function workspace() {
       args: { url: "https://target.test/api/list" },
       result: "unusual header X-Debug: parser=legacy",
     },
+    {
+      // Pre-upgrade traces have no Run identity and are intentionally ignored.
+      toolName: "bash",
+      args: { command: "echo legacy-only" },
+      result: "legacy-only marker",
+    },
   ];
   await writeFile(join(root, "runs", "w_old", "tools.ndjson"), lines.map((line) => JSON.stringify(line)).join("\n"));
   return root;
@@ -55,6 +61,11 @@ test("trace search requires every term and returns nothing for an unknown query"
   try {
     assert.equal((await searchWorkerTraces(root, "parser legacy", { excludeRunId: "run_current" })).hits.length, 1);
     assert.equal((await searchWorkerTraces(root, "parser missing-term")).hits.length, 0);
+    assert.equal(
+      (await searchWorkerTraces(root, "legacy-only")).hits.length,
+      0,
+      "old traces without run_id are ignored",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
